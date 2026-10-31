@@ -610,6 +610,42 @@ describe('WebModelProvider.normalizeError', () => {
     await expect(provider.sendMessage(chatRequest())).rejects.toMatchObject({ code: 'unsupported-request' })
   })
 
+  it('maps site availability failures to provider-call-failed on send', async () => {
+    const transport = new FakeTransport()
+    transport.sessions.push(fakeSession({ raw: new Error('服务器繁忙') }))
+    const provider = new DeepSeekWebProvider(transport)
+    await provider.init()
+
+    await expect(provider.sendMessage(chatRequest())).rejects.toMatchObject({
+      code: 'provider-call-failed',
+      message: 'deepseek-web: provider-unavailable',
+    })
+  })
+
+  it('maps network failures to network-error on send', async () => {
+    const transport = new FakeTransport()
+    transport.sessions.push(fakeSession({ raw: new Error('network timeout') }))
+    const provider = new DeepSeekWebProvider(transport)
+    await provider.init()
+
+    await expect(provider.sendMessage(chatRequest())).rejects.toMatchObject({
+      code: 'network-error',
+      message: 'deepseek-web: network-error',
+    })
+  })
+
+  it('maps stream interruptions to stream-interrupted on send', async () => {
+    const transport = new FakeTransport()
+    transport.sessions.push(fakeSession({ raw: new Error('stream interrupted') }))
+    const provider = new DeepSeekWebProvider(transport)
+    await provider.init()
+
+    await expect(provider.sendMessage(chatRequest())).rejects.toMatchObject({
+      code: 'stream-interrupted',
+      message: 'deepseek-web: stream-interrupted',
+    })
+  })
+
   it('lets a subclass override normalizeError for site-specific patterns', async () => {
     const transport = new FakeTransport()
     transport.sessions.push(fakeSession({ raw: new Error('deepseek site is down') }))
@@ -622,6 +658,50 @@ describe('WebModelProvider.normalizeError', () => {
     await provider.init()
 
     await expect(provider.sendMessage(chatRequest())).rejects.toMatchObject({ code: 'provider-call-failed' })
+  })
+})
+
+describe('registry auth flows with a shipped adapter', () => {
+  it('renews an expired site session through re-login', async () => {
+    const transport = new FakeTransport()
+    transport.sessions.push({ closed: true, reason: 'expired' })
+    const registry = new ProviderRegistry()
+    const provider = new DeepSeekWebProvider(transport)
+    registry.register(provider)
+    await provider.init()
+
+    expect(await registry.health('deepseek-web')).toEqual(expect.objectContaining({
+      ready: false,
+      status: 'expired',
+    }))
+
+    transport.sessions.push(fakeSession())
+    expect(await registry.reauthenticate('deepseek-web')).toEqual(expect.objectContaining({
+      providerId: 'deepseek-web',
+      ready: true,
+      status: 'ready',
+    }))
+    expect(transport.opens).toEqual([{ providerId: 'deepseek-web' }, { providerId: 'deepseek-web' }])
+  })
+
+  it('opens a session when a signed-out user logs in', async () => {
+    const transport = new FakeTransport()
+    const registry = new ProviderRegistry()
+    const provider = new DeepSeekWebProvider(transport)
+    registry.register(provider)
+    await provider.init()
+
+    expect(await registry.health('deepseek-web')).toEqual(expect.objectContaining({
+      ready: false,
+      status: 'needs-auth',
+    }))
+
+    transport.sessions.push(fakeSession())
+    expect(await registry.reauthenticate('deepseek-web')).toEqual(expect.objectContaining({
+      providerId: 'deepseek-web',
+      ready: true,
+      status: 'ready',
+    }))
   })
 })
 
