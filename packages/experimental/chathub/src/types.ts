@@ -163,7 +163,7 @@ export interface SessionCheckpoint {
 }
 
 /** Durable state of one ChatHub session. */
-export interface SessionRecord {
+export interface ChatSessionRecord {
   id: string
   title: string
   createdAt: number
@@ -199,11 +199,11 @@ export interface CheckpointRequest {
 
 /** Checkpoint builder contract used by session orchestration. */
 export interface ICheckpointService {
-  generate(session: SessionRecord, request: CheckpointRequest): SessionCheckpoint
+  generate(session: ChatSessionRecord, request: CheckpointRequest): SessionCheckpoint
 }
 
 /** Semantic compiler contract used by session orchestration. */
 export interface IContextCompiler {
-  compile(session: SessionRecord, providerId: string): SemanticContext
+  compile(session: ChatSessionRecord, providerId: string): SemanticContext
   createPrompt(context: SemanticContext, providerId: string): string
 }

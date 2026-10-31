@@ -1,7 +1,7 @@
 /** Provider-independent semantic compilation and provider-specific prompt rendering. */
 
 import { clonePlan, memoryHighlights, sessionFacts } from './session-memory.ts'
-import type { IContextCompiler, PlanStep, SemanticContext, SessionRecord } from './types.ts'
+import type { IContextCompiler, PlanStep, SemanticContext, ChatSessionRecord } from './types.ts'
 
 /** How much semantic detail one provider prompt carries. */
 export type ContextDetail = 'full' | 'compact' | 'detailed'
@@ -47,7 +47,7 @@ export class ContextCompiler implements IContextCompiler {
    * @param _providerId - Reserved by the compiler contract; semantic context is provider-independent.
    * @returns A fresh semantic context.
    */
-  compile(session: SessionRecord, _providerId: string): SemanticContext {
+  compile(session: ChatSessionRecord, _providerId: string): SemanticContext {
     return {
       objective: session.goal,
       plan: clonePlan(session.plan),

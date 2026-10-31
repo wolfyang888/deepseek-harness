@@ -2,7 +2,7 @@
 
 import { ChatHubError } from './errors.ts'
 import { createMemoryEntryId } from './ids.ts'
-import type { MemoryEntry, MemoryEntryType, PlanStep, PlanStepStatus, SessionRecord } from './types.ts'
+import type { MemoryEntry, MemoryEntryType, PlanStep, PlanStepStatus, ChatSessionRecord } from './types.ts'
 
 /** Input for one memory entry. */
 export interface RecordMemoryInput {
@@ -33,7 +33,7 @@ export function clonePlan(plan: PlanStep[]): PlanStep[] {
  * @param session - Session whose memory to read.
  * @returns Unique memory contents.
  */
-export function memoryHighlights(session: SessionRecord): string[] {
+export function memoryHighlights(session: ChatSessionRecord): string[] {
   const ordered = [...session.memory]
     .sort((left, right) => right.importance - left.importance || right.createdAt - left.createdAt)
   return [...new Set(ordered.map(entry => entry.content))]
@@ -44,7 +44,7 @@ export function memoryHighlights(session: SessionRecord): string[] {
  * @param session - Session whose facts to read.
  * @returns Unique fact strings.
  */
-export function sessionFacts(session: SessionRecord): string[] {
+export function sessionFacts(session: ChatSessionRecord): string[] {
   const recorded = session.memory
     .filter(entry => entry.type === 'fact')
     .map(entry => entry.content)
@@ -69,7 +69,7 @@ export class SessionMemoryService {
    * @param input - Entry type, content, source, and optional importance.
    * @returns The recorded entry.
    */
-  record(session: SessionRecord, input: RecordMemoryInput): MemoryEntry {
+  record(session: ChatSessionRecord, input: RecordMemoryInput): MemoryEntry {
     const at = this.now()
     const entry: MemoryEntry = {
       id: createMemoryEntryId(at, ++this.sequence),
@@ -89,7 +89,7 @@ export class SessionMemoryService {
    * @param session - Session to update.
    * @param plan - New plan steps.
    */
-  setPlan(session: SessionRecord, plan: PlanStep[]): void {
+  setPlan(session: ChatSessionRecord, plan: PlanStep[]): void {
     session.plan = clonePlan(plan)
     session.updatedAt = this.now()
   }
@@ -102,7 +102,7 @@ export class SessionMemoryService {
    * @returns The updated step.
    * @throws ChatHubError with `plan-step-not-found` when the id is absent.
    */
-  updatePlanStep(session: SessionRecord, stepId: string, update: PlanStepUpdate): PlanStep {
+  updatePlanStep(session: ChatSessionRecord, stepId: string, update: PlanStepUpdate): PlanStep {
     const step = session.plan.find(candidate => candidate.id === stepId)
     if (step === undefined) {
       throw new ChatHubError('plan-step-not-found', `ChatHub plan has no step "${stepId}".`)
@@ -119,7 +119,7 @@ export class SessionMemoryService {
    * @param session - Session to update.
    * @param question - Question text.
    */
-  addOpenQuestion(session: SessionRecord, question: string): void {
+  addOpenQuestion(session: ChatSessionRecord, question: string): void {
     session.context.openQuestions = [...new Set([...session.context.openQuestions, question])]
     session.updatedAt = this.now()
   }
@@ -129,7 +129,7 @@ export class SessionMemoryService {
    * @param session - Session to update.
    * @param question - Question text to close.
    */
-  resolveOpenQuestion(session: SessionRecord, question: string): void {
+  resolveOpenQuestion(session: ChatSessionRecord, question: string): void {
     session.context.openQuestions = session.context.openQuestions.filter(open => open !== question)
     session.updatedAt = this.now()
   }
@@ -139,7 +139,7 @@ export class SessionMemoryService {
    * @param session - Session to update.
    * @param decision - Decision text.
    */
-  addDecision(session: SessionRecord, decision: string): void {
+  addDecision(session: ChatSessionRecord, decision: string): void {
     session.context.decisions = [...new Set([...session.context.decisions, decision])]
     session.updatedAt = this.now()
   }

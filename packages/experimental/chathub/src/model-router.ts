@@ -10,7 +10,7 @@ import type {
   IProviderRegistry,
   ModelCapabilities,
   SemanticContext,
-  SessionRecord,
+  ChatSessionRecord,
 } from './types.ts'
 
 /** Task class the router uses to select a provider. */
@@ -18,7 +18,7 @@ export type TaskType = 'coding' | 'research' | 'quick-answer'
 
 /** One routing request for a turn. */
 export interface RouteRequest {
-  session: SessionRecord
+  session: ChatSessionRecord
   taskType: TaskType
   preferredProvider?: string
 }

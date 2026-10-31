@@ -9,7 +9,7 @@ import type {
   ModelCapabilities,
   ModelKind,
   PlanStep,
-  SessionRecord,
+  ChatSessionRecord,
   SemanticContext,
 } from '@deepseek-ai/dsh-experimental-chathub'
 
@@ -127,7 +127,7 @@ export function semanticContext(overrides: Partial<SemanticContext> = {}): Seman
  * @param overrides - Fields to override.
  * @returns A session record.
  */
-export function sessionRecord(overrides: Partial<SessionRecord> = {}): SessionRecord {
+export function sessionRecord(overrides: Partial<ChatSessionRecord> = {}): ChatSessionRecord {
   return {
     id: 'sess_20261031_001',
     title: 'Fix the build',

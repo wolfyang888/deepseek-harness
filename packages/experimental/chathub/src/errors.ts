@@ -7,11 +7,13 @@ export type ChatHubErrorCode =
   | 'provider-already-active'
   | 'no-ready-provider'
   | 'provider-call-failed'
+  | 'unsupported-request'
   | 'plan-step-not-found'
   | 'session-not-tracked'
 
 /** Structured ChatHub failure carrying a stable discriminator. */
 export class ChatHubError extends Error {
+  /** Category consumers branch on. */
   readonly code: ChatHubErrorCode
 
   /**

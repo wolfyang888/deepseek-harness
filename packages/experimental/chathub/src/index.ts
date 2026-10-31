@@ -24,6 +24,22 @@ export type {
   RouteResult,
   TaskType,
 } from './model-router.ts'
+export {
+  WebModelProvider,
+  renderWebPrompt,
+  splitRequestMessages,
+} from './providers/web-provider.ts'
+export type {
+  WebChatPayload,
+  WebChatRawResponse,
+  WebChatTransport,
+  WebChatTransportSession,
+  WebPromptStyle,
+} from './providers/web-provider.ts'
+export { DeepSeekWebProvider } from './providers/deepseek-web.ts'
+export { ChatGptWebProvider } from './providers/chatgpt-web.ts'
+export { webProviderAdapters } from './providers/adapters.ts'
+export type { WebProviderAdapterOptions } from './providers/adapters.ts'
 export { SessionManager } from './session-manager.ts'
 export type {
   BuildRequestInput,

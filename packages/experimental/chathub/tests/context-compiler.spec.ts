@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { ContextCompiler } from '@deepseek-ai/dsh-experimental-chathub'
-import type { MemoryEntry, SessionRecord } from '@deepseek-ai/dsh-experimental-chathub'
+import type { MemoryEntry, ChatSessionRecord } from '@deepseek-ai/dsh-experimental-chathub'
 import { planStep, semanticContext, sessionRecord } from './fixtures.ts'
 
 function memory(overrides: Partial<MemoryEntry>): MemoryEntry {
@@ -17,7 +17,7 @@ function memory(overrides: Partial<MemoryEntry>): MemoryEntry {
   }
 }
 
-function fixture(): SessionRecord {
+function fixture(): ChatSessionRecord {
   return sessionRecord({
     goal: 'fix the build error',
     plan: [

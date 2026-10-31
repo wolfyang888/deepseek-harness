@@ -14,7 +14,7 @@ import type {
   PlanStep,
   SemanticContext,
   SessionCheckpoint,
-  SessionRecord,
+  ChatSessionRecord,
   SessionRuntimeState,
   SessionRuntimeStatus,
 } from './types.ts'
@@ -75,13 +75,13 @@ export class SessionManager {
    * @returns The new idle session.
    * @throws ChatHubError with `provider-not-registered` when the provider is unknown.
    */
-  create(input: CreateSessionInput): SessionRecord {
+  create(input: CreateSessionInput): ChatSessionRecord {
     if (this.registry.get(input.provider) === undefined) {
       throw new ChatHubError('provider-not-registered', `ChatHub has no provider "${input.provider}".`)
     }
     const at = this.now()
     const plan = input.plan === undefined ? [] : clonePlan(input.plan)
-    const session: SessionRecord = {
+    const session: ChatSessionRecord = {
       id: input.id ?? createSessionId(at, ++this.sequence),
       title: input.title,
       createdAt: at,
@@ -114,7 +114,7 @@ export class SessionManager {
    * @returns A request carrying the compiled context and its rendered prompt.
    * @throws ChatHubError with `provider-not-registered` when the current provider is unknown.
    */
-  buildRequest(session: SessionRecord, input: BuildRequestInput): ChatRequest {
+  buildRequest(session: ChatSessionRecord, input: BuildRequestInput): ChatRequest {
     if (this.registry.get(session.currentProvider) === undefined) {
       throw new ChatHubError(
         'provider-not-registered',
@@ -142,7 +142,7 @@ export class SessionManager {
    * @throws ChatHubError when the target is the active provider, unknown, or not ready.
    */
   async switchProvider(
-    session: SessionRecord,
+    session: ChatSessionRecord,
     toProvider: string,
     reason: string,
   ): Promise<ModelSwitchOutcome> {
@@ -193,6 +193,7 @@ export class SessionManager {
   }
 
   /**
+   * Read a tracked session's runtime state.
    * @param sessionId - Session id to inspect.
    * @returns Its runtime state, or undefined when the manager did not create it.
    */
@@ -225,7 +226,7 @@ export class SessionManager {
    * @param latestCheckpointId - Checkpoint just written, when the transition has one.
    */
   private writeState(
-    session: SessionRecord,
+    session: ChatSessionRecord,
     status: SessionRuntimeStatus,
     latestCheckpointId?: string,
   ): void {

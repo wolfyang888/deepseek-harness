@@ -166,6 +166,15 @@ Real-API tests/demos read `DEEPSEEK_API_KEY`, optional `DEEPSEEK_BASE_URL`, and 
 - TODO markers: `FIXME`/`TODO`/`XXX` by urgency ([semantics](docs/development.md)).
 - Files end with exactly one trailing newline; `git diff --cached --check` (pre-commit) gates it.
 
+## ChatHub multi-model sessions
+
+`packages/experimental/chathub` owns the multi-model session runtime and the [free browser-backed provider design](chatDeepDoc/deepseek-chathub-design.md) from the [detail design](chatDeepDoc/detail_design.md): `IModelProvider` adapters, `ProviderRegistry`, `ContextCompiler`, `SessionMemoryService`, `CheckpointService`, `ModelRouter`, `SessionManager`, and the `WebChatTransport` seam with the shipped DeepSeek Chat and ChatGPT browser adapters ([README](packages/experimental/chathub/README.md)).
+
+- Providers implement `IModelProvider`; they never read the session store, mutate agent-loop state, or change `ChatRequest`/`ChatResponse`.
+- A switch checkpoints the outgoing provider, appends a `ModelSwitchRecord`, then renders the compiled semantic context for the incoming provider; raw transcripts never cross a switch.
+- Browser login state stays in the host-supplied `WebChatTransport`; providers keep no cookies or tokens and log none.
+- Add a model by implementing one adapter and registering it through `webProviderAdapters` or `ProviderRegistry`.
+
 ## Defensive patterns
 
 Read [docs/defensive-patterns/README.md](docs/defensive-patterns/README.md) before changing a package surface, remote service, client component or state, conversation or Session behavior, or lifecycle, concurrency, subprocess, and teardown code. Its [review principles](docs/defensive-patterns/README.md#why-these-rules) apply per artifact.

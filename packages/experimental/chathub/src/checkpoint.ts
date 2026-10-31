@@ -2,7 +2,7 @@
 
 import { createCheckpointId } from './ids.ts'
 import { clonePlan, memoryHighlights, sessionFacts } from './session-memory.ts'
-import type { CheckpointRequest, ICheckpointService, SessionCheckpoint, SessionRecord } from './types.ts'
+import type { CheckpointRequest, ICheckpointService, SessionCheckpoint, ChatSessionRecord } from './types.ts'
 
 /** Builds a checkpoint from the session state a switch is leaving behind. */
 export class CheckpointService implements ICheckpointService {
@@ -14,7 +14,7 @@ export class CheckpointService implements ICheckpointService {
    * @param request - Provider, optional switch reason, and timestamp.
    * @returns A new checkpoint; the caller decides whether to attach it to the session.
    */
-  generate(session: SessionRecord, request: CheckpointRequest): SessionCheckpoint {
+  generate(session: ChatSessionRecord, request: CheckpointRequest): SessionCheckpoint {
     const plan = clonePlan(session.plan)
     const facts = sessionFacts(session)
     const openQuestions = [...session.context.openQuestions]
