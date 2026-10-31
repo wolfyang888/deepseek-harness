@@ -13,7 +13,7 @@ export {
 export type { PlanStepUpdate, RecordMemoryInput } from './session-memory.ts'
 export { ContextCompiler } from './context-compiler.ts'
 export type { ContextCompilerOptions, ContextDetail } from './context-compiler.ts'
-export { CheckpointService } from './checkpoint.ts'
+export { CheckpointService, restoreFromCheckpoint, CHECKPOINT_SCHEMA_VERSION } from './checkpoint.ts'
 export { ModelRouter } from './model-router.ts'
 export type {
   CompletionRequest,

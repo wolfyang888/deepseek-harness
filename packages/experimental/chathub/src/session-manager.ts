@@ -158,9 +158,10 @@ export class SessionManager {
     }
     const health = await probeProvider(provider)
     if (!health.ready) {
+      const failureDetail = health.failureReason ?? health.status
       throw new ChatHubError(
         'provider-not-ready',
-        `ChatHub provider "${toProvider}" is not ready${health.error === undefined ? '' : `: ${health.error}`}.`,
+        `ChatHub provider "${toProvider}" is not ready: ${failureDetail}.`,
       )
     }
     const at = this.now()

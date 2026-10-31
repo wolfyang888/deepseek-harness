@@ -42,45 +42,57 @@ describe('ProviderRegistry', () => {
     registry.register(fakeProvider({ id: 'gamma', ready: new Error('session expired') }))
 
     expect(await registry.healthCheck()).toEqual([
-      { providerId: 'alpha', ready: true, status: 'ready' },
-      { providerId: 'beta', ready: false, status: 'needs-auth' },
-      { providerId: 'gamma', ready: false, status: 'failed', error: 'session expired' },
+      expect.objectContaining({ providerId: 'alpha', ready: true, status: 'ready' }),
+      expect.objectContaining({ providerId: 'beta', ready: false, status: 'needs-auth' }),
+      expect.objectContaining({ providerId: 'gamma', ready: false, status: 'failed', failureReason: 'session expired' }),
     ])
+    for (const health of await registry.healthCheck()) {
+      expect(typeof health.lastCheckedAt).toBe('number')
+    }
   })
 
   it('probes a provider without throwing on rejection', async () => {
-    expect(await probeProvider(fakeProvider({ id: 'alpha', ready: true }))).toEqual({
+    const ready = await probeProvider(fakeProvider({ id: 'alpha', ready: true }))
+    expect(ready).toEqual(expect.objectContaining({
       providerId: 'alpha',
       ready: true,
       status: 'ready',
-    })
-    expect(await probeProvider(fakeProvider({ id: 'alpha', ready: new Error('offline') }))).toEqual({
+    }))
+    expect(typeof ready.lastCheckedAt).toBe('number')
+
+    const failed = await probeProvider(fakeProvider({ id: 'alpha', ready: new Error('offline') }))
+    expect(failed).toEqual(expect.objectContaining({
       providerId: 'alpha',
       ready: false,
       status: 'failed',
-      error: 'offline',
-    })
+      failureReason: 'offline',
+    }))
   })
 
   it('uses the provider-reported health status when an adapter exposes one', async () => {
-    expect(await probeProvider(fakeProvider({ id: 'delta', healthStatus: 'expired' }))).toEqual({
-      providerId: 'delta',
-      ready: false,
-      status: 'expired',
-    })
-    expect(await probeProvider(fakeProvider({ id: 'delta', healthStatus: 'ready' }))).toEqual({
-      providerId: 'delta',
-      ready: true,
-      status: 'ready',
-    })
+    expect(await probeProvider(fakeProvider({ id: 'delta', healthStatus: 'expired' }))).toEqual(
+      expect.objectContaining({ providerId: 'delta', ready: false, status: 'expired' }),
+    )
+    expect(await probeProvider(fakeProvider({ id: 'delta', healthStatus: 'ready' }))).toEqual(
+      expect.objectContaining({ providerId: 'delta', ready: true, status: 'ready' }),
+    )
   })
 
   it('maps a rejected health status probe to failed', async () => {
-    expect(await probeProvider(fakeProvider({ id: 'delta', healthStatus: new Error('tab crashed') }))).toEqual({
+    expect(await probeProvider(fakeProvider({ id: 'delta', healthStatus: new Error('tab crashed') }))).toEqual(
+      expect.objectContaining({ providerId: 'delta', ready: false, status: 'failed', failureReason: 'tab crashed' }),
+    )
+  })
+
+  it('routes a rejected probe through the provider normalizeError when present', async () => {
+    const health = await probeProvider(
+      fakeProvider({ id: 'delta', ready: new Error('rate limited'), normalizeError: 'rate-limited' }),
+    )
+    expect(health).toEqual(expect.objectContaining({
       providerId: 'delta',
       ready: false,
       status: 'failed',
-      error: 'tab crashed',
-    })
+      failureReason: 'rate-limited',
+    }))
   })
 })

@@ -1,7 +1,13 @@
 /** Provider registration and readiness probing for ChatHub. */
 
 import { errorMessage } from './errors.ts'
-import type { IModelProvider, IProviderRegistry, ModelKind, ProviderHealth } from './types.ts'
+import type {
+  IModelProvider,
+  IProviderRegistry,
+  ModelKind,
+  ProviderHealth,
+  ProviderStatus,
+} from './types.ts'
 
 /**
  * Probe one provider without letting a broken readiness check stop the caller.
@@ -9,14 +15,28 @@ import type { IModelProvider, IProviderRegistry, ModelKind, ProviderHealth } fro
  * @returns Its health, including a connection status consumers branch on.
  */
 export async function probeProvider(provider: IModelProvider): Promise<ProviderHealth> {
+  const lastCheckedAt = Date.now()
   try {
-    const status = provider.healthStatus !== undefined
+    const status: ProviderStatus = provider.healthStatus !== undefined
       ? await provider.healthStatus()
       : (await provider.isReady() ? 'ready' : 'needs-auth')
-    return { providerId: provider.id, ready: status === 'ready', status }
+    if (status === 'ready') {
+      return { providerId: provider.id, ready: true, status, lastCheckedAt }
+    }
+    // Non-ready statuses are self-explanatory; only failed probes carry a separate reason.
+    return { providerId: provider.id, ready: false, status, lastCheckedAt }
   } catch (error) {
     // A rejected probe means the provider cannot serve; keep the reason for diagnostics.
-    return { providerId: provider.id, ready: false, status: 'failed', error: errorMessage(error) }
+    const failureReason = provider.normalizeError !== undefined
+      ? provider.normalizeError(error)
+      : errorMessage(error)
+    return {
+      providerId: provider.id,
+      ready: false,
+      status: 'failed',
+      lastCheckedAt,
+      failureReason,
+    }
   }
 }
 

@@ -1,6 +1,6 @@
 /** Browser-backed provider base class plus the transport seam it drives. */
 
-import { ChatHubError, errorMessage } from '../errors.ts'
+import { ChatHubError, errorMessage, type ChatHubErrorCode } from '../errors.ts'
 import type {
   ChatFinishReason,
   ChatMessage,
@@ -11,6 +11,7 @@ import type {
   IModelProvider,
   ModelCapabilities,
   ModelKind,
+  ProviderErrorCode,
   ProviderStatus,
 } from '../types.ts'
 
@@ -75,6 +76,25 @@ export interface WebChatTransportClosed {
   closed: true
   /** Why no session could be opened. */
   reason: 'not-signed-in' | 'expired'
+}
+
+/** Map a normalized provider failure code to the runtime error code it surfaces. */
+function runtimeErrorCode(code: ProviderErrorCode): ChatHubErrorCode {
+  switch (code) {
+    case 'auth-required':
+      return 'provider-not-ready'
+    case 'rate-limited':
+      return 'rate-limited'
+    case 'network-error':
+      return 'network-error'
+    case 'stream-interrupted':
+      return 'stream-interrupted'
+    case 'unsupported-capability':
+      return 'unsupported-request'
+    case 'provider-unavailable':
+    case 'unknown':
+      return 'provider-call-failed'
+  }
 }
 
 /** Provider-specific prompt style from the design's adaptation layer. */
@@ -332,7 +352,43 @@ export abstract class WebModelProvider implements IModelProvider {
    */
   protected failure(error: unknown): ChatHubError {
     if (error instanceof ChatHubError) return error
-    return new ChatHubError('provider-call-failed', `${this.id}: ${errorMessage(error)}`, { cause: error })
+    const code = this.normalizeError(error)
+    return new ChatHubError(
+      runtimeErrorCode(code),
+      `${this.id}: ${errorMessage(error)}`,
+      { cause: error },
+    )
+  }
+
+  /**
+   * Reduce a raw transport rejection to a stable provider failure code.
+   *
+   * Subclasses override this for site-specific message patterns; the default
+   * matches common auth, rate-limit, network, and stream-interruption signals.
+   * @param error - Rejected value from the browser session.
+   * @returns The stable failure category.
+   */
+  normalizeError(error: unknown): ProviderErrorCode {
+    const message = errorMessage(error).toLowerCase()
+    if (/(auth|login|signed.?out|expired|session.*expired|unauthorized)/.test(message)) {
+      return 'auth-required'
+    }
+    if (/(rate.?limit|too many requests|429|throttl)/.test(message)) {
+      return 'rate-limited'
+    }
+    if (/(network|timeout|econnrefused|fetch failed|enotfound|aborted)/.test(message)) {
+      return 'network-error'
+    }
+    if (/(stream|interrupt|chunk|connection.*reset)/.test(message)) {
+      return 'stream-interrupted'
+    }
+    if (/(unsupported|not supported|capability)/.test(message)) {
+      return 'unsupported-capability'
+    }
+    if (/(unavailable|503|502|overloaded|maintenance)/.test(message)) {
+      return 'provider-unavailable'
+    }
+    return 'unknown'
   }
 }
 

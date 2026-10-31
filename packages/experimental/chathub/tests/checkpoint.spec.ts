@@ -1,7 +1,7 @@
 /** Checkpoint snapshots written before model switches. */
 
 import { describe, expect, it } from 'vitest'
-import { CheckpointService } from '@deepseek-ai/dsh-experimental-chathub'
+import { CheckpointService, restoreFromCheckpoint } from '@deepseek-ai/dsh-experimental-chathub'
 import type { MemoryEntry } from '@deepseek-ai/dsh-experimental-chathub'
 import { planStep, semanticContext, sessionRecord } from './fixtures.ts'
 
@@ -49,7 +49,9 @@ describe('CheckpointService', () => {
     })
 
     expect(checkpoint).toEqual({
+      schemaVersion: 1,
       id: 'cp_20261031_001',
+      sessionId: 'sess_20261031_001',
       createdAt: AT,
       provider: 'deepseek-web',
       objective: 'fix the build error',
@@ -57,7 +59,9 @@ describe('CheckpointService', () => {
       plan: session.plan,
       facts: ['project uses pnpm', 'build fails in stage 2'],
       openQuestions: ['is there a second failure?', 'does CI use the same script?'],
+      decisions: [],
       memoryHighlights: ['project uses pnpm', 'fixtures follow the platform'],
+      modelSwitchHistory: [],
       modelSwitchReason: 'need stronger code analysis',
     })
   })
@@ -82,5 +86,27 @@ describe('CheckpointService', () => {
 
     expect(second.id).toBe('cp_20261031_002')
     expect(second).not.toHaveProperty('modelSwitchReason')
+  })
+
+  it('rehydrates a session from a checkpoint', () => {
+    const service = new CheckpointService()
+    const session = fixture()
+    const checkpoint = service.generate(session, { provider: 'deepseek-web', reason: 'recover', now: AT })
+
+    const drifted = sessionRecord({
+      id: session.id,
+      goal: 'forgot the goal',
+      plan: [],
+      context: semanticContext({ objective: 'drifted', facts: [], openQuestions: [], decisions: [] }),
+    })
+
+    const restored = restoreFromCheckpoint(drifted, checkpoint)
+
+    expect(restored.goal).toBe('fix the build error')
+    expect(restored.plan.map((step: { id: string }) => step.id)).toEqual(['p1', 'p2'])
+    expect(restored.context.objective).toBe('fix the build error')
+    expect(restored.context.facts).toEqual(['project uses pnpm', 'build fails in stage 2'])
+    expect(restored.context.openQuestions).toEqual(['is there a second failure?', 'does CI use the same script?'])
+    expect(restored.updatedAt).toBe(AT)
   })
 })

@@ -15,6 +15,7 @@ import {
 import type {
   ChatRequest,
   ChatStreamChunk,
+  ProviderErrorCode,
   WebChatPayload,
   WebChatRawResponse,
   WebChatTransport,
@@ -418,7 +419,7 @@ describe('WebModelProvider streamMessage', () => {
       for await (const _chunk of provider.streamMessage(chatRequest())) {
         throw new Error('no chunk expected')
       }
-    }).rejects.toMatchObject({ code: 'provider-call-failed', message: 'deepseek-web: network reset' })
+    }).rejects.toMatchObject({ code: 'network-error', message: 'deepseek-web: network reset' })
   })
 
   it('keeps the deltas already shown when the site interrupts the stream', async () => {
@@ -431,7 +432,7 @@ describe('WebModelProvider streamMessage', () => {
     const chunks: ChatStreamChunk[] = []
     await expect(async () => {
       for await (const chunk of provider.streamMessage(chatRequest())) chunks.push(chunk)
-    }).rejects.toMatchObject({ code: 'provider-call-failed', message: 'deepseek-web: stream interrupted' })
+    }).rejects.toMatchObject({ code: 'stream-interrupted', message: 'deepseek-web: stream interrupted' })
     expect(chunks).toEqual([{ index: 0, delta: 'root ' }])
   })
 
@@ -484,5 +485,84 @@ describe('WebModelProvider streamMessage', () => {
         throw new Error('no chunk expected')
       }
     }).rejects.toMatchObject({ code: 'provider-not-ready' })
+  })
+})
+
+describe('WebModelProvider.normalizeError', () => {
+  const provider = new DeepSeekWebProvider(new FakeTransport())
+
+  it('classifies auth and login failures', () => {
+    expect(provider.normalizeError(new Error('session expired'))).toBe('auth-required')
+    expect(provider.normalizeError(new Error('user signed out'))).toBe('auth-required')
+    expect(provider.normalizeError(new Error('unauthorized'))).toBe('auth-required')
+  })
+
+  it('classifies rate-limiting failures', () => {
+    expect(provider.normalizeError(new Error('rate limit exceeded'))).toBe('rate-limited')
+    expect(provider.normalizeError(new Error('too many requests 429'))).toBe('rate-limited')
+  })
+
+  it('classifies network failures', () => {
+    expect(provider.normalizeError(new Error('network timeout'))).toBe('network-error')
+    expect(provider.normalizeError(new Error('fetch failed'))).toBe('network-error')
+  })
+
+  it('classifies stream interruptions', () => {
+    expect(provider.normalizeError(new Error('stream interrupted'))).toBe('stream-interrupted')
+    expect(provider.normalizeError(new Error('connection reset by peer'))).toBe('stream-interrupted')
+  })
+
+  it('classifies unsupported capability failures', () => {
+    expect(provider.normalizeError(new Error('vision not supported'))).toBe('unsupported-capability')
+  })
+
+  it('classifies provider availability failures', () => {
+    expect(provider.normalizeError(new Error('service unavailable 503'))).toBe('provider-unavailable')
+    expect(provider.normalizeError(new Error('overloaded'))).toBe('provider-unavailable')
+  })
+
+  it('falls back to unknown for unrecognized errors', () => {
+    expect(provider.normalizeError(new Error('something broke'))).toBe('unknown')
+  })
+
+  it('maps normalized codes to runtime error codes on send', async () => {
+    const transport = new FakeTransport()
+    transport.sessions.push(fakeSession({ raw: new Error('rate limited') }))
+    const provider = new DeepSeekWebProvider(transport)
+    await provider.init()
+
+    await expect(provider.sendMessage(chatRequest())).rejects.toMatchObject({ code: 'rate-limited' })
+  })
+
+  it('maps auth failures to provider-not-ready on send', async () => {
+    const transport = new FakeTransport()
+    transport.sessions.push(fakeSession({ raw: new Error('session expired') }))
+    const provider = new DeepSeekWebProvider(transport)
+    await provider.init()
+
+    await expect(provider.sendMessage(chatRequest())).rejects.toMatchObject({ code: 'provider-not-ready' })
+  })
+
+  it('maps unsupported capability failures to unsupported-request on send', async () => {
+    const transport = new FakeTransport()
+    transport.sessions.push(fakeSession({ raw: new Error('vision not supported') }))
+    const provider = new DeepSeekWebProvider(transport)
+    await provider.init()
+
+    await expect(provider.sendMessage(chatRequest())).rejects.toMatchObject({ code: 'unsupported-request' })
+  })
+
+  it('lets a subclass override normalizeError for site-specific patterns', async () => {
+    const transport = new FakeTransport()
+    transport.sessions.push(fakeSession({ raw: new Error('deepseek site is down') }))
+    class CustomProvider extends DeepSeekWebProvider {
+      override normalizeError(error: unknown): ProviderErrorCode {
+        return /deepseek/.test(String(error)) ? 'provider-unavailable' : super.normalizeError(error)
+      }
+    }
+    const provider = new CustomProvider(transport)
+    await provider.init()
+
+    await expect(provider.sendMessage(chatRequest())).rejects.toMatchObject({ code: 'provider-call-failed' })
   })
 })

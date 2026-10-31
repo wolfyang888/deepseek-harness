@@ -6,6 +6,22 @@ export type ModelKind = 'web' | 'api' | 'local'
 /** Lifecycle state of one provider's connection to its model. */
 export type ProviderStatus = 'not-started' | 'ready' | 'needs-auth' | 'expired' | 'failed'
 
+/**
+ * Stable failure categories an adapter maps raw site errors into.
+ *
+ * Adapters never leak raw site text or DOM fragments across the runtime
+ * boundary; `normalizeError` reduces every rejection to one of these codes so
+ * orchestration can branch deterministically.
+ */
+export type ProviderErrorCode =
+  | 'auth-required'
+  | 'provider-unavailable'
+  | 'rate-limited'
+  | 'network-error'
+  | 'stream-interrupted'
+  | 'unsupported-capability'
+  | 'unknown'
+
 /** Capabilities a provider advertises to routing and prompt compilation. */
 export interface ModelCapabilities {
   reasoning: boolean
@@ -76,6 +92,15 @@ export interface IModelProvider {
   init(): Promise<void>
   isReady(): Promise<boolean>
   healthStatus?(): Promise<ProviderStatus>
+  /**
+   * Map a raw provider rejection to a stable failure code.
+   *
+   * Implementations must not surface raw site HTML, stack frames, or
+   * provider-specific message strings; callers branch on the returned code.
+   * @param error - Rejected value from the provider's transport.
+   * @returns The stable failure category.
+   */
+  normalizeError?(error: unknown): ProviderErrorCode
   sendMessage(request: ChatRequest): Promise<ChatResponse>
   streamMessage(request: ChatRequest): AsyncIterable<ChatStreamChunk>
   switchSession?(sessionKey: string): Promise<void>
@@ -96,7 +121,10 @@ export interface ProviderHealth {
   ready: boolean
   /** Connection state consumers branch on for login, refresh, or fallback. */
   status: ProviderStatus
-  error?: string
+  /** Epoch millis when this probe completed. */
+  lastCheckedAt: number
+  /** Stable failure reason when the probe could not confirm readiness. */
+  failureReason?: string
 }
 
 /** Progress state of one plan step. */
@@ -156,7 +184,10 @@ export interface SemanticContext {
 
 /** Context snapshot written before a model switch. */
 export interface SessionCheckpoint {
+  /** Schema version for forward-compatible rehydration. */
+  schemaVersion: 1
   id: string
+  sessionId: string
   createdAt: number
   provider: string
   objective: string
@@ -164,7 +195,9 @@ export interface SessionCheckpoint {
   plan: PlanStep[]
   facts: string[]
   openQuestions: string[]
+  decisions: string[]
   memoryHighlights: string[]
+  modelSwitchHistory: ModelSwitchRecord[]
   modelSwitchReason?: string
 }
 

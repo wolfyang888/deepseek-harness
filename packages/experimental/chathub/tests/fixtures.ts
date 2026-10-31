@@ -9,6 +9,7 @@ import type {
   ModelCapabilities,
   ModelKind,
   PlanStep,
+  ProviderErrorCode,
   ProviderStatus,
   ChatSessionRecord,
   SemanticContext,
@@ -26,6 +27,8 @@ export interface FakeProviderOptions {
   response?: string | Error
   /** Optional health status; when set the provider exposes `healthStatus`. */
   healthStatus?: ProviderStatus | Error
+  /** Optional error normalizer; when set the provider exposes `normalizeError`. */
+  normalizeError?: ProviderErrorCode | ((error: unknown) => ProviderErrorCode)
 }
 
 /** A provider double that records every request it receives. */
@@ -38,6 +41,7 @@ export class FakeProvider implements IModelProvider {
   readonly #ready: boolean | Error
   readonly #response: string | Error
   healthStatus?: () => Promise<ProviderStatus>
+  normalizeError?: (error: unknown) => ProviderErrorCode
 
   constructor(options: FakeProviderOptions) {
     this.id = options.id
@@ -58,6 +62,13 @@ export class FakeProvider implements IModelProvider {
       this.healthStatus = (): Promise<ProviderStatus> => {
         if (status instanceof Error) return Promise.reject(status)
         return Promise.resolve(status)
+      }
+    }
+    if (options.normalizeError !== undefined) {
+      const normalizer = options.normalizeError
+      this.normalizeError = (error: unknown): ProviderErrorCode => {
+        if (typeof normalizer === 'function') return normalizer(error)
+        return normalizer
       }
     }
   }
