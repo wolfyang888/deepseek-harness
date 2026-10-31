@@ -84,15 +84,60 @@ describe('ProviderRegistry', () => {
     )
   })
 
-  it('routes a rejected probe through the provider normalizeError when present', async () => {
-    const health = await probeProvider(
-      fakeProvider({ id: 'delta', ready: new Error('rate limited'), normalizeError: 'rate-limited' }),
-    )
-    expect(health).toEqual(expect.objectContaining({
-      providerId: 'delta',
+  it('probes one provider by id for a status view', async () => {
+    const registry = new ProviderRegistry()
+    registry.register(fakeProvider({ id: 'alpha', ready: true }))
+
+    expect(await registry.health('alpha')).toEqual(expect.objectContaining({
+      providerId: 'alpha',
+      ready: true,
+      status: 'ready',
+    }))
+    await expect(registry.health('missing')).rejects.toMatchObject({ code: 'provider-not-registered' })
+  })
+
+  it('reopens a provider and reports its post-login health', async () => {
+    let signedIn = false
+    const registry = new ProviderRegistry()
+    registry.register(fakeProvider({
+      id: 'alpha',
+      healthStatus: async () => signedIn ? 'ready' : 'needs-auth',
+      reauthenticate: async () => { signedIn = true },
+    }))
+
+    expect(await registry.health('alpha')).toEqual(expect.objectContaining({
+      ready: false,
+      status: 'needs-auth',
+    }))
+    expect(await registry.reauthenticate('alpha')).toEqual(expect.objectContaining({
+      ready: true,
+      status: 'ready',
+    }))
+  })
+
+  it('reports a rejected re-login as failed health', async () => {
+    const registry = new ProviderRegistry()
+    registry.register(fakeProvider({
+      id: 'alpha',
+      reauthenticate: async () => { throw new Error('login failed') },
+      normalizeError: 'auth-required',
+    }))
+
+    expect(await registry.reauthenticate('alpha')).toEqual(expect.objectContaining({
+      providerId: 'alpha',
       ready: false,
       status: 'failed',
-      failureReason: 'rate-limited',
+      failureReason: 'auth-required',
     }))
+  })
+
+  it('rejects re-login for unknown providers and providers without the capability', async () => {
+    const registry = new ProviderRegistry()
+    registry.register(fakeProvider({ id: 'alpha' }))
+
+    await expect(registry.reauthenticate('missing'))
+      .rejects.toMatchObject({ code: 'provider-not-registered' })
+    await expect(registry.reauthenticate('alpha'))
+      .rejects.toMatchObject({ code: 'reauth-not-supported' })
   })
 })

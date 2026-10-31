@@ -22,6 +22,14 @@ export type ProviderErrorCode =
   | 'unsupported-capability'
   | 'unknown'
 
+/** One site-specific pattern an adapter maps to a stable failure code. */
+export interface ProviderFailureRule {
+  /** Failure category the pattern identifies. */
+  code: ProviderErrorCode
+  /** Pattern matched against the transport rejection's message. */
+  pattern: RegExp
+}
+
 /** Capabilities a provider advertises to routing and prompt compilation. */
 export interface ModelCapabilities {
   reasoning: boolean
@@ -104,6 +112,14 @@ export interface IModelProvider {
   sendMessage(request: ChatRequest): Promise<ChatResponse>
   streamMessage(request: ChatRequest): AsyncIterable<ChatStreamChunk>
   switchSession?(sessionKey: string): Promise<void>
+  /**
+   * Reopen a signed-out or expired provider connection after the user signs in again.
+   *
+   * Providers that cannot reopen a connection omit this method; the registry
+   * then reports the re-login request as unsupported.
+   * @returns Resolves when the provider attempted to reopen its connection.
+   */
+  reauthenticate?(): Promise<void>
   close(): Promise<void>
 }
 
@@ -201,6 +217,22 @@ export interface SessionCheckpoint {
   modelSwitchReason?: string
 }
 
+/** Chronological event kinds a session records for host views and replay. */
+export type SessionTimelineKind = 'session-created' | 'provider-switch' | 'status' | 'memory'
+
+/** One ordered event in a session's timeline. */
+export interface SessionTimelineEntry {
+  id: string
+  kind: SessionTimelineKind
+  /** Epoch millis when the event was recorded. */
+  at: number
+  /** Provider active when the event happened. */
+  provider: string
+  detail: string
+  /** Checkpoint written by the model switch this entry records. */
+  checkpointId?: string
+}
+
 /** Durable state of one ChatHub session. */
 export interface ChatSessionRecord {
   id: string
@@ -214,6 +246,7 @@ export interface ChatSessionRecord {
   memory: MemoryEntry[]
   context: SemanticContext
   checkpoints: SessionCheckpoint[]
+  timeline: SessionTimelineEntry[]
 }
 
 /** Lifecycle state exposed to session views. */

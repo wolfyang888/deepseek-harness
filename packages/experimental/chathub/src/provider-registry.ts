@@ -1,6 +1,6 @@
-/** Provider registration and readiness probing for ChatHub. */
+/** Provider registration, readiness probing, and re-login recovery for ChatHub. */
 
-import { errorMessage } from './errors.ts'
+import { ChatHubError, errorMessage } from './errors.ts'
 import type {
   IModelProvider,
   IProviderRegistry,
@@ -27,17 +27,22 @@ export async function probeProvider(provider: IModelProvider): Promise<ProviderH
     return { providerId: provider.id, ready: false, status, lastCheckedAt }
   } catch (error) {
     // A rejected probe means the provider cannot serve; keep the reason for diagnostics.
-    const failureReason = provider.normalizeError !== undefined
-      ? provider.normalizeError(error)
-      : errorMessage(error)
-    return {
-      providerId: provider.id,
-      ready: false,
-      status: 'failed',
-      lastCheckedAt,
-      failureReason,
-    }
+    return failedHealth(provider, error, lastCheckedAt)
   }
+}
+
+/**
+ * Build a failed health record for a rejected probe.
+ * @param provider - Provider whose probe rejected.
+ * @param error - Rejected value.
+ * @param lastCheckedAt - Epoch millis when the probe finished.
+ * @returns The failed health record.
+ */
+function failedHealth(provider: IModelProvider, error: unknown, lastCheckedAt: number): ProviderHealth {
+  const failureReason = provider.normalizeError !== undefined
+    ? provider.normalizeError(error)
+    : errorMessage(error)
+  return { providerId: provider.id, ready: false, status: 'failed', lastCheckedAt, failureReason }
 }
 
 /** In-memory provider registry supporting replacement and identity-safe removal. */
@@ -87,5 +92,51 @@ export class ProviderRegistry implements IProviderRegistry {
       health.push(await probeProvider(provider))
     }
     return health
+  }
+
+  /**
+   * Probe one registered provider for a status view.
+   * @param providerId - Provider id to probe.
+   * @returns Its health record.
+   * @throws ChatHubError with `provider-not-registered` when the id is unknown.
+   */
+  async health(providerId: string): Promise<ProviderHealth> {
+    return probeProvider(this.require(providerId))
+  }
+
+  /**
+   * Ask a signed-out or expired provider to reopen after the user signs in again.
+   * @param providerId - Provider id to recover.
+   * @returns The post-recovery health, or a failed record when reopening rejected.
+   * @throws ChatHubError with `provider-not-registered` for an unknown id, or
+   *   `reauth-not-supported` when the provider cannot reopen itself.
+   */
+  async reauthenticate(providerId: string): Promise<ProviderHealth> {
+    const provider = this.require(providerId)
+    if (provider.reauthenticate === undefined) {
+      throw new ChatHubError(
+        'reauth-not-supported',
+        `ChatHub provider "${providerId}" cannot reopen its connection.`,
+      )
+    }
+    try {
+      await provider.reauthenticate()
+    } catch (error) {
+      return failedHealth(provider, error, Date.now())
+    }
+    return probeProvider(provider)
+  }
+
+  /**
+   * @param providerId - Provider id to resolve.
+   * @returns The registered provider.
+   * @throws ChatHubError with `provider-not-registered` when the id is unknown.
+   */
+  private require(providerId: string): IModelProvider {
+    const provider = this.providers.get(providerId)
+    if (provider === undefined) {
+      throw new ChatHubError('provider-not-registered', `ChatHub has no provider "${providerId}".`)
+    }
+    return provider
   }
 }

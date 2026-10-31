@@ -4,6 +4,7 @@ import { ChatHubError } from './errors.ts'
 import { createSessionId } from './ids.ts'
 import { probeProvider } from './provider-registry.ts'
 import { clonePlan } from './session-memory.ts'
+import type { SessionTimelineService } from './timeline.ts'
 import type {
   ChatMessage,
   ChatRequest,
@@ -24,6 +25,7 @@ export interface SessionManagerOptions {
   registry: IProviderRegistry
   compiler: IContextCompiler
   checkpoints: ICheckpointService
+  timeline: SessionTimelineService
   now?: () => number
 }
 
@@ -55,17 +57,20 @@ export class SessionManager {
   private readonly registry: IProviderRegistry
   private readonly compiler: IContextCompiler
   private readonly checkpoints: ICheckpointService
+  private readonly timeline: SessionTimelineService
   private readonly now: () => number
   private readonly states = new Map<string, SessionRuntimeState>()
+  private readonly sessions = new Map<string, ChatSessionRecord>()
   private sequence = 0
 
   /**
-   * @param options - Registry, compiler, checkpoint builder, and optional clock override.
+   * @param options - Registry, compiler, checkpoint builder, timeline, and optional clock override.
    */
   constructor(options: SessionManagerOptions) {
     this.registry = options.registry
     this.compiler = options.compiler
     this.checkpoints = options.checkpoints
+    this.timeline = options.timeline
     this.now = options.now ?? Date.now
   }
 
@@ -102,7 +107,14 @@ export class SessionManager {
         lastToolResults: [],
       },
       checkpoints: [],
+      timeline: [],
     }
+    this.sessions.set(session.id, session)
+    this.timeline.record(session, {
+      kind: 'session-created',
+      provider: session.currentProvider,
+      detail: `Session created for ${session.currentProvider}.`,
+    })
     this.writeState(session, 'idle')
     return session
   }
@@ -184,6 +196,12 @@ export class SessionManager {
     session.context = context
     session.checkpoints = [...session.checkpoints, checkpoint]
     session.updatedAt = at
+    this.timeline.record(session, {
+      kind: 'provider-switch',
+      provider: toProvider,
+      detail: `${record.from} -> ${record.to}: ${reason}`,
+      checkpointId: checkpoint.id,
+    })
     this.writeState(session, 'thinking', checkpoint.id)
     return {
       checkpoint,
@@ -218,6 +236,14 @@ export class SessionManager {
     const next: SessionRuntimeState = { ...current, status }
     if (lastError !== undefined) next.lastError = lastError
     this.states.set(sessionId, next)
+    const session = this.sessions.get(sessionId)
+    if (session !== undefined) {
+      this.timeline.record(session, {
+        kind: 'status',
+        provider: session.currentProvider,
+        detail: lastError === undefined ? status : `${status}: ${lastError}`,
+      })
+    }
     return next
   }
 

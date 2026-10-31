@@ -6,6 +6,7 @@ import {
   ContextCompiler,
   ProviderRegistry,
   SessionManager,
+  SessionTimelineService,
 } from '@deepseek-ai/dsh-experimental-chathub'
 import type { SessionManagerOptions } from '@deepseek-ai/dsh-experimental-chathub'
 import { FakeProvider, fakeProvider, planStep, userMessage } from './fixtures.ts'
@@ -23,6 +24,7 @@ function setup(options: Partial<SessionManagerOptions> = {}) {
     registry: injected ?? registry,
     compiler: new ContextCompiler({ details: { 'gemini-web': 'compact' } }),
     checkpoints: new CheckpointService(),
+    timeline: new SessionTimelineService({ now: () => AT }),
     now: () => AT,
     ...rest,
   })
@@ -78,6 +80,7 @@ describe('SessionManager.create', () => {
       registry,
       compiler: new ContextCompiler(),
       checkpoints: new CheckpointService(),
+      timeline: new SessionTimelineService(),
     })
     const before = Date.now()
     const session = manager.create({ title: 'Fix', goal: 'goal', provider: 'deepseek-web' })
@@ -254,6 +257,33 @@ describe('SessionManager runtime state', () => {
   })
 })
 
+describe('SessionManager timeline', () => {
+  it('records creation, status changes, and checkpoint-backed switches in order', async () => {
+    const { manager } = setup()
+    const session = manager.create({ title: 'Fix', goal: 'goal', provider: 'deepseek-web' })
+    manager.setStatus(session.id, 'tool-running')
+    const outcome = await manager.switchProvider(session, 'gemini-web', 'tool stalled')
+
+    expect(session.timeline.map(entry => entry.kind)).toEqual([
+      'session-created',
+      'status',
+      'provider-switch',
+    ])
+    expect(session.timeline.map(entry => entry.id)).toEqual([
+      'tl_20261031_001',
+      'tl_20261031_002',
+      'tl_20261031_003',
+    ])
+    expect(session.timeline[1]).toMatchObject({ provider: 'deepseek-web', detail: 'tool-running', at: AT })
+    expect(session.timeline[2]).toMatchObject({
+      provider: 'gemini-web',
+      detail: 'deepseek-web -> gemini-web: tool stalled',
+      checkpointId: outcome.checkpoint.id,
+      at: AT,
+    })
+  })
+})
+
 describe('Model switch integration', () => {
   it('preserves the objective, plan, and facts across DeepSeek to Gemini (IT-01)', async () => {
     const registry = new ProviderRegistry()
@@ -264,6 +294,7 @@ describe('Model switch integration', () => {
       registry,
       compiler,
       checkpoints: new CheckpointService(),
+      timeline: new SessionTimelineService({ now: () => AT }),
       now: () => AT,
     })
 
@@ -317,6 +348,7 @@ describe('Model switch integration', () => {
       registry,
       compiler,
       checkpoints: new CheckpointService(),
+      timeline: new SessionTimelineService({ now: () => AT }),
       now: () => AT,
     })
 
@@ -357,6 +389,7 @@ describe('Model switch integration', () => {
       registry,
       compiler: new ContextCompiler(),
       checkpoints: new CheckpointService(),
+      timeline: new SessionTimelineService({ now: () => AT }),
       now: () => AT,
     })
 

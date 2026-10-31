@@ -40,6 +40,7 @@ import {
   ModelRouter,
   ProviderRegistry,
   SessionManager,
+  SessionTimelineService,
 } from '@deepseek-ai/dsh-experimental-chathub'
 import type { WebChatTransport } from '@deepseek-ai/dsh-experimental-chathub'
 ```
@@ -61,7 +62,7 @@ await provider.init()
 registry.register(provider)
 ```
 
-`init` reports readiness through the site login state: `open` returns `undefined` while the user still has to sign in. `webProviderAdapters` maps `deepseek-web`, `chatgpt-web`, `gemini-web`, and `doubao-web` to constructors for hosts that build providers from configuration.
+`init` reports readiness through the site login state: `open` returns `undefined` while the user still has to sign in. `webProviderAdapters` maps `deepseek-web`, `chatgpt-web`, `gemini-web`, and `doubao-web` to constructors for hosts that build providers from configuration. Every constructor also takes `WebProviderOverrides` — capability flags, prompt heading, and extra site failure rules — so a host applies the same configuration to any shipped adapter. When the user signs in again, `ProviderRegistry.reauthenticate(providerId)` reopens the provider and reports its new health; `ProviderRegistry.health(providerId)` returns one provider's health record for a status view.
 
 The common path registers providers, creates a session, and hands the next turn to a router:
 
@@ -71,6 +72,7 @@ import {
   ContextCompiler,
   ProviderRegistry,
   SessionManager,
+  SessionTimelineService,
 } from '@deepseek-ai/dsh-experimental-chathub'
 import type { ChatMessage, IModelProvider } from '@deepseek-ai/dsh-experimental-chathub'
 
@@ -85,13 +87,14 @@ const manager = new SessionManager({
   registry,
   compiler: new ContextCompiler(),
   checkpoints: new CheckpointService(),
+  timeline: new SessionTimelineService(),
 })
 const session = manager.create({ title: 'Fix the build', goal: 'fix the build error', provider: 'deepseek-web' })
 const request = manager.buildRequest(session, { messages: [userMessage] })
 const outcome = await manager.switchProvider(session, 'gemini-web', 'need long-context review')
 ```
 
-`switchProvider` writes a checkpoint for the outgoing provider, compiles the semantic context for the incoming one, records the switch, and returns the rendered prompt so the caller can send it. `ModelRouter.route` chooses a provider for `coding`, `research`, or `quick-answer` turns; `ModelRouter.complete` sends the turn and falls back down the candidate order when a provider call fails. `SessionMemoryService` records facts, preferences, plans, decisions, and open questions on the session those services read.
+`switchProvider` writes a checkpoint for the outgoing provider, compiles the semantic context for the incoming one, records the switch, and returns the rendered prompt so the caller can send it. `ModelRouter.route` chooses a provider for `coding`, `research`, or `quick-answer` turns; `ModelRouter.complete` sends the turn, retries transient failures within one provider when a `RetryPolicy` is configured, then falls back down the candidate order. `SessionMemoryService` records facts, preferences, plans, decisions, and open questions on the session those services read, and `SessionMemoryService.compact` bounds a long session's memory by importance and recency. `SessionTimelineService` records session creation, provider switches, status changes, and memory writes as ordered entries on the session for a host view or replay.
 
 -----
 
@@ -101,7 +104,7 @@ const outcome = await manager.switchProvider(session, 'gemini-web', 'need long-c
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-The session record is the canonical state: goal, plan, memory entries, semantic context, checkpoints, and provider history. `ContextCompiler` derives the provider-independent context from it and renders one of three prompt details — `full`, `compact`, or `detailed` — selected per provider. `CheckpointService` snapshots the same state before a switch, so history never depends on a provider's own conversation memory. `ModelRouter` builds its candidate order from configured routing, the per-turn preference, capability flags, configured fallbacks, then the remaining registry entries, and skips candidates that fail readiness or an `undefined` lookup. `WebModelProvider` is the browser adapter base: it folds system text, renders the provider-styled prompt, wraps transport failures as `provider-call-failed`, and streams deltas when the session offers them; the shipped adapters differ only in identity, capabilities, and prompt heading.
+The session record is the canonical state: goal, plan, memory entries, semantic context, checkpoints, provider history, and timeline. `ContextCompiler` derives the provider-independent context from it and renders one of three prompt details — `full`, `compact`, or `detailed` — selected per provider. `CheckpointService` snapshots the same state before a switch, so history never depends on a provider's own conversation memory. `ModelRouter` builds its candidate order from configured routing, the per-turn preference, capability flags, configured fallbacks, then the remaining registry entries, and skips candidates that fail readiness or an `undefined` lookup; a host-supplied `RetryPolicy` lists the failure codes that justify another attempt on the same provider before the router moves on. `WebModelProvider` is the browser adapter base: it folds system text, renders the provider-styled prompt, wraps transport failures as `provider-call-failed`, and streams deltas when the session offers them. Each shipped adapter supplies one `WebProviderConfig` — identity, capabilities, prompt heading, and site-specific failure rules — that the shared base class consumes, so adapters differ only in configuration and hosts override it uniformly.
 
 | File | Role |
 |---|---|
@@ -118,7 +121,8 @@ The session record is the canonical state: goal, plan, memory entries, semantic 
 | [`src/providers/doubao-web.ts`](src/providers/doubao-web.ts) | Doubao adapter |
 | [`src/providers/adapters.ts`](src/providers/adapters.ts) | Provider-id keyed constructors for the shipped adapters |
 | [`src/session-manager.ts`](src/session-manager.ts) | Session creation, request building, model switching, and runtime state |
-| [`src/ids.ts`](src/ids.ts) | Date-stamped session, checkpoint, and memory ids |
+| [`src/timeline.ts`](src/timeline.ts) | Ordered session timeline entries for host views and replay |
+| [`src/ids.ts`](src/ids.ts) | Date-stamped session, checkpoint, memory, and timeline ids |
 | [`src/errors.ts`](src/errors.ts) | Typed `ChatHubError` codes |
 
 </details>
@@ -149,9 +153,10 @@ The adapters add no content beyond the prompt they render; a consumer's cached r
 
 - Browser transports are not bundled: hosts implement `WebChatTransport` with their own automation and login handling, and cookies or tokens never enter provider code, session state, or logs.
 - Web adapters carry text only: `tool` messages are rejected with `unsupported-request`, and declared capabilities describe the payload this adapter sends, not the site's full feature set.
-- Sessions, memory, and checkpoints live in memory; nothing persists or reloads them across process restarts.
+- Sessions, memory, checkpoints, and timeline entries live in memory; nothing persists or reloads them across process restarts.
 - Routing uses static capability flags per task type and does not learn from call outcomes.
-- No UI ships; a host consumer owns conversation display and provider selection.
+- Retry attempts and compaction bounds come from the host; the library applies only the policy it is given and ships no default.
+- No UI ships; a host consumer owns conversation display and provider selection, using `ProviderRegistry.health`, `ProviderRegistry.reauthenticate`, and the session timeline as its data sources.
 
 <a id="dev-note"></a>
 ### Dev Note

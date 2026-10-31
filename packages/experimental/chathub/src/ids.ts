@@ -43,6 +43,16 @@ export function createMemoryEntryId(at: number, sequence: number): string {
   return `mem_${formatDateStamp(at)}_${padSequence(sequence)}`
 }
 
+/**
+ * Create a timeline-entry identifier in the `tl_yyyyMMdd_xxx` form.
+ * @param at - Epoch milliseconds of the event.
+ * @param sequence - Event order within the session, padded to three digits.
+ * @returns Timeline-entry identifier.
+ */
+export function createTimelineEntryId(at: number, sequence: number): string {
+  return `tl_${formatDateStamp(at)}_${padSequence(sequence)}`
+}
+
 function padSequence(sequence: number): string {
   return String(sequence).padStart(3, '0')
 }

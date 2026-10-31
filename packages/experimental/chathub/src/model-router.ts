@@ -1,6 +1,6 @@
 /** Task-aware model routing with capability matching, ordered fallbacks, and failure fallback. */
 
-import { ChatHubError, errorMessage } from './errors.ts'
+import { ChatHubError, errorMessage, type ChatHubErrorCode } from './errors.ts'
 import { probeProvider } from './provider-registry.ts'
 import type {
   ChatMessage,
@@ -9,6 +9,7 @@ import type {
   IModelProvider,
   IProviderRegistry,
   ModelCapabilities,
+  ProviderErrorCode,
   SemanticContext,
   ChatSessionRecord,
 } from './types.ts'
@@ -36,6 +37,20 @@ export interface ModelRouterOptions {
   registry: IProviderRegistry
   routing?: Partial<Record<TaskType, string>>
   fallbackProviders?: string[]
+  retry?: RetryPolicy
+}
+
+/** Failure codes a retry policy may treat as transient. */
+export type RetryableErrorCode = ChatHubErrorCode | ProviderErrorCode
+
+/** Retry policy applied inside one provider before the router falls back. */
+export interface RetryPolicy {
+  /** Total attempts per provider, including the first call. */
+  maxAttempts: number
+  /** Delay between attempts in milliseconds. */
+  delayMs: number
+  /** Failure codes that justify retrying the same provider. */
+  retryOn: readonly RetryableErrorCode[]
 }
 
 /** One routed turn with the semantic context the selected provider receives. */
@@ -49,6 +64,8 @@ export interface CompletionRequest extends RouteRequest {
 /** One failed provider call during a fallback chain. */
 export interface ProviderAttempt {
   providerId: string
+  /** One-based attempt number on that provider. */
+  attempt: number
   error: string
 }
 
@@ -72,14 +89,18 @@ export class ModelRouter {
   private readonly registry: IProviderRegistry
   private readonly routing: Partial<Record<TaskType, string>>
   private readonly fallbackProviders: string[]
+  private readonly retry: RetryPolicy | undefined
 
   /**
-   * @param options - Registry plus optional per-task routing and fallback order.
+   * @param options - Registry plus optional routing, fallback order, and retry policy.
+   * @throws ChatHubError with `invalid-retry-policy` when a policy bound is invalid.
    */
   constructor(options: ModelRouterOptions) {
     this.registry = options.registry
     this.routing = options.routing ?? {}
     this.fallbackProviders = options.fallbackProviders ?? []
+    this.retry = options.retry
+    if (this.retry !== undefined) assertRetryPolicy(this.retry)
   }
 
   /**
@@ -116,16 +137,22 @@ export class ModelRouter {
       const provider = this.registry.get(candidate.providerId)
       if (provider === undefined) continue
       if (!(await probeProvider(provider)).ready) continue
-      try {
-        const response = await provider.sendMessage(this.chatRequest(request, provider.id))
-        return {
-          provider,
-          response,
-          usedFallback: attempts.length > 0 || candidate.fallback,
-          attempts,
+      const maxAttempts = this.retry?.maxAttempts ?? 1
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        try {
+          const response = await provider.sendMessage(this.chatRequest(request, provider.id))
+          return {
+            provider,
+            response,
+            usedFallback: candidate.fallback || attempts.some(item => item.providerId !== provider.id),
+            attempts,
+          }
+        } catch (error) {
+          attempts.push({ providerId: provider.id, attempt, error: errorMessage(error) })
+          if (this.retry === undefined || attempt >= maxAttempts) break
+          if (!retryable(error, this.retry.retryOn)) break
+          if (this.retry.delayMs > 0) await delay(this.retry.delayMs)
         }
-      } catch (error) {
-        attempts.push({ providerId: provider.id, error: errorMessage(error) })
       }
     }
     if (attempts.length === 0) {
@@ -227,4 +254,41 @@ function dedupe(candidates: RouteCandidate[]): RouteCandidate[] {
     unique.push(candidate)
   }
   return unique
+}
+
+/**
+ * @param policy - Retry policy supplied by the host.
+ * @throws ChatHubError with `invalid-retry-policy` for invalid attempt or delay bounds.
+ */
+function assertRetryPolicy(policy: RetryPolicy): void {
+  if (!Number.isInteger(policy.maxAttempts) || policy.maxAttempts < 1) {
+    throw new ChatHubError(
+      'invalid-retry-policy',
+      'ChatHub retry maxAttempts must be a positive integer.',
+    )
+  }
+  if (!Number.isInteger(policy.delayMs) || policy.delayMs < 0) {
+    throw new ChatHubError(
+      'invalid-retry-policy',
+      'ChatHub retry delayMs must be a non-negative integer.',
+    )
+  }
+}
+
+/**
+ * @param error - Rejected provider call.
+ * @param codes - Codes the policy treats as transient.
+ * @returns Whether the call may be retried on the same provider.
+ */
+function retryable(error: unknown, codes: readonly RetryableErrorCode[]): boolean {
+  const code: RetryableErrorCode = error instanceof ChatHubError ? error.code : 'unknown'
+  return codes.includes(code)
+}
+
+/**
+ * @param delayMs - Non-negative delay in milliseconds.
+ * @returns Resolves after the delay.
+ */
+function delay(delayMs: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, delayMs))
 }

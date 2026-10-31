@@ -40,6 +40,7 @@ import {
   ModelRouter,
   ProviderRegistry,
   SessionManager,
+  SessionTimelineService,
 } from '@deepseek-ai/dsh-experimental-chathub'
 import type { WebChatTransport } from '@deepseek-ai/dsh-experimental-chathub'
 ```
@@ -61,7 +62,7 @@ await provider.init()
 registry.register(provider)
 ```
 
-`init` 通过站点登录状态报告就绪：用户仍需登录时 `open` 返回 `undefined`。`webProviderAdapters` 把 `deepseek-web`、`chatgpt-web`、`gemini-web` 与 `doubao-web` 映射到构造函数，供按配置构建提供方的宿主使用。
+`init` 通过站点登录状态报告就绪：用户仍需登录时 `open` 返回 `undefined`。`webProviderAdapters` 把 `deepseek-web`、`chatgpt-web`、`gemini-web` 与 `doubao-web` 映射到构造函数，供按配置构建提供方的宿主使用。每个构造函数还接受 `WebProviderOverrides`——能力标记、提示词标题与额外的站点失败规则——因此宿主可把同一份配置套用到任一随包适配器。用户重新登录后，`ProviderRegistry.reauthenticate(providerId)` 会重新打开提供方并报告新的健康状态；`ProviderRegistry.health(providerId)` 返回单个提供方的健康记录，供状态视图使用。
 
 常见路径先注册提供方、创建会话，再把下一轮交给路由器：
 
@@ -71,6 +72,7 @@ import {
   ContextCompiler,
   ProviderRegistry,
   SessionManager,
+  SessionTimelineService,
 } from '@deepseek-ai/dsh-experimental-chathub'
 import type { ChatMessage, IModelProvider } from '@deepseek-ai/dsh-experimental-chathub'
 
@@ -85,13 +87,14 @@ const manager = new SessionManager({
   registry,
   compiler: new ContextCompiler(),
   checkpoints: new CheckpointService(),
+  timeline: new SessionTimelineService(),
 })
 const session = manager.create({ title: 'Fix the build', goal: 'fix the build error', provider: 'deepseek-web' })
 const request = manager.buildRequest(session, { messages: [userMessage] })
 const outcome = await manager.switchProvider(session, 'gemini-web', 'need long-context review')
 ```
 
-`switchProvider` 先为原提供方写入检查点，再为新提供方编译语义上下文、记录本次切换，并返回渲染好的提示词供调用方发送。`ModelRouter.route` 为 `coding`、`research`、`quick-answer` 三类回合挑选提供方；`ModelRouter.complete` 发送该回合，并在某次提供方调用失败时沿候选顺序降级。`SessionMemoryService` 在会话上记录事实、偏好、计划、决定与未解问题，供上述服务读取。
+`switchProvider` 先为原提供方写入检查点，再为新提供方编译语义上下文、记录本次切换，并返回渲染好的提示词供调用方发送。`ModelRouter.route` 为 `coding`、`research`、`quick-answer` 三类回合挑选提供方；`ModelRouter.complete` 发送该回合，在配置了 `RetryPolicy` 时先在同一提供方内重试瞬时失败，再沿候选顺序降级。`SessionMemoryService` 在会话上记录事实、偏好、计划、决定与未解问题，供上述服务读取，并可通过 `SessionMemoryService.compact` 按重要度与时间先后限制长会话的记忆规模。`SessionTimelineService` 把会话创建、提供方切换、状态变化与记忆写入记录为会话上的有序时间线条目，供宿主视图或回放使用。
 
 -----
 
@@ -101,7 +104,7 @@ const outcome = await manager.switchProvider(session, 'gemini-web', 'need long-c
 <details>
 <summary>实现细节 — 点击展开</summary>
 
-会话记录是唯一权威状态：目标、计划、记忆条目、语义上下文、检查点与提供方历史。`ContextCompiler` 从中派生出与提供方无关的上下文，并渲染 `full`、`compact` 或 `detailed` 三档提示词，按提供方选择。`CheckpointService` 在切换前快照同一状态，因此历史不依赖任何提供方自己的对话记忆。`ModelRouter` 的候选顺序为：已配置路由、本轮偏好、能力标记、已配置降级项，最后是注册表中的其余提供方；它就绪检查失败或查找结果为 `undefined` 的候选会被跳过。`WebModelProvider` 是浏览器适配器基类：它合并系统文本、渲染提供方风格的提示词、把传输失败包装为 `provider-call-failed`，并在会话支持时流式输出增量；随包适配器仅在身份、能力与提示词标题上不同。
+会话记录是唯一权威状态：目标、计划、记忆条目、语义上下文、检查点、提供方历史与时间线。`ContextCompiler` 从中派生出与提供方无关的上下文，并渲染 `full`、`compact` 或 `detailed` 三档提示词，按提供方选择。`CheckpointService` 在切换前快照同一状态，因此历史不依赖任何提供方自己的对话记忆。`ModelRouter` 的候选顺序为：已配置路由、本轮偏好、能力标记、已配置降级项，最后是注册表中的其余提供方；它就绪检查失败或查找结果为 `undefined` 的候选会被跳过；宿主提供的 `RetryPolicy` 列出可在同一提供方再次尝试的失败错误码，重试预算耗尽后路由器才继续降级。`WebModelProvider` 是浏览器适配器基类：它合并系统文本、渲染提供方风格的提示词、把传输失败包装为 `provider-call-failed`，并在会话支持时流式输出增量。每个随包适配器提供一份 `WebProviderConfig`——身份、能力、提示词标题与站点专属失败规则——由共享基类消费，因此适配器只在配置上不同，宿主也可统一覆盖。
 
 | 文件 | 作用 |
 |---|---|
@@ -118,7 +121,8 @@ const outcome = await manager.switchProvider(session, 'gemini-web', 'need long-c
 | [`src/providers/doubao-web.ts`](src/providers/doubao-web.ts) | Doubao 适配器 |
 | [`src/providers/adapters.ts`](src/providers/adapters.ts) | 按提供方 id 索引的随包适配器构造函数 |
 | [`src/session-manager.ts`](src/session-manager.ts) | 会话创建、请求构建、模型切换与运行时状态 |
-| [`src/ids.ts`](src/ids.ts) | 带日期的会话、检查点与记忆 id |
+| [`src/timeline.ts`](src/timeline.ts) | 供宿主视图与回放使用的有序会话时间线条目 |
+| [`src/ids.ts`](src/ids.ts) | 带日期的会话、检查点、记忆与时间线 id |
 | [`src/errors.ts`](src/errors.ts) | 带类型的 `ChatHubError` 错误码 |
 
 </details>
@@ -149,9 +153,10 @@ const outcome = await manager.switchProvider(session, 'gemini-web', 'need long-c
 
 - 不随包提供浏览器传输：宿主用自己的自动化与登录处理实现 `WebChatTransport`，cookie 或令牌不会进入提供方代码、会话状态或日志。
 - 浏览器适配器只承载文本：`tool` 消息会以 `unsupported-request` 被拒绝，声明的能力描述的是本适配器发送的载荷，而不是站点的全部能力。
-- 会话、记忆与检查点只存在于内存中，不会跨进程重启持久化或重新加载。
+- 会话、记忆、检查点与时间线条目只存在于内存中，不会跨进程重启持久化或重新加载。
 - 路由按任务类型使用静态能力标记，不从调用结果中学习。
-- 不提供界面；会话展示与提供方选择由宿主消费方负责。
+- 重试次数与压缩边界由宿主给出；库只应用收到的那份策略，不内置默认值。
+- 不提供界面；会话展示与提供方选择由宿主消费方负责，可以 `ProviderRegistry.health`、`ProviderRegistry.reauthenticate` 与会话时间线作为数据来源。
 
 <a id="dev-note"></a>
 ### 开发备注

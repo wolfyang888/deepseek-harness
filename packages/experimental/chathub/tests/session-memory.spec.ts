@@ -13,6 +13,23 @@ import { planStep, semanticContext, sessionRecord } from './fixtures.ts'
 /** Fixed clock used by memory specs. */
 const AT = Date.UTC(2026, 9, 31, 8)
 
+/**
+ * Build one memory entry for compaction and derivation specs.
+ * @param overrides - Fields to override.
+ * @returns One memory entry.
+ */
+function entry(overrides: Partial<MemoryEntry>): MemoryEntry {
+  return {
+    id: 'mem_1',
+    type: 'fact',
+    content: 'fact',
+    source: 'agent',
+    importance: 1,
+    createdAt: 1,
+    ...overrides,
+  }
+}
+
 describe('SessionMemoryService', () => {
   it('records entries with date-stamped ids, default importance, and update time', () => {
     const memory = new SessionMemoryService({ now: () => AT })
@@ -115,19 +132,75 @@ describe('SessionMemoryService', () => {
   })
 })
 
-describe('memory derivations', () => {
-  function entry(overrides: Partial<MemoryEntry>): MemoryEntry {
-    return {
-      id: 'mem_1',
-      type: 'fact',
-      content: 'fact',
-      source: 'agent',
-      importance: 1,
-      createdAt: 1,
-      ...overrides,
-    }
+describe('SessionMemoryService.compact', () => {
+  const BOUNDS = {
+    maxEntries: 2,
+    maxWorkingMemory: 2,
+    maxToolResults: 2,
+    maxModelSwitches: 2,
   }
 
+  it('deduplicates entries and keeps them by importance then recency', () => {
+    const memory = new SessionMemoryService({ now: () => AT })
+    const session = sessionRecord({
+      memory: [
+        entry({ id: 'low', content: 'low value', importance: 1, createdAt: 2 }),
+        entry({ id: 'high', content: 'high value', importance: 5, createdAt: 1 }),
+        entry({ id: 'duplicate', content: 'high value', importance: 5, createdAt: 1 }),
+        entry({ id: 'middle', content: 'middle value', importance: 3, createdAt: 3 }),
+      ],
+    })
+
+    const result = memory.compact(session, BOUNDS)
+
+    expect(session.memory.map(item => item.id)).toEqual(['high', 'middle'])
+    expect(result.retainedEntries).toBe(2)
+    expect(result.removedEntries.map(item => item.id)).toEqual(['duplicate', 'low'])
+    expect(session.updatedAt).toBe(AT)
+  })
+
+  it('keeps the most recent working-memory, tool-result, and switch values', () => {
+    const memory = new SessionMemoryService({ now: () => AT })
+    const session = sessionRecord({
+      context: semanticContext({
+        facts: ['fact one', 'fact two'],
+        decisions: ['keep pnpm'],
+        openQuestions: ['is the frontend at fault?'],
+        workingMemory: ['one', 'two', 'three'],
+        lastToolResults: [
+          { toolCallId: 't1', name: 'read', summary: 'first', createdAt: 1 },
+          { toolCallId: 't2', name: 'grep', summary: 'second', createdAt: 2 },
+          { toolCallId: 't3', name: 'shell', summary: 'third', createdAt: 3 },
+        ],
+        modelSwitchHistory: [
+          { from: 'deepseek-web', to: 'gemini-web', timestamp: 1, checkpointId: 'cp_1', reason: 'review' },
+          { from: 'gemini-web', to: 'chatgpt-web', timestamp: 2, checkpointId: 'cp_2', reason: 'review' },
+          { from: 'chatgpt-web', to: 'doubao-web', timestamp: 3, checkpointId: 'cp_3', reason: 'review' },
+        ],
+      }),
+    })
+
+    memory.compact(session, BOUNDS)
+
+    expect(session.context.workingMemory).toEqual(['two', 'three'])
+    expect(session.context.lastToolResults.map(result => result.toolCallId)).toEqual(['t2', 't3'])
+    expect(session.context.modelSwitchHistory.map(record => record.to)).toEqual(['chatgpt-web', 'doubao-web'])
+    expect(session.context.facts).toEqual(['fact one', 'fact two'])
+    expect(session.context.decisions).toEqual(['keep pnpm'])
+    expect(session.context.openQuestions).toEqual(['is the frontend at fault?'])
+  })
+
+  it('rejects a non-positive or fractional bound', () => {
+    const memory = new SessionMemoryService({ now: () => AT })
+
+    expect(() => memory.compact(sessionRecord(), { ...BOUNDS, maxEntries: 0 }))
+      .toThrow(expect.objectContaining({ code: 'invalid-compaction-limit' }))
+    expect(() => memory.compact(sessionRecord(), { ...BOUNDS, maxWorkingMemory: 1.5 }))
+      .toThrow(expect.objectContaining({ code: 'invalid-compaction-limit' }))
+  })
+})
+
+describe('memory derivations', () => {
   it('orders highlights by importance then recency and deduplicates content', () => {
     const session = sessionRecord({
       memory: [

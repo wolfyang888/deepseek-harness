@@ -12,6 +12,7 @@ import type {
   ModelCapabilities,
   ModelKind,
   ProviderErrorCode,
+  ProviderFailureRule,
   ProviderStatus,
 } from '../types.ts'
 
@@ -103,6 +104,60 @@ export interface WebPromptStyle {
   heading: string
 }
 
+/** Capabilities the shipped browser adapters declare for their text payload. */
+export const WEB_PROVIDER_CAPABILITIES: ModelCapabilities = {
+  reasoning: true,
+  coding: true,
+  vision: false,
+  webAccess: true,
+  streaming: true,
+}
+
+/** Fixed identity and defaults one browser adapter declares. */
+export interface WebProviderConfig {
+  /** Site identity used for registry lookup and transport sessions. */
+  id: string
+  /** Human-readable provider name. */
+  name: string
+  /** Capabilities this adapter's text payload can carry. */
+  capabilities: ModelCapabilities
+  /** Heading that introduces compiled task context. */
+  promptStyle: WebPromptStyle
+  /** Site-specific failure patterns checked before the shared defaults. */
+  failureRules?: readonly ProviderFailureRule[]
+}
+
+/** Host-supplied overrides applied uniformly to every shipped adapter. */
+export interface WebProviderOverrides {
+  /** Capability flags to change from the adapter's declared set. */
+  capabilities?: Partial<ModelCapabilities>
+  /** Prompt style fields to change; other fields keep the adapter default. */
+  promptStyle?: Partial<WebPromptStyle>
+  /** Site-specific rules appended after the adapter's declared rules. */
+  failureRules?: readonly ProviderFailureRule[]
+}
+
+/**
+ * Apply host overrides to one adapter's declared defaults.
+ * @param defaults - Identity, capabilities, prompt style, and site rules the adapter ships.
+ * @param overrides - Host-supplied changes.
+ * @returns A fresh config with overrides applied.
+ */
+export function mergeWebProviderConfig(
+  defaults: WebProviderConfig,
+  overrides: WebProviderOverrides = {},
+): WebProviderConfig {
+  const config: WebProviderConfig = {
+    id: defaults.id,
+    name: defaults.name,
+    capabilities: { ...defaults.capabilities, ...overrides.capabilities },
+    promptStyle: { ...defaults.promptStyle, ...overrides.promptStyle },
+  }
+  const failureRules = [...(defaults.failureRules ?? []), ...(overrides.failureRules ?? [])]
+  if (failureRules.length > 0) config.failureRules = failureRules
+  return config
+}
+
 /**
  * Split one request into system text and conversation messages.
  * @param request - Request carrying the caller's messages and system prompt.
@@ -160,14 +215,16 @@ export function renderWebPrompt(system: string, messages: readonly ChatMessage[]
  */
 export abstract class WebModelProvider implements IModelProvider {
   /** Site identity used for registry lookup and transport sessions. */
-  abstract readonly id: string
+  readonly id: string
   /** Human-readable provider name. */
-  abstract readonly name: string
+  readonly name: string
   readonly kind: ModelKind = 'web'
   /** Capabilities this adapter's text payload can carry, not the site's full feature set. */
-  abstract readonly capabilities: ModelCapabilities
+  readonly capabilities: ModelCapabilities
   /** Heading used to render compiled task context. */
-  protected abstract readonly promptStyle: WebPromptStyle
+  protected readonly promptStyle: WebPromptStyle
+  /** Site-specific failure rules checked before the shared defaults. */
+  private readonly failureRules: readonly ProviderFailureRule[]
 
   /** Browser session opener owned by the host. */
   protected readonly transport: WebChatTransport
@@ -178,9 +235,15 @@ export abstract class WebModelProvider implements IModelProvider {
 
   /**
    * @param transport - Opener for the provider's signed-in browser sessions.
+   * @param config - Identity, capabilities, prompt style, and site failure rules.
    */
-  constructor(transport: WebChatTransport) {
+  constructor(transport: WebChatTransport, config: WebProviderConfig) {
     this.transport = transport
+    this.id = config.id
+    this.name = config.name
+    this.capabilities = { ...config.capabilities }
+    this.promptStyle = { ...config.promptStyle }
+    this.failureRules = config.failureRules ?? []
   }
 
   /**
@@ -220,6 +283,15 @@ export abstract class WebModelProvider implements IModelProvider {
     this.#sessionKey = sessionKey
     await this.close()
     this.applyOpenResult(await this.transport.open(this.id, sessionKey))
+  }
+
+  /**
+   * Reopen the site session after the user signs in again.
+   * @returns Resolves when the former session closed and the reopened result was stored.
+   */
+  async reauthenticate(): Promise<void> {
+    await this.close()
+    await this.init()
   }
 
   /**
@@ -363,13 +435,18 @@ export abstract class WebModelProvider implements IModelProvider {
   /**
    * Reduce a raw transport rejection to a stable provider failure code.
    *
-   * Subclasses override this for site-specific message patterns; the default
-   * matches common auth, rate-limit, network, and stream-interruption signals.
+   * Site-specific rules from the adapter config match first, then shared
+   * defaults cover common auth, rate-limit, network, and stream-interruption
+   * signals. Subclasses override this only for mapping logic a pattern cannot
+   * express.
    * @param error - Rejected value from the browser session.
    * @returns The stable failure category.
    */
   normalizeError(error: unknown): ProviderErrorCode {
     const message = errorMessage(error).toLowerCase()
+    for (const rule of this.failureRules) {
+      if (rule.pattern.test(message)) return rule.code
+    }
     if (/(auth|login|signed.?out|expired|session.*expired|unauthorized)/.test(message)) {
       return 'auth-required'
     }

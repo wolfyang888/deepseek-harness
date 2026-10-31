@@ -225,6 +225,46 @@ describe('shipped adapters', () => {
     }
   })
 
+  it('applies the same host overrides to every shipped adapter', async () => {
+    for (const providerId of SHIPPED_PROVIDER_IDS) {
+      const transport = new FakeTransport()
+      const session = fakeSession()
+      transport.sessions.push(session)
+      const provider = webProviderAdapters[providerId]({
+        transport,
+        capabilities: { vision: true, webAccess: false },
+        promptStyle: { heading: 'Shared context' },
+        failureRules: [{ code: 'rate-limited', pattern: /custom throttle/ }],
+      })
+
+      expect(provider.capabilities).toEqual({
+        reasoning: true,
+        coding: true,
+        vision: true,
+        webAccess: false,
+        streaming: true,
+      })
+      expect(provider.normalizeError?.(new Error('custom throttle'))).toBe('rate-limited')
+
+      await provider.init()
+      await provider.sendMessage(chatRequest({ providerId, systemPrompt: 'task state' }))
+      expect(session.payloads[0]!.prompt).toBe('Shared context\ntask state\n\nConversation:\nuser: fix the build error')
+    }
+  })
+
+  it('maps site-specific failure messages to stable codes', () => {
+    const transport = new FakeTransport()
+    const cases: { provider: WebModelProvider; message: string; code: ProviderErrorCode }[] = [
+      { provider: new DeepSeekWebProvider(transport), message: '服务器繁忙', code: 'provider-unavailable' },
+      { provider: new ChatGptWebProvider(transport), message: 'verify you are human', code: 'auth-required' },
+      { provider: new GeminiWebProvider(transport), message: 'resource exhausted', code: 'rate-limited' },
+      { provider: new DoubaoWebProvider(transport), message: '账号异常', code: 'auth-required' },
+    ]
+    for (const item of cases) {
+      expect(item.provider.normalizeError(new Error(item.message))).toBe(item.code)
+    }
+  })
+
   it('reports a signed-out site as not ready on every adapter', async () => {
     for (const providerId of SHIPPED_PROVIDER_IDS) {
       const transport = new FakeTransport()
@@ -305,6 +345,20 @@ describe('WebModelProvider lifecycle', () => {
     await provider.init()
     await provider.close()
     expect(await provider.healthStatus()).toBe('not-started')
+  })
+
+  it('reopens the site session after the user signs in again', async () => {
+    const transport = new FakeTransport()
+    const provider = new DeepSeekWebProvider(transport)
+    await provider.init()
+    expect(await provider.healthStatus()).toBe('needs-auth')
+
+    transport.sessions.push(fakeSession())
+    await provider.reauthenticate()
+
+    expect(transport.opens).toEqual([{ providerId: 'deepseek-web' }, { providerId: 'deepseek-web' }])
+    expect(await provider.healthStatus()).toBe('ready')
+    await provider.close()
   })
 
   it('reopens the site conversation on switchSession', async () => {

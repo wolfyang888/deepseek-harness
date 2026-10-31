@@ -25,10 +25,14 @@ export interface FakeProviderOptions {
   ready?: boolean | Error
   /** Response content, or an error `sendMessage` rejects with. */
   response?: string | Error
+  /** Per-call responses consumed before falling back to `response`. */
+  responses?: (string | Error)[]
   /** Optional health status; when set the provider exposes `healthStatus`. */
-  healthStatus?: ProviderStatus | Error
+  healthStatus?: ProviderStatus | Error | (() => Promise<ProviderStatus>)
   /** Optional error normalizer; when set the provider exposes `normalizeError`. */
   normalizeError?: ProviderErrorCode | ((error: unknown) => ProviderErrorCode)
+  /** Optional re-login action; when set the provider exposes `reauthenticate`. */
+  reauthenticate?: () => Promise<void>
 }
 
 /** A provider double that records every request it receives. */
@@ -40,8 +44,10 @@ export class FakeProvider implements IModelProvider {
   readonly calls: ChatRequest[] = []
   readonly #ready: boolean | Error
   readonly #response: string | Error
+  readonly #responses: (string | Error)[]
   healthStatus?: () => Promise<ProviderStatus>
   normalizeError?: (error: unknown) => ProviderErrorCode
+  reauthenticate?: () => Promise<void>
 
   constructor(options: FakeProviderOptions) {
     this.id = options.id
@@ -57,12 +63,16 @@ export class FakeProvider implements IModelProvider {
     }
     this.#ready = options.ready ?? true
     this.#response = options.response ?? `${options.id} answer`
+    this.#responses = [...(options.responses ?? [])]
+    if (options.reauthenticate !== undefined) this.reauthenticate = options.reauthenticate
     if (options.healthStatus !== undefined) {
       const status = options.healthStatus
-      this.healthStatus = (): Promise<ProviderStatus> => {
-        if (status instanceof Error) return Promise.reject(status)
-        return Promise.resolve(status)
-      }
+      this.healthStatus = typeof status === 'function'
+        ? status
+        : (): Promise<ProviderStatus> => {
+          if (status instanceof Error) return Promise.reject(status)
+          return Promise.resolve(status)
+        }
     }
     if (options.normalizeError !== undefined) {
       const normalizer = options.normalizeError
@@ -82,19 +92,21 @@ export class FakeProvider implements IModelProvider {
 
   async sendMessage(request: ChatRequest): Promise<ChatResponse> {
     this.calls.push(request)
-    if (this.#response instanceof Error) throw this.#response
+    const response = this.#responses.shift() ?? this.#response
+    if (response instanceof Error) throw response
     return {
       providerId: this.id,
       sessionId: request.sessionId,
-      content: this.#response,
+      content: response,
       finishReason: 'stop',
     }
   }
 
   async *streamMessage(request: ChatRequest): AsyncIterable<ChatStreamChunk> {
     this.calls.push(request)
-    if (this.#response instanceof Error) throw this.#response
-    yield { index: 0, delta: this.#response, finishReason: 'stop' }
+    const response = this.#responses.shift() ?? this.#response
+    if (response instanceof Error) throw response
+    yield { index: 0, delta: response, finishReason: 'stop' }
   }
 
   async close(): Promise<void> {}
@@ -162,6 +174,7 @@ export function sessionRecord(overrides: Partial<ChatSessionRecord> = {}): ChatS
     memory: [],
     context: semanticContext({ objective: 'fix the build error' }),
     checkpoints: [],
+    timeline: [],
     ...overrides,
   }
 }

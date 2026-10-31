@@ -1,18 +1,33 @@
 /** ChatGPT browser adapter. */
 
-import type { ModelCapabilities } from '../types.ts'
-import { WebModelProvider } from './web-provider.ts'
+import {
+  WEB_PROVIDER_CAPABILITIES,
+  WebModelProvider,
+  mergeWebProviderConfig,
+  type WebChatTransport,
+  type WebProviderConfig,
+  type WebProviderOverrides,
+} from './web-provider.ts'
+
+/** Site identity, prompt style, and failure patterns ChatGPT ships with. */
+const CHATGPT_WEB: WebProviderConfig = {
+  id: 'chatgpt-web',
+  name: 'ChatGPT',
+  capabilities: WEB_PROVIDER_CAPABILITIES,
+  promptStyle: { heading: 'Task context' },
+  failureRules: [
+    { code: 'auth-required', pattern: /verify (?:you are|you're) (?:a )?human|captcha|unusual activity/ },
+    { code: 'rate-limited', pattern: /you've reached .*limit|usage limit/ },
+  ],
+}
 
 /** Drives ChatGPT through a signed-in browser page. */
 export class ChatGptWebProvider extends WebModelProvider {
-  readonly id = 'chatgpt-web'
-  readonly name = 'ChatGPT'
-  readonly capabilities: ModelCapabilities = {
-    reasoning: true,
-    coding: true,
-    vision: false,
-    webAccess: true,
-    streaming: true,
+  /**
+   * @param transport - Opener for ChatGPT browser sessions.
+   * @param overrides - Host changes to capabilities, prompt style, or failure rules.
+   */
+  constructor(transport: WebChatTransport, overrides: WebProviderOverrides = {}) {
+    super(transport, mergeWebProviderConfig(CHATGPT_WEB, overrides))
   }
-  protected readonly promptStyle = { heading: 'Role and constraints' }
 }

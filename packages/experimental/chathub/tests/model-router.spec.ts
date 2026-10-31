@@ -1,8 +1,12 @@
 /** Task-aware routing and fallback execution. */
 
 import { describe, expect, it } from 'vitest'
-import { ModelRouter, ProviderRegistry } from '@deepseek-ai/dsh-experimental-chathub'
-import type { IProviderRegistry, ModelRouterOptions } from '@deepseek-ai/dsh-experimental-chathub'
+import { ChatHubError, ModelRouter, ProviderRegistry } from '@deepseek-ai/dsh-experimental-chathub'
+import type {
+  IProviderRegistry,
+  ModelRouterOptions,
+  RetryPolicy,
+} from '@deepseek-ai/dsh-experimental-chathub'
 import { FakeProvider, fakeProvider, semanticContext, sessionRecord, userMessage } from './fixtures.ts'
 
 const TASK_CONTEXT = semanticContext({ objective: 'fix the build error', facts: ['uses pnpm'] })
@@ -187,7 +191,7 @@ describe('ModelRouter.complete', () => {
 
     expect(result.provider.id).toBe('deepseek-web')
     expect(result.usedFallback).toBe(true)
-    expect(result.attempts).toEqual([{ providerId: 'chatgpt-web', error: 'session expired' }])
+    expect(result.attempts).toEqual([{ providerId: 'chatgpt-web', attempt: 1, error: 'session expired' }])
   })
 
   it('reports every failed provider when all ready calls fail', async () => {
@@ -216,5 +220,96 @@ describe('ModelRouter.complete', () => {
       messages: [userMessage('continue')],
       taskContext: TASK_CONTEXT,
     })).rejects.toMatchObject({ code: 'no-ready-provider' })
+  })
+})
+
+describe('ModelRouter retry policy', () => {
+  const NETWORK_RESET = (): ChatHubError => new ChatHubError('network-error', 'connection reset')
+
+  function retryRouter(registry: ProviderRegistry, retry: RetryPolicy): ModelRouter {
+    return router({ registry, retry })
+  }
+
+  it('retries a retryable failure on the same provider before returning', async () => {
+    const registry = new ProviderRegistry()
+    registry.register(fakeProvider({
+      id: 'chatgpt-web',
+      responses: [NETWORK_RESET(), NETWORK_RESET()],
+      response: 'answered after retries',
+    }))
+    const result = await retryRouter(registry, {
+      maxAttempts: 3,
+      delayMs: 0,
+      retryOn: ['network-error'],
+    }).complete({
+      session: sessionRecord({ currentProvider: 'chatgpt-web' }),
+      taskType: 'quick-answer',
+      messages: [userMessage('continue')],
+      taskContext: TASK_CONTEXT,
+    })
+
+    expect(result.provider.id).toBe('chatgpt-web')
+    expect(result.response.content).toBe('answered after retries')
+    expect(result.usedFallback).toBe(false)
+    expect(result.attempts).toEqual([
+      { providerId: 'chatgpt-web', attempt: 1, error: 'connection reset' },
+      { providerId: 'chatgpt-web', attempt: 2, error: 'connection reset' },
+    ])
+  })
+
+  it('falls back without retrying when the failure code is not retryable', async () => {
+    const registry = new ProviderRegistry()
+    registry.register(fakeProvider({
+      id: 'chatgpt-web',
+      responses: [new ChatHubError('provider-call-failed', 'site is down')],
+      response: 'never used',
+    }))
+    registry.register(fakeProvider({ id: 'deepseek-web' }))
+    const result = await retryRouter(registry, {
+      maxAttempts: 2,
+      delayMs: 0,
+      retryOn: ['network-error'],
+    }).complete({
+      session: sessionRecord({ currentProvider: 'chatgpt-web' }),
+      taskType: 'quick-answer',
+      messages: [userMessage('continue')],
+      taskContext: TASK_CONTEXT,
+    })
+
+    expect(result.provider.id).toBe('deepseek-web')
+    expect(result.usedFallback).toBe(true)
+    expect(result.attempts).toEqual([
+      { providerId: 'chatgpt-web', attempt: 1, error: 'site is down' },
+    ])
+  })
+
+  it('falls back after exhausting the retry budget', async () => {
+    const registry = new ProviderRegistry()
+    registry.register(fakeProvider({
+      id: 'chatgpt-web',
+      responses: [NETWORK_RESET(), NETWORK_RESET()],
+    }))
+    registry.register(fakeProvider({ id: 'deepseek-web' }))
+    const result = await retryRouter(registry, {
+      maxAttempts: 2,
+      delayMs: 0,
+      retryOn: ['network-error'],
+    }).complete({
+      session: sessionRecord({ currentProvider: 'chatgpt-web' }),
+      taskType: 'quick-answer',
+      messages: [userMessage('continue')],
+      taskContext: TASK_CONTEXT,
+    })
+
+    expect(result.provider.id).toBe('deepseek-web')
+    expect(result.attempts.map(attempt => attempt.attempt)).toEqual([1, 2])
+  })
+
+  it('rejects an invalid retry policy at construction', () => {
+    const registry = new ProviderRegistry()
+    expect(() => retryRouter(registry, { maxAttempts: 0, delayMs: 0, retryOn: [] }))
+      .toThrow(expect.objectContaining({ code: 'invalid-retry-policy' }))
+    expect(() => retryRouter(registry, { maxAttempts: 2, delayMs: -1, retryOn: [] }))
+      .toThrow(expect.objectContaining({ code: 'invalid-retry-policy' }))
   })
 })
