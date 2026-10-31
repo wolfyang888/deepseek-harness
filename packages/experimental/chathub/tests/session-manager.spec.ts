@@ -6,9 +6,13 @@ import {
   ContextCompiler,
   ProviderRegistry,
   SessionManager,
+  SessionMemoryService,
   SessionTimelineService,
 } from '@deepseek-ai/dsh-experimental-chathub'
-import type { SessionManagerOptions } from '@deepseek-ai/dsh-experimental-chathub'
+import type {
+  ChatSessionRecord,
+  SessionManagerOptions,
+} from '@deepseek-ai/dsh-experimental-chathub'
 import { FakeProvider, fakeProvider, planStep, userMessage } from './fixtures.ts'
 
 const AT = Date.UTC(2026, 9, 31, 10)
@@ -418,5 +422,94 @@ describe('Model switch integration', () => {
     expect(outcome.prompt).toContain('- deepseek-web -> gemini-web: tool run stalled')
     expect(manager.getState(session.id)).toMatchObject({ currentProvider: 'gemini-web', status: 'thinking' })
     expect(session.goal).toBe('patch the failing build')
+  })
+})
+
+describe('Session memory compaction and checkpoint consistency', () => {
+  const BOUNDS = {
+    maxEntries: 1,
+    maxWorkingMemory: 10,
+    maxToolResults: 10,
+    maxModelSwitches: 10,
+  }
+
+  function seedMemory(session: ChatSessionRecord): void {
+    session.memory.push(
+      {
+        id: 'mem_low',
+        type: 'preference',
+        content: 'prefers short answers',
+        source: 'user',
+        importance: 1,
+        createdAt: 2,
+      },
+      {
+        id: 'mem_high',
+        type: 'fact',
+        content: 'project uses pnpm',
+        source: 'tool',
+        importance: 5,
+        createdAt: 1,
+      },
+      {
+        id: 'mem_duplicate',
+        type: 'fact',
+        content: 'project uses pnpm',
+        source: 'agent',
+        importance: 5,
+        createdAt: 1,
+      },
+    )
+    session.context.facts.push('build fails in stage 2')
+    session.context.decisions.push('keep pnpm')
+    session.context.openQuestions.push('is the frontend at fault?')
+    session.context.workingMemory.push('waiting on build output')
+  }
+
+  it('keeps a checkpoint snapshot intact when memory is compacted afterwards', async () => {
+    const { manager } = setup()
+    const session = manager.create({
+      title: 'Fix the build',
+      goal: 'fix the build error',
+      provider: 'deepseek-web',
+      plan: [planStep({ id: 'p1', status: 'done', summary: 'root cause found', evidence: ['build.log'] })],
+    })
+    seedMemory(session)
+
+    const outcome = await manager.switchProvider(session, 'gemini-web', 'need review')
+    const compacted = new SessionMemoryService({ now: () => AT }).compact(session, BOUNDS)
+
+    expect(compacted.retainedEntries).toBe(1)
+    expect(session.memory.map(entry => entry.content)).toEqual(['project uses pnpm'])
+    expect(session.checkpoints[0]).toBe(outcome.checkpoint)
+    expect(outcome.checkpoint.facts).toEqual(['project uses pnpm', 'build fails in stage 2'])
+    expect(outcome.checkpoint.decisions).toEqual(['keep pnpm'])
+    expect(outcome.checkpoint.openQuestions).toEqual(['is the frontend at fault?'])
+    expect(outcome.checkpoint.memoryHighlights).toEqual(['project uses pnpm', 'prefers short answers'])
+  })
+
+  it('carries compacted memory through a later provider switch', async () => {
+    const { manager } = setup()
+    const session = manager.create({
+      title: 'Fix the build',
+      goal: 'fix the build error',
+      provider: 'deepseek-web',
+      plan: [planStep({ id: 'p1', status: 'running', summary: 'patching config' })],
+    })
+    seedMemory(session)
+
+    new SessionMemoryService({ now: () => AT }).compact(session, BOUNDS)
+    const outcome = await manager.switchProvider(session, 'gemini-web', 'need review')
+
+    expect(outcome.checkpoint.facts).toEqual(['project uses pnpm', 'build fails in stage 2'])
+    expect(outcome.context.objective).toBe('fix the build error')
+    expect(outcome.context.facts).toEqual(['project uses pnpm', 'build fails in stage 2'])
+    expect(outcome.context.openQuestions).toEqual(['is the frontend at fault?'])
+    expect(outcome.context.decisions).toEqual(['keep pnpm'])
+    expect(outcome.context.workingMemory).toEqual(['waiting on build output', 'project uses pnpm'])
+    expect(outcome.context.modelSwitchHistory).toEqual([outcome.record])
+    expect(session.providerHistory).toEqual(['deepseek-web', 'gemini-web'])
+    expect(outcome.prompt).toContain('## Latest Facts')
+    expect(outcome.prompt).toContain('- project uses pnpm')
   })
 })
