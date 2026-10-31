@@ -1,0 +1,43 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/experimental/chathub/README.md
+/:
+  en: 7c8c97787ceb01a8
+  zh: 1e0bb0064b181e57
+/deepseek-ai-dsh-experimental-chathub:
+  en: c4cd5a50ed79723d
+  zh: faa38ece60f6eca5
+/deepseek-ai-dsh-experimental-chathub/summary:
+  en: 2b62760ce45a4140
+  zh: 850e666d06c92254
+/deepseek-ai-dsh-experimental-chathub/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: 988e839059414d27
+/deepseek-ai-dsh-experimental-chathub/use-this-package:
+  en: bbff250eba0f1b89
+  zh: b20a47f82d8ab6e0
+/deepseek-ai-dsh-experimental-chathub/use-this-package/when-to-choose-it:
+  en: f31192204ab04cbf
+  zh: d0ad83358f1aaaad
+/deepseek-ai-dsh-experimental-chathub/use-this-package/entry-point:
+  en: 2628c47777a74c1d
+  zh: cf8e8d70685f5b9e
+/deepseek-ai-dsh-experimental-chathub/understand-the-implementation:
+  en: 7c450bda945c087b
+  zh: 48c8fda56d4b2abf
+/deepseek-ai-dsh-experimental-chathub/further-exploration:
+  en: 01e1b323a8b14571
+  zh: 20b2019b28c33b1d
+/deepseek-ai-dsh-experimental-chathub/model-experience:
+  en: 084817d69de4ced0
+  zh: 32d1f95961acf934
+/deepseek-ai-dsh-experimental-chathub/model-experience/kv-cache-effect:
+  en: 2f2a7e8f2c6f1c5d
+  zh: 8c81d48ec3020c17
+/deepseek-ai-dsh-experimental-chathub/known-limitations-and-deferred-work:
+  en: 46be9c10eb03605d
+  zh: 9076598a43d817ba
+/deepseek-ai-dsh-experimental-chathub/known-limitations-and-deferred-work/dev-note:
+  en: e67f633dc6fe7773
+  zh: 83780964e5de2f54

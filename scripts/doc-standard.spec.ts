@@ -67,6 +67,7 @@ const PACKAGE_LIBRARIES: Readonly<Record<string, string>> = {
   'packages/core/scope': 'Scoped-context primitives; exports functions and types without a plugin entry.',
   'packages/experimental/webworker-packer': 'Build-time VFS image packer and command library.',
   'packages/experimental/webworker-runtime': 'Browser worker runtime library with explicit host entry points.',
+  'packages/experimental/chathub': 'Provider-agnostic session runtime core; plain module exports with no plugin entry.',
   'packages/experimental/hook-protocol': 'Shared wire-protocol library between the hook bridges.',
   'packages/experimental/liveshare-protocol': 'Shared wire frames and identity contract; plain module exports with no plugin entry.',
   'packages/identity/anonymous-user-id': 'Harness-home identity helper with no plugin registration.',
