@@ -34,6 +34,8 @@ interface SessionBehavior {
   raw?: WebChatRawResponse | Error
   /** Deltas from `stream`; absent means the session offers no streaming. */
   deltas?: string[] | Error
+  /** Deltas yielded before the stream rejects, when the site drops mid-answer. */
+  interruptAfter?: number
 }
 
 /**
@@ -60,7 +62,12 @@ function fakeSession(behavior: SessionBehavior = {}): FakeSession {
     session.stream = async function* streamDeltas(payload: WebChatPayload): AsyncIterable<string> {
       session.payloads.push(payload)
       if (deltas instanceof Error) throw deltas
-      yield* deltas
+      for (const [index, delta] of deltas.entries()) {
+        if (behavior.interruptAfter !== undefined && index >= behavior.interruptAfter) {
+          throw new Error('stream interrupted')
+        }
+        yield delta
+      }
     }
   }
   return session
@@ -142,6 +149,9 @@ describe('renderWebPrompt', () => {
   })
 })
 
+/** Every provider id with a shipped browser adapter. */
+const SHIPPED_PROVIDER_IDS = ['deepseek-web', 'chatgpt-web', 'gemini-web', 'doubao-web'] as const
+
 describe('shipped adapters', () => {
   it('declare their identity, capabilities, and site names', () => {
     const transport = new FakeTransport()
@@ -180,6 +190,51 @@ describe('shipped adapters', () => {
     expect(webProviderAdapters['chatgpt-web']({ transport }).id).toBe('chatgpt-web')
     expect(webProviderAdapters['gemini-web']({ transport }).id).toBe('gemini-web')
     expect(webProviderAdapters['doubao-web']({ transport }).id).toBe('doubao-web')
+  })
+
+  it('honors one minimal contract across every shipped adapter', async () => {
+    for (const providerId of SHIPPED_PROVIDER_IDS) {
+      const transport = new FakeTransport()
+      const session = fakeSession({ raw: { content: 'answered' }, deltas: ['part ', 'two'] })
+      transport.sessions.push(session)
+      const provider = webProviderAdapters[providerId]({ transport })
+
+      await provider.init()
+      expect(transport.opens).toEqual([{ providerId }])
+      expect(await provider.isReady()).toBe(true)
+
+      const response = await provider.sendMessage(chatRequest({ providerId }))
+      expect(response).toMatchObject({ providerId, sessionId: 'sess_20261031_001', content: 'answered' })
+
+      const chunks: ChatStreamChunk[] = []
+      for await (const chunk of provider.streamMessage(chatRequest({ providerId }))) chunks.push(chunk)
+      expect(chunks).toEqual([
+        { index: 0, delta: 'part ' },
+        { index: 0, delta: 'two' },
+        { index: 0, finishReason: 'stop' },
+      ])
+
+      await provider.close()
+      expect(session.closes).toBe(1)
+      expect(await provider.isReady()).toBe(false)
+      await expect(provider.sendMessage(chatRequest({ providerId }))).rejects.toMatchObject({
+        code: 'provider-not-ready',
+      })
+    }
+  })
+
+  it('reports a signed-out site as not ready on every adapter', async () => {
+    for (const providerId of SHIPPED_PROVIDER_IDS) {
+      const transport = new FakeTransport()
+      const provider = webProviderAdapters[providerId]({ transport })
+
+      await provider.init()
+      expect(await provider.isReady()).toBe(false)
+      await expect(provider.sendMessage(chatRequest({ providerId }))).rejects.toMatchObject({
+        code: 'provider-not-ready',
+      })
+      await provider.close()
+    }
   })
 })
 
@@ -325,6 +380,20 @@ describe('WebModelProvider streamMessage', () => {
         throw new Error('no chunk expected')
       }
     }).rejects.toMatchObject({ code: 'provider-call-failed', message: 'deepseek-web: network reset' })
+  })
+
+  it('keeps the deltas already shown when the site interrupts the stream', async () => {
+    const transport = new FakeTransport()
+    const session = fakeSession({ deltas: ['root ', 'cause'], interruptAfter: 1 })
+    transport.sessions.push(session)
+    const provider = new DeepSeekWebProvider(transport)
+    await provider.init()
+
+    const chunks: ChatStreamChunk[] = []
+    await expect(async () => {
+      for await (const chunk of provider.streamMessage(chatRequest())) chunks.push(chunk)
+    }).rejects.toMatchObject({ code: 'provider-call-failed', message: 'deepseek-web: stream interrupted' })
+    expect(chunks).toEqual([{ index: 0, delta: 'root ' }])
   })
 
   it('falls back to one content chunk without a delta stream', async () => {

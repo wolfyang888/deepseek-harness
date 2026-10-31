@@ -348,4 +348,40 @@ describe('Model switch integration', () => {
     expect(doubao.prompt).not.toBe(chatgpt.prompt)
     expect(manager.getState(session.id)?.currentProvider).toBe('chatgpt-web')
   })
+
+  it('switches while the task is still running and keeps the working context', async () => {
+    const registry = new ProviderRegistry()
+    registry.register(fakeProvider({ id: 'deepseek-web', capabilities: { coding: true } }))
+    registry.register(fakeProvider({ id: 'gemini-web', capabilities: { webAccess: true } }))
+    const manager = new SessionManager({
+      registry,
+      compiler: new ContextCompiler(),
+      checkpoints: new CheckpointService(),
+      now: () => AT,
+    })
+
+    const session = manager.create({
+      title: 'Patch the build',
+      goal: 'patch the failing build',
+      provider: 'deepseek-web',
+      plan: [
+        planStep({ id: 'p1', title: 'locate error', status: 'done', summary: 'config path bug' }),
+        planStep({ id: 'p2', title: 'patch config', status: 'running', summary: 'editing tsconfig' }),
+      ],
+    })
+    session.context.workingMemory.push('next: rerun the bundler')
+    session.context.openQuestions.push('does the patch cover both entrypoints?')
+    manager.setStatus(session.id, 'tool-running')
+
+    const outcome = await manager.switchProvider(session, 'gemini-web', 'tool run stalled')
+
+    expect(outcome.checkpoint.summary).toContain('1/2 plan steps done')
+    expect(outcome.context.plan.map(step => step.status)).toEqual(['done', 'running'])
+    expect(outcome.context.openQuestions).toEqual(['does the patch cover both entrypoints?'])
+    expect(outcome.context.workingMemory).toEqual(['next: rerun the bundler'])
+    expect(outcome.context.modelSwitchHistory[0]).toMatchObject({ from: 'deepseek-web', to: 'gemini-web' })
+    expect(outcome.prompt).toContain('- deepseek-web -> gemini-web: tool run stalled')
+    expect(manager.getState(session.id)).toMatchObject({ currentProvider: 'gemini-web', status: 'thinking' })
+    expect(session.goal).toBe('patch the failing build')
+  })
 })
