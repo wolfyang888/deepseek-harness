@@ -110,15 +110,22 @@ export class ModelRouter {
    * @throws ChatHubError with `no-ready-provider` when every candidate is unavailable.
    */
   async route(request: RouteRequest): Promise<RouteResult> {
+    let usedFallback = false
     for (const candidate of this.candidates(request)) {
       const provider = this.registry.get(candidate.providerId)
-      if (provider === undefined) continue
-      if (!(await probeProvider(provider)).ready) continue
+      if (provider === undefined) {
+        usedFallback = true
+        continue
+      }
+      if (!(await probeProvider(provider)).ready) {
+        usedFallback = true
+        continue
+      }
       return {
         provider,
         taskType: request.taskType,
         reason: candidate.reason,
-        usedFallback: candidate.fallback,
+        usedFallback: candidate.fallback || usedFallback,
       }
     }
     throw new ChatHubError('no-ready-provider', `No ready provider routes ${request.taskType}.`)
@@ -133,10 +140,17 @@ export class ModelRouter {
    */
   async complete(request: CompletionRequest): Promise<CompletionResult> {
     const attempts: ProviderAttempt[] = []
+    let usedFallback = false
     for (const candidate of this.candidates(request)) {
       const provider = this.registry.get(candidate.providerId)
-      if (provider === undefined) continue
-      if (!(await probeProvider(provider)).ready) continue
+      if (provider === undefined) {
+        usedFallback = true
+        continue
+      }
+      if (!(await probeProvider(provider)).ready) {
+        usedFallback = true
+        continue
+      }
       const maxAttempts = this.retry?.maxAttempts ?? 1
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
         try {
@@ -144,16 +158,17 @@ export class ModelRouter {
           return {
             provider,
             response,
-            usedFallback: candidate.fallback || attempts.some(item => item.providerId !== provider.id),
+            usedFallback: candidate.fallback || usedFallback,
             attempts,
           }
         } catch (error) {
           attempts.push({ providerId: provider.id, attempt, error: errorMessage(error) })
           if (this.retry === undefined || attempt >= maxAttempts) break
-          if (!retryable(error, this.retry.retryOn)) break
+          if (!retryable(error, this.retry.retryOn, provider)) break
           if (this.retry.delayMs > 0) await delay(this.retry.delayMs)
         }
       }
+      usedFallback = true
     }
     if (attempts.length === 0) {
       throw new ChatHubError('no-ready-provider', `No ready provider routes ${request.taskType}.`)
@@ -278,11 +293,37 @@ function assertRetryPolicy(policy: RetryPolicy): void {
 /**
  * @param error - Rejected provider call.
  * @param codes - Codes the policy treats as transient.
+ * @param provider - Provider that rejected the call, whose normalizer classifies its cause.
  * @returns Whether the call may be retried on the same provider.
  */
-function retryable(error: unknown, codes: readonly RetryableErrorCode[]): boolean {
-  const code: RetryableErrorCode = error instanceof ChatHubError ? error.code : 'unknown'
-  return codes.includes(code)
+function retryable(
+  error: unknown,
+  codes: readonly RetryableErrorCode[],
+  provider: IModelProvider,
+): boolean {
+  return failureCodes(error, provider).some(code => codes.includes(code))
+}
+
+/**
+ * Collect every stable failure code one rejection carries.
+ *
+ * A `ChatHubError` exposes its wrapper code; when it wraps a provider rejection,
+ * the provider's normalizer supplies the underlying failure category, so retry
+ * policies branch on stable failure semantics instead of the wrapper's aggregate.
+ * @param error - Rejected provider call.
+ * @param provider - Provider whose normalizer classifies a wrapped cause.
+ * @returns The wrapper code plus any provider-level code derived from the cause.
+ */
+function failureCodes(error: unknown, provider: IModelProvider): RetryableErrorCode[] {
+  if (error instanceof ChatHubError) {
+    const codes: RetryableErrorCode[] = [error.code]
+    if (provider.normalizeError !== undefined && error.cause !== undefined) {
+      codes.push(provider.normalizeError(error.cause))
+    }
+    return codes
+  }
+  if (provider.normalizeError !== undefined) return [provider.normalizeError(error)]
+  return ['unknown']
 }
 
 /**

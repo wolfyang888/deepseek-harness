@@ -166,6 +166,7 @@ describe('SessionManager.switchProvider', () => {
       checkpointId: 'cp_1',
       reason: 'coding',
     })
+    session.context.workingMemory.push('waiting on build output')
 
     const outcome = await manager.switchProvider(session, 'gemini-web', 'need long-context review')
 
@@ -183,6 +184,7 @@ describe('SessionManager.switchProvider', () => {
       reason: 'need long-context review',
     })
     expect(outcome.context.modelSwitchHistory).toHaveLength(2)
+    expect(outcome.context.workingMemory).toEqual(['waiting on build output', 'project uses pnpm'])
     expect(outcome.prompt.startsWith('# Task context for gemini-web')).toBe(true)
     expect(outcome.prompt).toContain('## Latest Facts')
     expect(session.currentProvider).toBe('gemini-web')

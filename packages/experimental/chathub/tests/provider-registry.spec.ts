@@ -115,6 +115,25 @@ describe('ProviderRegistry', () => {
     }))
   })
 
+  it('renews an expired provider session through re-login', async () => {
+    let refreshed = false
+    const registry = new ProviderRegistry()
+    registry.register(fakeProvider({
+      id: 'alpha',
+      healthStatus: async () => refreshed ? 'ready' : 'expired',
+      reauthenticate: async () => { refreshed = true },
+    }))
+
+    expect(await registry.health('alpha')).toEqual(expect.objectContaining({
+      ready: false,
+      status: 'expired',
+    }))
+    expect(await registry.reauthenticate('alpha')).toEqual(expect.objectContaining({
+      ready: true,
+      status: 'ready',
+    }))
+  })
+
   it('reports a rejected re-login as failed health', async () => {
     const registry = new ProviderRegistry()
     registry.register(fakeProvider({

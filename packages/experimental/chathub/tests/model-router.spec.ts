@@ -118,6 +118,8 @@ describe('ModelRouter.route', () => {
       get: () => undefined,
       list: () => ['ghost'],
       getByKind: () => [],
+      health: async () => ({ providerId: 'ghost', ready: false, status: 'failed', lastCheckedAt: 0 }),
+      reauthenticate: async () => ({ providerId: 'ghost', ready: false, status: 'failed', lastCheckedAt: 0 }),
     }
     await expect(router({ registry }).route({ session: sessionRecord(), taskType: 'coding' }))
       .rejects.toMatchObject({ code: 'no-ready-provider' })
@@ -255,6 +257,59 @@ describe('ModelRouter retry policy', () => {
       { providerId: 'chatgpt-web', attempt: 1, error: 'connection reset' },
       { providerId: 'chatgpt-web', attempt: 2, error: 'connection reset' },
     ])
+  })
+
+  it('classifies a wrapped provider failure through the provider normalizer', async () => {
+    const registry = new ProviderRegistry()
+    registry.register(fakeProvider({
+      id: 'chatgpt-web',
+      responses: [
+        new ChatHubError('provider-call-failed', 'site busy', { cause: new Error('server busy') }),
+      ],
+      response: 'answered after retry',
+      normalizeError: 'provider-unavailable',
+    }))
+    const result = await retryRouter(registry, {
+      maxAttempts: 2,
+      delayMs: 0,
+      retryOn: ['provider-unavailable'],
+    }).complete({
+      session: sessionRecord({ currentProvider: 'chatgpt-web' }),
+      taskType: 'quick-answer',
+      messages: [userMessage('continue')],
+      taskContext: TASK_CONTEXT,
+    })
+
+    expect(result.provider.id).toBe('chatgpt-web')
+    expect(result.response.content).toBe('answered after retry')
+    expect(result.usedFallback).toBe(false)
+    expect(result.attempts).toEqual([
+      { providerId: 'chatgpt-web', attempt: 1, error: 'site busy' },
+    ])
+  })
+
+  it('classifies a raw provider rejection through the provider normalizer', async () => {
+    const registry = new ProviderRegistry()
+    registry.register(fakeProvider({
+      id: 'chatgpt-web',
+      responses: [new Error('server busy')],
+      response: 'answered after retry',
+      normalizeError: 'provider-unavailable',
+    }))
+    const result = await retryRouter(registry, {
+      maxAttempts: 2,
+      delayMs: 0,
+      retryOn: ['provider-unavailable'],
+    }).complete({
+      session: sessionRecord({ currentProvider: 'chatgpt-web' }),
+      taskType: 'quick-answer',
+      messages: [userMessage('continue')],
+      taskContext: TASK_CONTEXT,
+    })
+
+    expect(result.provider.id).toBe('chatgpt-web')
+    expect(result.response.content).toBe('answered after retry')
+    expect(result.usedFallback).toBe(false)
   })
 
   it('falls back without retrying when the failure code is not retryable', async () => {

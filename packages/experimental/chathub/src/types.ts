@@ -123,12 +123,27 @@ export interface IModelProvider {
   close(): Promise<void>
 }
 
-/** Registry contract consumed by routers and session orchestration. */
+/** Registry contract consumed by routers, session orchestration, and status views. */
 export interface IProviderRegistry {
   register(provider: IModelProvider): void
   get(providerId: string): IModelProvider | undefined
   list(): string[]
   getByKind(kind: ModelKind): IModelProvider[]
+  /**
+   * Probe one registered provider for its current readiness.
+   * @param providerId - Registered provider to probe.
+   * @returns The provider's readiness snapshot.
+   * @throws ChatHubError with `provider-not-registered` when the id is unknown.
+   */
+  health(providerId: string): Promise<ProviderHealth>
+  /**
+   * Reopen a provider connection after the user signs in again.
+   * @param providerId - Registered provider to reopen.
+   * @returns The readiness snapshot taken after the re-login attempt.
+   * @throws ChatHubError with `provider-not-registered` when the id is unknown,
+   * or `reauth-not-supported` when the provider cannot reopen a connection.
+   */
+  reauthenticate(providerId: string): Promise<ProviderHealth>
 }
 
 /** Readiness snapshot for one provider. */
