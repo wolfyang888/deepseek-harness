@@ -33,6 +33,7 @@ export type {
   WebChatPayload,
   WebChatRawResponse,
   WebChatTransport,
+  WebChatTransportClosed,
   WebChatTransportSession,
   WebPromptStyle,
 } from './providers/web-provider.ts'

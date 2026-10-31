@@ -3,6 +3,9 @@
 /** How a model provider reaches its model. */
 export type ModelKind = 'web' | 'api' | 'local'
 
+/** Lifecycle state of one provider's connection to its model. */
+export type ProviderStatus = 'not-started' | 'ready' | 'needs-auth' | 'expired' | 'failed'
+
 /** Capabilities a provider advertises to routing and prompt compilation. */
 export interface ModelCapabilities {
   reasoning: boolean
@@ -72,6 +75,7 @@ export interface IModelProvider {
 
   init(): Promise<void>
   isReady(): Promise<boolean>
+  healthStatus?(): Promise<ProviderStatus>
   sendMessage(request: ChatRequest): Promise<ChatResponse>
   streamMessage(request: ChatRequest): AsyncIterable<ChatStreamChunk>
   switchSession?(sessionKey: string): Promise<void>
@@ -90,6 +94,8 @@ export interface IProviderRegistry {
 export interface ProviderHealth {
   providerId: string
   ready: boolean
+  /** Connection state consumers branch on for login, refresh, or fallback. */
+  status: ProviderStatus
   error?: string
 }
 

@@ -9,6 +9,7 @@ import type {
   ModelCapabilities,
   ModelKind,
   PlanStep,
+  ProviderStatus,
   ChatSessionRecord,
   SemanticContext,
 } from '@deepseek-ai/dsh-experimental-chathub'
@@ -23,6 +24,8 @@ export interface FakeProviderOptions {
   ready?: boolean | Error
   /** Response content, or an error `sendMessage` rejects with. */
   response?: string | Error
+  /** Optional health status; when set the provider exposes `healthStatus`. */
+  healthStatus?: ProviderStatus | Error
 }
 
 /** A provider double that records every request it receives. */
@@ -34,6 +37,7 @@ export class FakeProvider implements IModelProvider {
   readonly calls: ChatRequest[] = []
   readonly #ready: boolean | Error
   readonly #response: string | Error
+  healthStatus?: () => Promise<ProviderStatus>
 
   constructor(options: FakeProviderOptions) {
     this.id = options.id
@@ -49,6 +53,13 @@ export class FakeProvider implements IModelProvider {
     }
     this.#ready = options.ready ?? true
     this.#response = options.response ?? `${options.id} answer`
+    if (options.healthStatus !== undefined) {
+      const status = options.healthStatus
+      this.healthStatus = (): Promise<ProviderStatus> => {
+        if (status instanceof Error) return Promise.reject(status)
+        return Promise.resolve(status)
+      }
+    }
   }
 
   async init(): Promise<void> {}

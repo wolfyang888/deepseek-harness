@@ -18,6 +18,7 @@ import type {
   WebChatPayload,
   WebChatRawResponse,
   WebChatTransport,
+  WebChatTransportClosed,
   WebChatTransportSession,
 } from '@deepseek-ai/dsh-experimental-chathub'
 import { semanticContext, userMessage } from './fixtures.ts'
@@ -76,9 +77,9 @@ function fakeSession(behavior: SessionBehavior = {}): FakeSession {
 /** Transport double that hands out queued sessions in order. */
 class FakeTransport implements WebChatTransport {
   readonly opens: { providerId: string; sessionKey?: string }[] = []
-  sessions: (WebChatTransportSession | undefined)[] = []
+  sessions: (WebChatTransportSession | WebChatTransportClosed | undefined)[] = []
 
-  async open(providerId: string, sessionKey?: string): Promise<WebChatTransportSession | undefined> {
+  async open(providerId: string, sessionKey?: string): Promise<WebChatTransportSession | WebChatTransportClosed | undefined> {
     this.opens.push(sessionKey === undefined ? { providerId } : { providerId, sessionKey })
     return this.sessions.shift()
   }
@@ -265,6 +266,44 @@ describe('WebModelProvider lifecycle', () => {
     expect(await provider.isReady()).toBe(false)
     await expect(provider.sendMessage(chatRequest())).rejects.toMatchObject({ code: 'provider-not-ready' })
     await provider.close()
+  })
+
+  it('reports not-started before init and ready after a signed-in open', async () => {
+    const transport = new FakeTransport()
+    transport.sessions.push(fakeSession())
+    const provider = new DeepSeekWebProvider(transport)
+
+    expect(await provider.healthStatus()).toBe('not-started')
+    await provider.init()
+    expect(await provider.healthStatus()).toBe('ready')
+  })
+
+  it('reports needs-auth when the transport returns no session', async () => {
+    const transport = new FakeTransport()
+    const provider = new DeepSeekWebProvider(transport)
+    await provider.init()
+    expect(await provider.healthStatus()).toBe('needs-auth')
+  })
+
+  it('reports expired when the transport reports an expired session', async () => {
+    const transport = new FakeTransport()
+    transport.sessions.push({ closed: true, reason: 'expired' })
+    const provider = new DeepSeekWebProvider(transport)
+
+    await provider.init()
+    expect(await provider.isReady()).toBe(false)
+    expect(await provider.healthStatus()).toBe('expired')
+    await expect(provider.sendMessage(chatRequest())).rejects.toMatchObject({ code: 'provider-not-ready' })
+  })
+
+  it('returns to not-started after close', async () => {
+    const transport = new FakeTransport()
+    transport.sessions.push(fakeSession())
+    const provider = new DeepSeekWebProvider(transport)
+
+    await provider.init()
+    await provider.close()
+    expect(await provider.healthStatus()).toBe('not-started')
   })
 
   it('reopens the site conversation on switchSession', async () => {

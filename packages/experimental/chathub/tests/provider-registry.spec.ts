@@ -42,9 +42,9 @@ describe('ProviderRegistry', () => {
     registry.register(fakeProvider({ id: 'gamma', ready: new Error('session expired') }))
 
     expect(await registry.healthCheck()).toEqual([
-      { providerId: 'alpha', ready: true },
-      { providerId: 'beta', ready: false },
-      { providerId: 'gamma', ready: false, error: 'session expired' },
+      { providerId: 'alpha', ready: true, status: 'ready' },
+      { providerId: 'beta', ready: false, status: 'needs-auth' },
+      { providerId: 'gamma', ready: false, status: 'failed', error: 'session expired' },
     ])
   })
 
@@ -52,11 +52,35 @@ describe('ProviderRegistry', () => {
     expect(await probeProvider(fakeProvider({ id: 'alpha', ready: true }))).toEqual({
       providerId: 'alpha',
       ready: true,
+      status: 'ready',
     })
     expect(await probeProvider(fakeProvider({ id: 'alpha', ready: new Error('offline') }))).toEqual({
       providerId: 'alpha',
       ready: false,
+      status: 'failed',
       error: 'offline',
+    })
+  })
+
+  it('uses the provider-reported health status when an adapter exposes one', async () => {
+    expect(await probeProvider(fakeProvider({ id: 'delta', healthStatus: 'expired' }))).toEqual({
+      providerId: 'delta',
+      ready: false,
+      status: 'expired',
+    })
+    expect(await probeProvider(fakeProvider({ id: 'delta', healthStatus: 'ready' }))).toEqual({
+      providerId: 'delta',
+      ready: true,
+      status: 'ready',
+    })
+  })
+
+  it('maps a rejected health status probe to failed', async () => {
+    expect(await probeProvider(fakeProvider({ id: 'delta', healthStatus: new Error('tab crashed') }))).toEqual({
+      providerId: 'delta',
+      ready: false,
+      status: 'failed',
+      error: 'tab crashed',
     })
   })
 })

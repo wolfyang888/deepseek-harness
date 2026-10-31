@@ -6,14 +6,17 @@ import type { IModelProvider, IProviderRegistry, ModelKind, ProviderHealth } fro
 /**
  * Probe one provider without letting a broken readiness check stop the caller.
  * @param provider - Provider to probe.
- * @returns Its health; a rejected probe reports the provider as not ready.
+ * @returns Its health, including a connection status consumers branch on.
  */
 export async function probeProvider(provider: IModelProvider): Promise<ProviderHealth> {
   try {
-    return { providerId: provider.id, ready: await provider.isReady() }
+    const status = provider.healthStatus !== undefined
+      ? await provider.healthStatus()
+      : (await provider.isReady() ? 'ready' : 'needs-auth')
+    return { providerId: provider.id, ready: status === 'ready', status }
   } catch (error) {
     // A rejected probe means the provider cannot serve; keep the reason for diagnostics.
-    return { providerId: provider.id, ready: false, error: errorMessage(error) }
+    return { providerId: provider.id, ready: false, status: 'failed', error: errorMessage(error) }
   }
 }
 

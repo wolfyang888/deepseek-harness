@@ -11,6 +11,7 @@ import type {
   IModelProvider,
   ModelCapabilities,
   ModelKind,
+  ProviderStatus,
 } from '../types.ts'
 
 /** Page-level payload one browser transport sends on the model's own site. */
@@ -62,9 +63,18 @@ export interface WebChatTransport {
    * Open or reuse a signed-in chat session.
    * @param providerId - Site identity the session must belong to.
    * @param sessionKey - Optional site-side conversation to resume.
-   * @returns The session, or `undefined` when the user still has to sign in.
+   * @returns The session when signed in, a closed result explaining why it
+   *   could not open, or `undefined` when the user still has to sign in.
    */
-  open(providerId: string, sessionKey?: string): Promise<WebChatTransportSession | undefined>
+  open(providerId: string, sessionKey?: string): Promise<WebChatTransportSession | WebChatTransportClosed | undefined>
+}
+
+/** Result from opening a browser session when the site refuses to start one. */
+export interface WebChatTransportClosed {
+  /** Marker distinguishing this from an open session. */
+  closed: true
+  /** Why no session could be opened. */
+  reason: 'not-signed-in' | 'expired'
 }
 
 /** Provider-specific prompt style from the design's adaptation layer. */
@@ -143,6 +153,8 @@ export abstract class WebModelProvider implements IModelProvider {
   protected readonly transport: WebChatTransport
   #session: WebChatTransportSession | undefined
   #sessionKey: string | undefined
+  #closedReason: 'not-signed-in' | 'expired' | undefined
+  #initialized = false
 
   /**
    * @param transport - Opener for the provider's signed-in browser sessions.
@@ -156,7 +168,9 @@ export abstract class WebModelProvider implements IModelProvider {
    * @returns Resolves when the transport has answered.
    */
   async init(): Promise<void> {
-    this.#session = await this.transport.open(this.id, this.#sessionKey)
+    const result = await this.transport.open(this.id, this.#sessionKey)
+    this.#initialized = true
+    this.applyOpenResult(result)
   }
 
   /**
@@ -168,6 +182,16 @@ export abstract class WebModelProvider implements IModelProvider {
   }
 
   /**
+   * Report the provider's connection state for login, refresh, or fallback decisions.
+   * @returns The current lifecycle state.
+   */
+  healthStatus(): Promise<ProviderStatus> {
+    if (this.#session !== undefined) return Promise.resolve('ready')
+    if (!this.#initialized) return Promise.resolve('not-started')
+    return Promise.resolve(this.#closedReason === 'expired' ? 'expired' : 'needs-auth')
+  }
+
+  /**
    * Reopen the site session under another conversation key.
    * @param sessionKey - Site-side conversation to resume next.
    * @returns Resolves when the former session closed and the new one opened.
@@ -175,7 +199,7 @@ export abstract class WebModelProvider implements IModelProvider {
   async switchSession(sessionKey: string): Promise<void> {
     this.#sessionKey = sessionKey
     await this.close()
-    this.#session = await this.transport.open(this.id, sessionKey)
+    this.applyOpenResult(await this.transport.open(this.id, sessionKey))
   }
 
   /**
@@ -233,7 +257,23 @@ export abstract class WebModelProvider implements IModelProvider {
   async close(): Promise<void> {
     const session = this.#session
     this.#session = undefined
+    this.#initialized = false
+    this.#closedReason = undefined
     if (session !== undefined) await session.close()
+  }
+
+  /**
+   * Store an open result as either a live session or a recorded close reason.
+   * @param result - Value returned by the transport's `open`.
+   */
+  private applyOpenResult(result: WebChatTransportSession | WebChatTransportClosed | undefined): void {
+    if (isClosedResult(result)) {
+      this.#session = undefined
+      this.#closedReason = result.reason
+    } else {
+      this.#session = result
+      this.#closedReason = undefined
+    }
   }
 
   /**
@@ -294,4 +334,15 @@ export abstract class WebModelProvider implements IModelProvider {
     if (error instanceof ChatHubError) return error
     return new ChatHubError('provider-call-failed', `${this.id}: ${errorMessage(error)}`, { cause: error })
   }
+}
+
+/**
+ * Narrow a transport open result to its closed variant.
+ * @param result - Value returned by `WebChatTransport.open`.
+ * @returns `true` when the result is a closed marker rather than a session.
+ */
+function isClosedResult(
+  result: WebChatTransportSession | WebChatTransportClosed | undefined,
+): result is WebChatTransportClosed {
+  return result !== undefined && 'closed' in result
 }
