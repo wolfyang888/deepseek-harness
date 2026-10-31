@@ -1,0 +1,115 @@
+调试 DSH 的思路是先确定问题属于哪一层：**配置组合 → Host 进程/插件 → 浏览器 Client → 会话数据**。按层选工具，比到处加 log 快得多。
+
+## 1. 启动可调试的 Web / Host
+
+```sh
+pnpm install
+pnpm run build          # 源码 demo 前先构建一次（或 build:artifacts）
+pnpm run dev:web        # 构建后启动 dsh web，并持续重建浏览器 bundle
+pnpm run start:web      # 已有构建产物时，跳过构建直接起
+```
+
+Host 从源码运行，浏览器加载构建产物：**Client 改动会自动重建，Host 改动重启 `dev:web` 进程最稳**。
+
+## 2. 内置 DevTools（首选）
+
+```sh
+pnpm run demo:inspector
+```
+
+它通过 source overlay 挂载 `experimental-inspector` 启动 Web profile，终端会打印 `devtools://` URL，用 Chrome 打开。Host 和所有 Client 的 Console 都在同一处，Host 可以下 Sources 断点，Network 面板捕获 Host 的 fetch（**含密钥，别外传**）。
+
+日常使用不必带参数：Plugin Manager → 官方组启用 **Developer Tools**，侧边栏新标签菜单出现 **Session Log**，`Ctrl/Cmd+Shift+.` 打开底部 **NodeJS Inspector**（内嵌 DevTools 前端）。启用后不需要也不能给 `dsh web` 传 `--inspect`。
+
+## 3. 看 Session 日志，而不是猜
+
+Harness 的规则是 model-visible ⟺ logged，请求内容、工具调用、事件顺序都能从日志还原。
+
+- 默认根 `~/.dsh`（用 `DSH_HOME` 覆盖），当前写入 `sessions/<session-id>/session.v4.jsonl.zstd`（默认 zstd 压缩）。
+- Web 的 **Session Log** 视图提供 Raw Log / Chat Group，按 `turn/start`–`turn/end`、`step/start`–`step/end` 分组，可按 type 过滤。
+- Web 的 Session Header → **Download session log**，或输入 `/export`，ZIP 里是明文 `session.v4.jsonl`，可直接 `jq`/`grep`。
+
+## 4. 配置与插件加载问题
+
+```sh
+pnpm dsh --profile web --dump-config           # 合成后的完整树，标注每段来自哪个 bundle/patch
+pnpm dsh --profile web --dump-default-config   # 不含用户层和 --patch
+pnpm dsh --profile web --dump-config-schema
+pnpm dsh web --patch ./debug.patch.yml         # 临时覆盖层，可重复传
+```
+
+用 `--patch` 按 id 关插件做二分：
+
+```yaml
+- id: some-plugin
+  disabled: true
+```
+
+`--patch` 里也能直接挂本地源码插件（路径相对 patch 文件），适合调自己写的 plugin：
+
+```yaml
+- insert:
+    - id: my-plugin
+      name: './src/index.ts'
+```
+
+启动失败：stderr 只有摘要，完整报告（插件错误栈、配置）在 `$DSH_HOME/logs/startup-*.log`，权限 0600，分享前先脱敏。profile 被改坏时，`dsh rescue --from-default-profile web` 会用模板重建一个自定义 profile（`rescue` 是自定义名；`acp`/`web`/`headless`/`sdk`/`sdk-minimal` 是保留的 shipped 名）。
+
+## 5. Headless / CLI 断点
+
+```sh
+pnpm dsh --profile headless --json "task"   # NDJSON 运行事件，逐步看循环
+node --inspect-brk --import tsx/esm apps/cli/src/bin.ts --profile headless "task"
+```
+
+第二条就是 `pnpm dsh` 的展开，只多了 inspector，用 `chrome://inspect` 连。不建议用 `NODE_OPTIONS=--inspect-brk`，它会被子进程继承。
+
+## 6. 确定性复现
+
+```sh
+pnpm exec vitest run packages/core/agent-loop/tests/agent.spec.ts   # 跳过 build:native-system
+pnpm run test:snapshot -- -t <scenario>                             # 回放录制会话，无需 API key
+pnpm run test:snapshot:record -- -t <scenario>                      # 需要 key，重录期望输出
+```
+
+快照回放把录制好的 session 重放到真实 profile，适合查 loop、工具调用、消息顺序；比连真模型稳定得多。Web 侧还有 `pnpm run test:web`（Chromium 回放）。
+
+## Desktop
+
+`pnpm run dev:desktop`：Renderer DevTools 自动打开；Main / Renderer / Host 调试端口默认 `9229 / 9222 / 9230`，可用 `DSH_DESKTOP_MAIN_INSPECT_PORT`、`DSH_DESKTOP_RENDERER_DEBUG_PORT`、`DSH_DESKTOP_HOST_INSPECT_PORT` 改，`DSH_DESKTOP_OPEN_DEVTOOLS=0` 关闭调试窗口。
+
+---
+
+实践顺序：先 `--dump-config` 确认插件在不在、是不是被 disabled，再决定是下断点还是读 Session 日志；临时 patch 和临时 `DSH_HOME` 用完清掉。需要的话我可以针对具体场景（Web 插件、headless、模型请求、启动失败）给更细的步骤。
+Waiting for the debugger to disconnect...
+(base) ywf@ywf-ubuntu:~/work/code/github/deepseek-harness$ ^C
+(base) ywf@ywf-ubuntu:~/work/code/github/deepseek-harness$ pnpm run build 
+Debugger attached.
+$ tsx scripts/build.ts
+Debugger attached.
+Debugger attached.
+run-gates: build running 9 gate(s) with 9 worker(s) from 12 local default worker(s) of 16 CPU(s).
+run-gates: start native addon
+run-gates: PASS native addon (5.62s)
+run-gates: start host compiler
+run-gates: PASS host compiler (2.93s)
+run-gates: start Host bundle
+run-gates: start host aggregate check
+run-gates: PASS Host bundle (26.19s)
+run-gates: start Desktop bundle
+run-gates: PASS Desktop bundle (7.58s)
+run-gates: start client compiler
+run-gates: PASS client compiler (2.59s)
+run-gates: start Client bundle
+run-gates: start client aggregate check
+run-gates: PASS Client bundle (20.70s)
+run-gates: start Web build
+run-gates: PASS Web build (18.24s)
+run-gates: PASS client aggregate check (62.40s)
+run-gates: PASS host aggregate check (119.61s)
+
+run-gates: 9 passed, 0 failed, 0 skipped in 128.18s.
+build: recorded 331 client artifact(s) with 3 public value(s)
+Waiting for the debugger to disconnect...
+Waiting for the debugger to disconnect...
+Waiting for the debugger to disconnect...
