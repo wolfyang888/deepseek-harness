@@ -62,7 +62,7 @@ await provider.init()
 registry.register(provider)
 ```
 
-`init` 通过站点登录状态报告就绪：用户仍需登录时 `open` 返回 `undefined`。`webProviderAdapters` 把 `deepseek-web`、`chatgpt-web`、`gemini-web` 与 `doubao-web` 映射到构造函数，供按配置构建提供方的宿主使用。每个构造函数还接受 `WebProviderOverrides`——能力标记、提示词标题与额外的站点失败规则——因此宿主可把同一份配置套用到任一随包适配器。用户重新登录后，`ProviderRegistry.reauthenticate(providerId)` 会重新打开提供方并报告新的健康状态；`ProviderRegistry.health(providerId)` 返回单个提供方的健康记录，供状态视图使用。
+`init` 通过站点登录状态报告就绪：用户仍需登录时 `open` 返回 `undefined`。`webProviderAdapters` 把 `deepseek-web`、`chatgpt-web`、`gemini-web` 与 `doubao-web` 映射到构造函数，供按配置构建提供方的宿主使用。每个构造函数还接受 `WebProviderOverrides`——能力标记、提示词标题与额外的站点失败规则——因此宿主可把同一份配置套用到任一随包适配器。用户重新登录后，`ProviderRegistry.reauthenticate(providerId)` 会重新打开提供方并报告新的健康状态；`ProviderRegistry.health(providerId)` 返回单个提供方的健康记录，供状态视图使用。探测失败时 `failureReason` 是稳定的 `ProviderErrorCode`，不会携带站点原始文本。
 
 常见路径先注册提供方、创建会话，再把下一轮交给路由器：
 

@@ -170,6 +170,12 @@ describe('SessionManager.switchProvider', () => {
       checkpointId: 'cp_1',
       reason: 'coding',
     })
+    session.context.lastToolResults.push({
+      toolCallId: 'call_1',
+      name: 'read',
+      summary: 'build.log',
+      createdAt: 1,
+    })
     session.context.workingMemory.push('waiting on build output')
 
     const outcome = await manager.switchProvider(session, 'gemini-web', 'need long-context review')
@@ -188,6 +194,9 @@ describe('SessionManager.switchProvider', () => {
       reason: 'need long-context review',
     })
     expect(outcome.context.modelSwitchHistory).toHaveLength(2)
+    expect(outcome.context.lastToolResults).toEqual([
+      { toolCallId: 'call_1', name: 'read', summary: 'build.log', createdAt: 1 },
+    ])
     expect(outcome.context.workingMemory).toEqual(['waiting on build output', 'project uses pnpm'])
     expect(outcome.prompt.startsWith('# Task context for gemini-web')).toBe(true)
     expect(outcome.prompt).toContain('## Latest Facts')
@@ -233,12 +242,16 @@ describe('SessionManager.switchProvider', () => {
   it('reports a failed readiness probe in the refusal', async () => {
     const registry = new ProviderRegistry()
     registry.register(fakeProvider({ id: 'deepseek-web' }))
-    registry.register(fakeProvider({ id: 'gemini-web', ready: new Error('session expired') }))
+    registry.register(fakeProvider({
+      id: 'gemini-web',
+      ready: new Error('session expired'),
+      normalizeError: 'auth-required',
+    }))
     const { manager } = setup({ registry })
     const session = manager.create({ title: 'Fix', goal: 'goal', provider: 'deepseek-web' })
 
     await expect(manager.switchProvider(session, 'gemini-web', 'switch'))
-      .rejects.toThrow('ChatHub provider "gemini-web" is not ready: session expired.')
+      .rejects.toThrow('ChatHub provider "gemini-web" is not ready: auth-required.')
   })
 })
 
@@ -494,14 +507,22 @@ describe('Session memory compaction and checkpoint consistency', () => {
       title: 'Fix the build',
       goal: 'fix the build error',
       provider: 'deepseek-web',
-      plan: [planStep({ id: 'p1', status: 'running', summary: 'patching config' })],
+      plan: [
+        planStep({ id: 'p1', status: 'running', summary: 'patching config' }),
+        planStep({ id: 'p2', status: 'blocked', summary: 'waiting on CI' }),
+      ],
     })
     seedMemory(session)
 
     new SessionMemoryService({ now: () => AT }).compact(session, BOUNDS)
+    expect(session.goal).toBe('fix the build error')
+    expect(session.context.objective).toBe('fix the build error')
+    expect(session.plan.map(step => `${step.id}:${step.status}`)).toEqual(['p1:running', 'p2:blocked'])
+
     const outcome = await manager.switchProvider(session, 'gemini-web', 'need review')
 
     expect(outcome.checkpoint.facts).toEqual(['project uses pnpm', 'build fails in stage 2'])
+    expect(outcome.context.plan.map(step => `${step.id}:${step.status}`)).toEqual(['p1:running', 'p2:blocked'])
     expect(outcome.context.objective).toBe('fix the build error')
     expect(outcome.context.facts).toEqual(['project uses pnpm', 'build fails in stage 2'])
     expect(outcome.context.openQuestions).toEqual(['is the frontend at fault?'])

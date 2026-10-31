@@ -1,6 +1,6 @@
 /** Provider registration, readiness probing, and re-login recovery for ChatHub. */
 
-import { ChatHubError, errorMessage } from './errors.ts'
+import { ChatHubError } from './errors.ts'
 import type {
   IModelProvider,
   IProviderRegistry,
@@ -39,9 +39,7 @@ export async function probeProvider(provider: IModelProvider): Promise<ProviderH
  * @returns The failed health record.
  */
 function failedHealth(provider: IModelProvider, error: unknown, lastCheckedAt: number): ProviderHealth {
-  const failureReason = provider.normalizeError !== undefined
-    ? provider.normalizeError(error)
-    : errorMessage(error)
+  const failureReason = provider.normalizeError?.(error) ?? 'unknown'
   return { providerId: provider.id, ready: false, status: 'failed', lastCheckedAt, failureReason }
 }
 

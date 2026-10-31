@@ -154,8 +154,8 @@ export interface ProviderHealth {
   status: ProviderStatus
   /** Epoch millis when this probe completed. */
   lastCheckedAt: number
-  /** Stable failure reason when the probe could not confirm readiness. */
-  failureReason?: string
+  /** Stable failure category when the probe could not confirm readiness. */
+  failureReason?: ProviderErrorCode
 }
 
 /** Progress state of one plan step. */

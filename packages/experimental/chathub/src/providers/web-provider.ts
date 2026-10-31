@@ -427,7 +427,7 @@ export abstract class WebModelProvider implements IModelProvider {
     const code = this.normalizeError(error)
     return new ChatHubError(
       runtimeErrorCode(code),
-      `${this.id}: ${errorMessage(error)}`,
+      `${this.id}: ${code}`,
       { cause: error },
     )
   }

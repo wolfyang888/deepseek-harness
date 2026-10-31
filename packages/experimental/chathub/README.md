@@ -62,7 +62,7 @@ await provider.init()
 registry.register(provider)
 ```
 
-`init` reports readiness through the site login state: `open` returns `undefined` while the user still has to sign in. `webProviderAdapters` maps `deepseek-web`, `chatgpt-web`, `gemini-web`, and `doubao-web` to constructors for hosts that build providers from configuration. Every constructor also takes `WebProviderOverrides` — capability flags, prompt heading, and extra site failure rules — so a host applies the same configuration to any shipped adapter. When the user signs in again, `ProviderRegistry.reauthenticate(providerId)` reopens the provider and reports its new health; `ProviderRegistry.health(providerId)` returns one provider's health record for a status view.
+`init` reports readiness through the site login state: `open` returns `undefined` while the user still has to sign in. `webProviderAdapters` maps `deepseek-web`, `chatgpt-web`, `gemini-web`, and `doubao-web` to constructors for hosts that build providers from configuration. Every constructor also takes `WebProviderOverrides` — capability flags, prompt heading, and extra site failure rules — so a host applies the same configuration to any shipped adapter. When the user signs in again, `ProviderRegistry.reauthenticate(providerId)` reopens the provider and reports its new health; `ProviderRegistry.health(providerId)` returns one provider's health record for a status view. A failed probe reports a stable `ProviderErrorCode` in `failureReason`, never the site's raw message.
 
 The common path registers providers, creates a session, and hands the next turn to a router:
 

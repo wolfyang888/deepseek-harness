@@ -428,10 +428,12 @@ describe('WebModelProvider sendMessage', () => {
     const provider = new DeepSeekWebProvider(transport)
     await provider.init()
 
-    await expect(provider.sendMessage(chatRequest())).rejects.toMatchObject({
+    const failure = await provider.sendMessage(chatRequest()).catch((error: unknown) => error)
+    expect(failure).toMatchObject({
       code: 'provider-call-failed',
-      message: 'deepseek-web: tab closed',
+      message: 'deepseek-web: unknown',
     })
+    expect((failure as ChatHubError).cause).toEqual(new Error('tab closed'))
   })
 
   it('rethrows an already typed provider failure unchanged', async () => {
@@ -475,7 +477,7 @@ describe('WebModelProvider streamMessage', () => {
       for await (const _chunk of provider.streamMessage(chatRequest())) {
         throw new Error('no chunk expected')
       }
-    }).rejects.toMatchObject({ code: 'network-error', message: 'deepseek-web: network reset' })
+    }).rejects.toMatchObject({ code: 'network-error', message: 'deepseek-web: network-error' })
   })
 
   it('keeps the deltas already shown when the site interrupts the stream', async () => {
@@ -488,7 +490,7 @@ describe('WebModelProvider streamMessage', () => {
     const chunks: ChatStreamChunk[] = []
     await expect(async () => {
       for await (const chunk of provider.streamMessage(chatRequest())) chunks.push(chunk)
-    }).rejects.toMatchObject({ code: 'stream-interrupted', message: 'deepseek-web: stream interrupted' })
+    }).rejects.toMatchObject({ code: 'stream-interrupted', message: 'deepseek-web: stream-interrupted' })
     expect(chunks).toEqual([{ index: 0, delta: 'root ' }])
   })
 
@@ -529,7 +531,7 @@ describe('WebModelProvider streamMessage', () => {
       for await (const _chunk of provider.streamMessage(chatRequest())) {
         throw new Error('no chunk expected')
       }
-    }).rejects.toMatchObject({ code: 'provider-call-failed', message: 'chatgpt-web: prompt rejected' })
+    }).rejects.toMatchObject({ code: 'provider-call-failed', message: 'chatgpt-web: unknown' })
   })
 
   it('requires an open session before streaming', async () => {

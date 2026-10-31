@@ -39,12 +39,16 @@ describe('ProviderRegistry', () => {
     const registry = new ProviderRegistry()
     registry.register(fakeProvider({ id: 'alpha', ready: true }))
     registry.register(fakeProvider({ id: 'beta', ready: false }))
-    registry.register(fakeProvider({ id: 'gamma', ready: new Error('session expired') }))
+    registry.register(fakeProvider({
+      id: 'gamma',
+      ready: new Error('session expired'),
+      normalizeError: 'auth-required',
+    }))
 
     expect(await registry.healthCheck()).toEqual([
       expect.objectContaining({ providerId: 'alpha', ready: true, status: 'ready' }),
       expect.objectContaining({ providerId: 'beta', ready: false, status: 'needs-auth' }),
-      expect.objectContaining({ providerId: 'gamma', ready: false, status: 'failed', failureReason: 'session expired' }),
+      expect.objectContaining({ providerId: 'gamma', ready: false, status: 'failed', failureReason: 'auth-required' }),
     ])
     for (const health of await registry.healthCheck()) {
       expect(typeof health.lastCheckedAt).toBe('number')
@@ -60,12 +64,26 @@ describe('ProviderRegistry', () => {
     }))
     expect(typeof ready.lastCheckedAt).toBe('number')
 
-    const failed = await probeProvider(fakeProvider({ id: 'alpha', ready: new Error('offline') }))
+    const failed = await probeProvider(fakeProvider({
+      id: 'alpha',
+      ready: new Error('offline'),
+      normalizeError: 'provider-unavailable',
+    }))
     expect(failed).toEqual(expect.objectContaining({
       providerId: 'alpha',
       ready: false,
       status: 'failed',
-      failureReason: 'offline',
+      failureReason: 'provider-unavailable',
+    }))
+  })
+
+  it('does not leak a raw probe message when the provider cannot classify it', async () => {
+    const failed = await probeProvider(fakeProvider({ id: 'alpha', ready: new Error('raw site text') }))
+    expect(failed).toEqual(expect.objectContaining({
+      providerId: 'alpha',
+      ready: false,
+      status: 'failed',
+      failureReason: 'unknown',
     }))
   })
 
@@ -79,8 +97,17 @@ describe('ProviderRegistry', () => {
   })
 
   it('maps a rejected health status probe to failed', async () => {
-    expect(await probeProvider(fakeProvider({ id: 'delta', healthStatus: new Error('tab crashed') }))).toEqual(
-      expect.objectContaining({ providerId: 'delta', ready: false, status: 'failed', failureReason: 'tab crashed' }),
+    expect(await probeProvider(fakeProvider({
+      id: 'delta',
+      healthStatus: new Error('tab crashed'),
+      normalizeError: 'provider-unavailable',
+    }))).toEqual(
+      expect.objectContaining({
+        providerId: 'delta',
+        ready: false,
+        status: 'failed',
+        failureReason: 'provider-unavailable',
+      }),
     )
   })
 
