@@ -168,7 +168,7 @@ Real-API tests/demos read `DEEPSEEK_API_KEY`, optional `DEEPSEEK_BASE_URL`, and 
 
 ## ChatHub multi-model sessions
 
-`packages/experimental/chathub` owns the multi-model session runtime and the [free browser-backed provider design](chatDeepDoc/deepseek-chathub-design.md) from the [detail design](detail_design.md): `IModelProvider` adapters, `ProviderRegistry`, `ContextCompiler`, `SessionMemoryService`, `CheckpointService`, `ModelRouter`, `SessionManager`, and the `WebChatTransport` seam with the shipped DeepSeek Chat, ChatGPT, Gemini, and Doubao browser adapters ([README](packages/experimental/chathub/README.md)).
+`packages/experimental/chathub` owns the multi-model session runtime and the [free browser-backed provider design](chatDeepDoc/deepseek-chathub-design.md) from the [detail design](chatDeepDoc/detail_design.md): `IModelProvider` adapters, `ProviderRegistry`, `ContextCompiler`, `SessionMemoryService`, `CheckpointService`, `ModelRouter`, `SessionManager`, and the `WebChatTransport` seam with the shipped DeepSeek Chat, ChatGPT, Gemini, and Doubao browser adapters ([README](packages/experimental/chathub/README.md)).
 
 - Providers implement `IModelProvider`; they never read the session store, mutate agent-loop state, or change `ChatRequest`/`ChatResponse`.
 - A switch checkpoints the outgoing provider, appends a `ModelSwitchRecord`, then renders the compiled semantic context for the incoming provider; raw transcripts never cross a switch.
