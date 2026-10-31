@@ -7,6 +7,8 @@ import {
   DeepSeekWebProvider,
   DoubaoWebProvider,
   GeminiWebProvider,
+  ModelRouter,
+  ProviderRegistry,
   WebModelProvider,
   renderWebPrompt,
   splitRequestMessages,
@@ -22,7 +24,7 @@ import type {
   WebChatTransportClosed,
   WebChatTransportSession,
 } from '@deepseek-ai/dsh-experimental-chathub'
-import { semanticContext, userMessage } from './fixtures.ts'
+import { semanticContext, sessionRecord, userMessage } from './fixtures.ts'
 
 /** Recorded browser session state used by the fakes. */
 interface FakeSession extends WebChatTransportSession {
@@ -618,5 +620,48 @@ describe('WebModelProvider.normalizeError', () => {
     await provider.init()
 
     await expect(provider.sendMessage(chatRequest())).rejects.toMatchObject({ code: 'provider-call-failed' })
+  })
+})
+
+describe('shipped multi-model routing', () => {
+  it('routes every task type to a configured browser adapter', async () => {
+    const transport: WebChatTransport = {
+      async open(providerId: string): Promise<WebChatTransportSession> {
+        return fakeSession({ raw: { content: `${providerId} answer` } })
+      },
+    }
+    const registry = new ProviderRegistry()
+    for (const create of Object.values(webProviderAdapters)) {
+      const provider = create({ transport })
+      await provider.init()
+      registry.register(provider)
+    }
+    const router = new ModelRouter({
+      registry,
+      routing: {
+        coding: 'deepseek-web',
+        research: 'gemini-web',
+      },
+    })
+    const session = sessionRecord({ currentProvider: 'doubao-web' })
+
+    const coding = await router.route({ session, taskType: 'coding' })
+    expect(coding.provider.id).toBe('deepseek-web')
+
+    const research = await router.route({ session, taskType: 'research' })
+    expect(research.provider.id).toBe('gemini-web')
+
+    const current = await router.route({ session, taskType: 'quick-answer' })
+    expect(current.provider.id).toBe('doubao-web')
+
+    const completion = await router.complete({
+      session,
+      taskType: 'quick-answer',
+      preferredProvider: 'chatgpt-web',
+      messages: [userMessage('quick check')],
+      taskContext: semanticContext(),
+    })
+    expect(completion.provider.id).toBe('chatgpt-web')
+    expect(completion.response.content).toBe('chatgpt-web answer')
   })
 })
