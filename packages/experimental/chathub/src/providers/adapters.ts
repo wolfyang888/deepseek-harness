@@ -3,6 +3,8 @@
 import type { IModelProvider } from '../types.ts'
 import { ChatGptWebProvider } from './chatgpt-web.ts'
 import { DeepSeekWebProvider } from './deepseek-web.ts'
+import { DoubaoWebProvider } from './doubao-web.ts'
+import { GeminiWebProvider } from './gemini-web.ts'
 import type { WebChatTransport } from './web-provider.ts'
 
 /** Construction inputs for one shipped browser adapter. */
@@ -15,4 +17,6 @@ export interface WebProviderAdapterOptions {
 export const webProviderAdapters = {
   'deepseek-web': (options: WebProviderAdapterOptions): IModelProvider => new DeepSeekWebProvider(options.transport),
   'chatgpt-web': (options: WebProviderAdapterOptions): IModelProvider => new ChatGptWebProvider(options.transport),
+  'gemini-web': (options: WebProviderAdapterOptions): IModelProvider => new GeminiWebProvider(options.transport),
+  'doubao-web': (options: WebProviderAdapterOptions): IModelProvider => new DoubaoWebProvider(options.transport),
 } satisfies Record<string, (options: WebProviderAdapterOptions) => IModelProvider>

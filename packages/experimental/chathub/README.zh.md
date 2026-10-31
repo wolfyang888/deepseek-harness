@@ -9,7 +9,7 @@ kind: "package-library"
 
 ## 概述
 
-`dsh-experimental-chathub` 让同一个任务在用户更换模型时保持连贯：它记录任务目标、计划、事实、未解问题与决定，并为下一轮接手的提供方渲染交接内容。把提供方注册到同一个适配接口之后，路由器可以按任务挑选有能力处理的模型、在调用失败时降级，并在每次切换前写入检查点。这是一个库：没有 profile 挂载它，没有 `cordis.yml` 行引用它。它随包提供 DeepSeek Chat 与 ChatGPT 的浏览器适配器，并驱动由宿主提供的已登录浏览器传输。
+`dsh-experimental-chathub` 让同一个任务在用户更换模型时保持连贯：它记录任务目标、计划、事实、未解问题与决定，并为下一轮接手的提供方渲染交接内容。把提供方注册到同一个适配接口之后，路由器可以按任务挑选有能力处理的模型、在调用失败时降级，并在每次切换前写入检查点。这是一个库：没有 profile 挂载它，没有 `cordis.yml` 行引用它。它随包提供 DeepSeek Chat、ChatGPT、Gemini 与 Doubao 的浏览器适配器，并驱动由宿主提供的已登录浏览器传输。
 
 ## 目录
 
@@ -61,7 +61,7 @@ await provider.init()
 registry.register(provider)
 ```
 
-`init` 通过站点登录状态报告就绪：用户仍需登录时 `open` 返回 `undefined`。`webProviderAdapters` 把 `deepseek-web` 与 `chatgpt-web` 映射到构造函数，供按配置构建提供方的宿主使用。
+`init` 通过站点登录状态报告就绪：用户仍需登录时 `open` 返回 `undefined`。`webProviderAdapters` 把 `deepseek-web`、`chatgpt-web`、`gemini-web` 与 `doubao-web` 映射到构造函数，供按配置构建提供方的宿主使用。
 
 常见路径先注册提供方、创建会话，再把下一轮交给路由器：
 
@@ -114,6 +114,8 @@ const outcome = await manager.switchProvider(session, 'gemini-web', 'need long-c
 | [`src/providers/web-provider.ts`](src/providers/web-provider.ts) | 浏览器传输接缝、请求归一化、提示词渲染与适配器基类 |
 | [`src/providers/deepseek-web.ts`](src/providers/deepseek-web.ts) | DeepSeek Chat 适配器 |
 | [`src/providers/chatgpt-web.ts`](src/providers/chatgpt-web.ts) | ChatGPT 适配器 |
+| [`src/providers/gemini-web.ts`](src/providers/gemini-web.ts) | Gemini 适配器 |
+| [`src/providers/doubao-web.ts`](src/providers/doubao-web.ts) | Doubao 适配器 |
 | [`src/providers/adapters.ts`](src/providers/adapters.ts) | 按提供方 id 索引的随包适配器构造函数 |
 | [`src/session-manager.ts`](src/session-manager.ts) | 会话创建、请求构建、模型切换与运行时状态 |
 | [`src/ids.ts`](src/ids.ts) | 带日期的会话、检查点与记忆 id |

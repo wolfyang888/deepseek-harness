@@ -5,6 +5,8 @@ import {
   ChatGptWebProvider,
   ChatHubError,
   DeepSeekWebProvider,
+  DoubaoWebProvider,
+  GeminiWebProvider,
   WebModelProvider,
   renderWebPrompt,
   splitRequestMessages,
@@ -145,6 +147,8 @@ describe('shipped adapters', () => {
     const transport = new FakeTransport()
     const deepseek = new DeepSeekWebProvider(transport)
     const chatgpt = new ChatGptWebProvider(transport)
+    const gemini = new GeminiWebProvider(transport)
+    const doubao = new DoubaoWebProvider(transport)
 
     expect(deepseek.id).toBe('deepseek-web')
     expect(deepseek.name).toBe('DeepSeek Chat')
@@ -160,12 +164,22 @@ describe('shipped adapters', () => {
     expect(chatgpt.name).toBe('ChatGPT')
     expect(chatgpt.kind).toBe('web')
     expect(chatgpt.capabilities).toEqual(deepseek.capabilities)
+    expect(gemini.id).toBe('gemini-web')
+    expect(gemini.name).toBe('Gemini')
+    expect(gemini.kind).toBe('web')
+    expect(gemini.capabilities).toEqual(deepseek.capabilities)
+    expect(doubao.id).toBe('doubao-web')
+    expect(doubao.name).toBe('Doubao')
+    expect(doubao.kind).toBe('web')
+    expect(doubao.capabilities).toEqual(deepseek.capabilities)
   })
 
   it('builds every shipped adapter from its provider id', () => {
     const transport = new FakeTransport()
     expect(webProviderAdapters['deepseek-web']({ transport }).id).toBe('deepseek-web')
     expect(webProviderAdapters['chatgpt-web']({ transport }).id).toBe('chatgpt-web')
+    expect(webProviderAdapters['gemini-web']({ transport }).id).toBe('gemini-web')
+    expect(webProviderAdapters['doubao-web']({ transport }).id).toBe('doubao-web')
   })
 })
 

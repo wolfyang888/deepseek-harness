@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-experimental-chathub` keeps one task coherent while its user moves between models: it records what the task aims at, the plan, facts, open questions, and decisions, then renders that handoff for whichever provider takes the next turn. Registering providers behind one adapter lets the router pick a capable model per turn, fall back when a call fails, and write a checkpoint before every switch. This is a library — no profile mounts it and no `cordis.yml` row names it. It ships browser adapters for DeepSeek Chat and ChatGPT; the host supplies the signed-in browser transport they drive.
+`dsh-experimental-chathub` keeps one task coherent while its user moves between models: it records what the task aims at, the plan, facts, open questions, and decisions, then renders that handoff for whichever provider takes the next turn. Registering providers behind one adapter lets the router pick a capable model per turn, fall back when a call fails, and write a checkpoint before every switch. This is a library — no profile mounts it and no `cordis.yml` row names it. It ships browser adapters for DeepSeek Chat, ChatGPT, Gemini, and Doubao; the host supplies the signed-in browser transport they drive.
 
 ## Table of Contents
 
@@ -61,7 +61,7 @@ await provider.init()
 registry.register(provider)
 ```
 
-`init` reports readiness through the site login state: `open` returns `undefined` while the user still has to sign in. `webProviderAdapters` maps `deepseek-web` and `chatgpt-web` to constructors for hosts that build providers from configuration.
+`init` reports readiness through the site login state: `open` returns `undefined` while the user still has to sign in. `webProviderAdapters` maps `deepseek-web`, `chatgpt-web`, `gemini-web`, and `doubao-web` to constructors for hosts that build providers from configuration.
 
 The common path registers providers, creates a session, and hands the next turn to a router:
 
@@ -114,6 +114,8 @@ The session record is the canonical state: goal, plan, memory entries, semantic 
 | [`src/providers/web-provider.ts`](src/providers/web-provider.ts) | Browser transport seam, request normalization, prompt rendering, and the adapter base class |
 | [`src/providers/deepseek-web.ts`](src/providers/deepseek-web.ts) | DeepSeek Chat adapter |
 | [`src/providers/chatgpt-web.ts`](src/providers/chatgpt-web.ts) | ChatGPT adapter |
+| [`src/providers/gemini-web.ts`](src/providers/gemini-web.ts) | Gemini adapter |
+| [`src/providers/doubao-web.ts`](src/providers/doubao-web.ts) | Doubao adapter |
 | [`src/providers/adapters.ts`](src/providers/adapters.ts) | Provider-id keyed constructors for the shipped adapters |
 | [`src/session-manager.ts`](src/session-manager.ts) | Session creation, request building, model switching, and runtime state |
 | [`src/ids.ts`](src/ids.ts) | Date-stamped session, checkpoint, and memory ids |

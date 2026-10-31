@@ -38,6 +38,8 @@ export type {
 } from './providers/web-provider.ts'
 export { DeepSeekWebProvider } from './providers/deepseek-web.ts'
 export { ChatGptWebProvider } from './providers/chatgpt-web.ts'
+export { GeminiWebProvider } from './providers/gemini-web.ts'
+export { DoubaoWebProvider } from './providers/doubao-web.ts'
 export { webProviderAdapters } from './providers/adapters.ts'
 export type { WebProviderAdapterOptions } from './providers/adapters.ts'
 export { SessionManager } from './session-manager.ts'
