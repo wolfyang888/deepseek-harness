@@ -1,6 +1,6 @@
 /** Task-aware model routing with capability matching, ordered fallbacks, and failure fallback. */
 
-import { ChatHubError, errorMessage, type ChatHubErrorCode } from './errors.ts'
+import { ChatHubError, errorMessage } from './errors.ts'
 import { probeProvider } from './provider-registry.ts'
 import type {
   ChatMessage,
@@ -40,8 +40,13 @@ export interface ModelRouterOptions {
   retry?: RetryPolicy
 }
 
-/** Failure codes a retry policy may treat as transient. */
-export type RetryableErrorCode = ChatHubErrorCode | ProviderErrorCode
+/**
+ * Stable failure codes a retry policy may treat as transient.
+ *
+ * Aggregate `ChatHubErrorCode` values are not retry selectors: they describe
+ * who failed (routing, registry, orchestration), not why the provider failed.
+ */
+export type RetryableErrorCode = ProviderErrorCode
 
 /** Retry policy applied inside one provider before the router falls back. */
 export interface RetryPolicy {
@@ -307,23 +312,27 @@ function retryable(
 /**
  * Collect every stable failure code one rejection carries.
  *
- * A `ChatHubError` exposes its wrapper code; when it wraps a provider rejection,
- * the provider's normalizer supplies the underlying failure category, so retry
- * policies branch on stable failure semantics instead of the wrapper's aggregate.
+ * The wrapper's aggregate code is never a retry selector. Classification comes
+ * from the provider's normalizer applied to the rejection and, when the error
+ * wraps another failure, to each cause in the chain. A provider without a
+ * normalizer cannot classify its failures, so only `unknown` is reported.
  * @param error - Rejected provider call.
- * @param provider - Provider whose normalizer classifies a wrapped cause.
- * @returns The wrapper code plus any provider-level code derived from the cause.
+ * @param provider - Provider whose normalizer classifies failures and their causes.
+ * @returns Distinct stable codes, or `unknown` when classification found none.
  */
-function failureCodes(error: unknown, provider: IModelProvider): RetryableErrorCode[] {
-  if (error instanceof ChatHubError) {
-    const codes: RetryableErrorCode[] = [error.code]
-    if (provider.normalizeError !== undefined && error.cause !== undefined) {
-      codes.push(provider.normalizeError(error.cause))
-    }
-    return codes
+function failureCodes(error: unknown, provider: IModelProvider): ProviderErrorCode[] {
+  if (provider.normalizeError === undefined) return ['unknown']
+  const codes: ProviderErrorCode[] = []
+  const seen = new Set<unknown>()
+  let current: unknown = error
+  while (!seen.has(current)) {
+    seen.add(current)
+    const code = provider.normalizeError(current)
+    if (code !== 'unknown' && !codes.includes(code)) codes.push(code)
+    if (!(current instanceof ChatHubError) || current.cause === undefined) break
+    current = current.cause
   }
-  if (provider.normalizeError !== undefined) return [provider.normalizeError(error)]
-  return ['unknown']
+  return codes.length > 0 ? codes : ['unknown']
 }
 
 /**

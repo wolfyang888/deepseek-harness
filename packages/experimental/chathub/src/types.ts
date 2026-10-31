@@ -213,7 +213,14 @@ export interface SemanticContext {
   lastToolResults: ToolResultSummary[]
 }
 
-/** Context snapshot written before a model switch. */
+/**
+ * Context snapshot written before a model switch.
+ *
+ * Compatibility contract: within `schemaVersion` 1, changes are additive and
+ * `restoreFromCheckpoint` ignores fields it does not read. A change that alters
+ * the meaning of an existing field, or removes one, requires a new schema
+ * version; older checkpoints are never rewritten.
+ */
 export interface SessionCheckpoint {
   /** Schema version for forward-compatible rehydration. */
   schemaVersion: 1
@@ -235,7 +242,13 @@ export interface SessionCheckpoint {
 /** Chronological event kinds a session records for host views and replay. */
 export type SessionTimelineKind = 'session-created' | 'provider-switch' | 'status' | 'memory'
 
-/** One ordered event in a session's timeline. */
+/**
+ * One ordered event in a session's timeline.
+ *
+ * Entries are append-only and never reordered or rewritten. Their ids increase
+ * monotonically within a session, so a later entry always has a larger sequence
+ * number. Only `provider-switch` entries carry the checkpoint they wrote.
+ */
 export interface SessionTimelineEntry {
   id: string
   kind: SessionTimelineKind

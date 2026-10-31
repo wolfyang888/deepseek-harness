@@ -238,6 +238,7 @@ describe('ModelRouter retry policy', () => {
       id: 'chatgpt-web',
       responses: [NETWORK_RESET(), NETWORK_RESET()],
       response: 'answered after retries',
+      normalizeError: 'network-error',
     }))
     const result = await retryRouter(registry, {
       maxAttempts: 3,
@@ -312,6 +313,86 @@ describe('ModelRouter retry policy', () => {
     expect(result.usedFallback).toBe(false)
   })
 
+  it('classifies the deepest cause behind nested wrappers', async () => {
+    const registry = new ProviderRegistry()
+    const inner = new ChatHubError('provider-call-failed', 'transport rejected', {
+      cause: new Error('server busy'),
+    })
+    registry.register(fakeProvider({
+      id: 'chatgpt-web',
+      responses: [new ChatHubError('provider-call-failed', 'site wrapper', { cause: inner })],
+      response: 'answered after retry',
+      normalizeError: error => (
+        error instanceof Error && error.message.includes('server busy') ? 'provider-unavailable' : 'unknown'
+      ),
+    }))
+    const result = await retryRouter(registry, {
+      maxAttempts: 2,
+      delayMs: 0,
+      retryOn: ['provider-unavailable'],
+    }).complete({
+      session: sessionRecord({ currentProvider: 'chatgpt-web' }),
+      taskType: 'quick-answer',
+      messages: [userMessage('continue')],
+      taskContext: TASK_CONTEXT,
+    })
+
+    expect(result.provider.id).toBe('chatgpt-web')
+    expect(result.usedFallback).toBe(false)
+    expect(result.attempts.map(attempt => attempt.attempt)).toEqual([1])
+  })
+
+  it('does not retry when the provider cannot classify its failure', async () => {
+    const registry = new ProviderRegistry()
+    registry.register(fakeProvider({
+      id: 'chatgpt-web',
+      responses: [new Error('server busy')],
+      response: 'never used',
+    }))
+    registry.register(fakeProvider({ id: 'deepseek-web' }))
+    const result = await retryRouter(registry, {
+      maxAttempts: 2,
+      delayMs: 0,
+      retryOn: ['provider-unavailable'],
+    }).complete({
+      session: sessionRecord({ currentProvider: 'chatgpt-web' }),
+      taskType: 'quick-answer',
+      messages: [userMessage('continue')],
+      taskContext: TASK_CONTEXT,
+    })
+
+    expect(result.provider.id).toBe('deepseek-web')
+    expect(result.usedFallback).toBe(true)
+    expect(result.attempts).toEqual([
+      { providerId: 'chatgpt-web', attempt: 1, error: 'server busy' },
+    ])
+  })
+
+  it('does not retry an aggregate wrapper code', async () => {
+    const registry = new ProviderRegistry()
+    registry.register(fakeProvider({
+      id: 'chatgpt-web',
+      responses: [new ChatHubError('provider-call-failed', 'site is down')],
+      response: 'never used',
+      normalizeError: 'unknown',
+    }))
+    registry.register(fakeProvider({ id: 'deepseek-web' }))
+    const result = await retryRouter(registry, {
+      maxAttempts: 2,
+      delayMs: 0,
+      // @ts-expect-error aggregate ChatHub codes are not retry selectors
+      retryOn: ['provider-call-failed'],
+    }).complete({
+      session: sessionRecord({ currentProvider: 'chatgpt-web' }),
+      taskType: 'quick-answer',
+      messages: [userMessage('continue')],
+      taskContext: TASK_CONTEXT,
+    })
+
+    expect(result.provider.id).toBe('deepseek-web')
+    expect(result.attempts.map(attempt => attempt.attempt)).toEqual([1])
+  })
+
   it('falls back without retrying when the failure code is not retryable', async () => {
     const registry = new ProviderRegistry()
     registry.register(fakeProvider({
@@ -343,6 +424,7 @@ describe('ModelRouter retry policy', () => {
     registry.register(fakeProvider({
       id: 'chatgpt-web',
       responses: [NETWORK_RESET(), NETWORK_RESET()],
+      normalizeError: 'network-error',
     }))
     registry.register(fakeProvider({ id: 'deepseek-web' }))
     const result = await retryRouter(registry, {
