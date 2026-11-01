@@ -50,3 +50,6 @@ native/system/test/bin/
 
 # Generated company-signed CUA release record.
 /packages/experimental/cua-macos/cua-helper.json
+
+# Owner-local real-browser validation profile (cookies, login state).
+/packages/experimental/chathub/.real-browser-profile/

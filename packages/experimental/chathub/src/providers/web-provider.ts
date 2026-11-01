@@ -317,8 +317,7 @@ export abstract class WebModelProvider implements IModelProvider {
   async *streamMessage(request: ChatRequest): AsyncIterable<ChatStreamChunk> {
     const payload = this.normalizeRequest(request)
     const session = this.session()
-    const stream = session.stream
-    if (stream === undefined) {
+    if (session.stream === undefined) {
       try {
         const raw = await session.send(payload)
         yield {
@@ -333,7 +332,7 @@ export abstract class WebModelProvider implements IModelProvider {
       }
     }
     try {
-      for await (const delta of stream(payload)) {
+      for await (const delta of session.stream(payload)) {
         yield { index: 0, delta }
       }
     } catch (error) {

@@ -466,6 +466,36 @@ describe('WebModelProvider streamMessage', () => {
     expect(session.payloads[0]!.prompt).toContain('user: fix the build error')
   })
 
+  it('invokes session.stream with its receiver bound so methods that use this work', async () => {
+    const transport = new FakeTransport()
+    const deltas = ['alpha', 'beta']
+    const session = {
+      seen: [] as string[],
+      async send(): Promise<WebChatRawResponse> {
+        return { content: '' }
+      },
+      async close(): Promise<void> {},
+    }
+    Object.defineProperty(session, 'stream', {
+      value: async function* streamWithThis(this: typeof session, payload: WebChatPayload): AsyncIterable<string> {
+        this.seen.push(payload.prompt)
+        for (const delta of deltas) yield delta
+      },
+    })
+    transport.sessions.push(session)
+    const provider = new DeepSeekWebProvider(transport)
+    await provider.init()
+
+    const chunks: ChatStreamChunk[] = []
+    for await (const chunk of provider.streamMessage(chatRequest())) chunks.push(chunk)
+    expect(chunks).toEqual([
+      { index: 0, delta: 'alpha' },
+      { index: 0, delta: 'beta' },
+      { index: 0, finishReason: 'stop' },
+    ])
+    expect(session.seen).toHaveLength(1)
+  })
+
   it('wraps streaming failures', async () => {
     const transport = new FakeTransport()
     const session = fakeSession({ deltas: new Error('network reset') })
