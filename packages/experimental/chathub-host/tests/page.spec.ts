@@ -1,0 +1,140 @@
+/** Page wrapper navigation, visibility polls, answer reads, and submission. */
+
+import { expect, it } from 'vitest'
+import { PlaywrightPage } from '../src/page.ts'
+import { FakePage } from './support/fake-browser.ts'
+
+const KEY = 'deepseek-web'
+const DRIVER = { url: 'https://fake.test/chat', input: '#prompt', answer: '.answer', submitKey: 'Enter' }
+
+function page(fake = new FakePage()): { wrapper: PlaywrightPage; fake: FakePage } {
+  return { wrapper: new PlaywrightPage(fake, KEY, 10), fake }
+}
+
+it('navigates to the site entry', async () => {
+  const { wrapper, fake } = page()
+  await wrapper.goto(DRIVER.url)
+  expect(fake.visited).toEqual([DRIVER.url])
+  expect(wrapper.url()).toBe(DRIVER.url)
+})
+
+it('maps navigation failures to network errors', async () => {
+  const { wrapper, fake } = page()
+  fake.errors.goto = new Error('net::ERR_NAME_NOT_RESOLVED')
+  await expect(wrapper.goto(DRIVER.url)).rejects.toMatchObject({ token: 'chathub-network' })
+})
+
+it('waits for a visible chat input', async () => {
+  const { wrapper, fake } = page()
+  fake.visible.add(DRIVER.input)
+  await expect(wrapper.waitForInput(DRIVER.input, undefined, 20, 1)).resolves.toBe(true)
+})
+
+it('stops waiting when the login wall appears', async () => {
+  const { wrapper, fake } = page()
+  fake.visible.add('.login-wall')
+  await expect(wrapper.waitForInput(DRIVER.input, '.login-wall', 20, 1)).resolves.toBe(false)
+})
+
+it('reports an unsigned-in site after the deadline', async () => {
+  const { wrapper } = page()
+  await expect(wrapper.waitForInput(DRIVER.input, '.login-wall', 2, 1)).resolves.toBe(false)
+})
+
+it('stops immediately when the deadline has already passed', async () => {
+  const { wrapper } = page()
+  await expect(wrapper.waitForInput(DRIVER.input, undefined, 1, 10)).resolves.toBe(false)
+})
+
+it('stops when a visibility check outlasts the deadline', async () => {
+  const { wrapper, fake } = page()
+  fake.isVisibleDelayMs = 5
+  await expect(wrapper.waitForInput(DRIVER.input, undefined, 2, 1)).resolves.toBe(false)
+})
+
+it('stops with a false result when the caller aborts', async () => {
+  const { wrapper } = page()
+  await expect(wrapper.waitForInput(DRIVER.input, undefined, 20, 1, AbortSignal.abort())).resolves.toBe(false)
+  const controller = new AbortController()
+  const waiting = wrapper.waitForInput(DRIVER.input, undefined, 50, 5, controller.signal)
+  controller.abort()
+  await expect(waiting).resolves.toBe(false)
+})
+
+it('rejects a page that closes while waiting', async () => {
+  const { wrapper, fake } = page()
+  fake.closed = true
+  await expect(wrapper.waitForInput(DRIVER.input, undefined, 20, 1))
+    .rejects.toMatchObject({ token: 'chathub-signed-out' })
+})
+
+it('classifies a thrown visibility check', async () => {
+  const { wrapper, fake } = page()
+  fake.errors.isVisible = new Error('element is not attached')
+  await expect(wrapper.waitForInput(DRIVER.input, undefined, 20, 1))
+    .rejects.toMatchObject({ token: 'chathub-ui-drift' })
+})
+
+it('reads the last answer container text', async () => {
+  const { wrapper, fake } = page()
+  fake.counts[DRIVER.answer] = 2
+  fake.texts[DRIVER.answer] = '  answer  '
+  await expect(wrapper.answerText(DRIVER.answer)).resolves.toBe('answer')
+})
+
+it('treats a missing answer container as no answer', async () => {
+  const { wrapper } = page()
+  await expect(wrapper.answerText(DRIVER.answer)).resolves.toBe('')
+})
+
+it('treats an answer read timeout as no answer yet', async () => {
+  const { wrapper, fake } = page()
+  fake.counts[DRIVER.answer] = 1
+  fake.errors.innerText = Object.assign(new Error('timed out'), { name: 'TimeoutError' })
+  await expect(wrapper.answerText(DRIVER.answer)).resolves.toBe('')
+})
+
+it('classifies other answer read failures', async () => {
+  const { wrapper, fake } = page()
+  fake.counts[DRIVER.answer] = 1
+  fake.errors.innerText = new Error('element is not attached')
+  await expect(wrapper.answerText(DRIVER.answer)).rejects.toMatchObject({ token: 'chathub-ui-drift' })
+  fake.errors.innerText = undefined
+  fake.errors.count = new Error('browser has been closed')
+  await expect(wrapper.answerText(DRIVER.answer)).rejects.toMatchObject({ token: 'chathub-signed-out' })
+})
+
+it('clicks the input, types the prompt, and submits', async () => {
+  const { wrapper, fake } = page()
+  fake.boxes[DRIVER.input] = { x: 10, y: 20, width: 100, height: 40 }
+  await wrapper.submit('hello', DRIVER, 5)
+  expect(fake.clicks).toEqual([{ x: 60, y: 40 }])
+  expect(fake.typed).toEqual(['hello'])
+  expect(fake.keys).toEqual(['Enter'])
+})
+
+it('reports an input without a layout box as UI drift', async () => {
+  const { wrapper } = page()
+  await expect(wrapper.submit('hello', DRIVER, 5)).rejects.toMatchObject({ token: 'chathub-ui-drift' })
+})
+
+it('classifies submission failures', async () => {
+  const { wrapper, fake } = page()
+  fake.boxes[DRIVER.input] = { x: 0, y: 0, width: 10, height: 10 }
+  fake.errors.type = new Error('connect ECONNREFUSED')
+  await expect(wrapper.submit('hello', DRIVER, 5)).rejects.toMatchObject({ token: 'chathub-network' })
+})
+
+it('closes an open page once and ignores a closed one', async () => {
+  const { wrapper, fake } = page()
+  await wrapper.close()
+  expect(fake.closeCount).toBe(1)
+  await wrapper.close()
+  expect(fake.closeCount).toBe(1)
+})
+
+it('ignores a close rejection for a tab that is already gone', async () => {
+  const { wrapper, fake } = page()
+  fake.errors.close = new Error('page has been closed')
+  await expect(wrapper.close()).resolves.toBeUndefined()
+})

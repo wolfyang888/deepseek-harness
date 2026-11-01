@@ -8760,6 +8760,25 @@ importers:
         specifier: workspace:~
         version: link:../../../vendor/cordis
 
+  packages/experimental/chathub-host:
+    dependencies:
+      '@deepseek-ai/dsh-experimental-chathub':
+        specifier: workspace:*
+        version: link:../chathub
+      '@deepseek-ai/schemastery':
+        specifier: link:../../../vendor/schemastery
+        version: link:../../../vendor/schemastery
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: workspace:~
+        version: link:../../../vendor/cordis
+      '@deepseek-ai/dsh-typert-protocol':
+        specifier: workspace:*
+        version: link:../../typert/protocol
+      playwright-core:
+        specifier: ^1.61.1
+        version: 1.61.1
+
   packages/experimental/claude-code-mods:
     dependencies:
       '@deepseek-ai/dsh-util-crypto':

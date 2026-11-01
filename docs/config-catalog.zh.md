@@ -991,6 +991,86 @@ export interface StagehandModelConfig {
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-experimental-browser-use-stagehand-native -->
 
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-experimental-chathub-host -->
+<a id="deepseek-aidsh-experimental-chathub-host"></a>
+
+## `@deepseek-ai/dsh-experimental-chathub-host`
+
+- `inject`: `typert`
+- `source`: [`packages/experimental/chathub-host/src/types.ts:75`](../packages/experimental/chathub-host/src/types.ts)
+
+```ts config-catalog
+/** Service configuration after schema defaults have been applied. */
+export interface Config extends TransportConfig {
+  /** Browser ownership mode and launch inputs. */
+  browser: BrowserRuntimeConfig
+  /** Provider-id keyed partial overrides of the shipped site drivers. */
+  drivers?: Record<string, Partial<SiteDriverConfig>>
+}
+
+/** Timing and queue policy shared by the transport, sessions, and pages. */
+export interface TransportConfig {
+  /** Milliseconds `open` waits for the chat input before reporting a signed-out site. */
+  loginTimeoutMs: number
+  /** Hard cap on one turn. */
+  turnTimeoutMs: number
+  /** Cap on one page operation. */
+  actionTimeoutMs: number
+  /** Milliseconds between answer polls. */
+  pollMs: number
+  /** Stable polls required before an answer counts as finished. */
+  stablePolls: number
+  /** Turns allowed to wait behind the active turn for one key. */
+  maxQueuedTurns: number
+  /** Milliseconds between keystrokes when typing a prompt. */
+  typeDelayMs: number
+}
+
+/** Browser ownership mode and launch inputs. */
+export type BrowserRuntimeConfig =
+  | {
+    /** The Host launches and owns a persistent Chrome profile. */
+    mode: 'managed'
+    /** Persistent Chrome profile directory; required and never defaulted. */
+    profileDir: string
+    /** Chrome binary to launch; omitted uses Playwright's registry. */
+    executablePath?: string
+    /** Run without a visible window. */
+    headless: boolean
+  }
+  | {
+    /** The Host attaches to a Chrome the user already runs. */
+    mode: 'cdp'
+    /** Profile directory whose lock prevents a second Host from using it. */
+    profileDir: string
+    /** Remote debugging endpoint of the user's already running Chrome. */
+    cdpEndpoint: string
+    /** Report only; the connected browser keeps its own window mode. */
+    headless: boolean
+  }
+
+/** One site's selectors, entry URL, and completion rules. */
+export interface SiteDriverConfig {
+  /** Chat entry URL. */
+  url: string
+  /** Chat input: a `textarea` or contenteditable element. */
+  input: string
+  /** Assistant answer containers; the last one is the current answer. */
+  answer: string
+  /** Element that only appears on a signed-out wall. */
+  loginWall?: string
+  /** Path pattern identifying a login or logout redirect; matched case-insensitively. */
+  signedOutPath?: string
+  /** Key that submits the rendered prompt. */
+  submitKey: string
+  /** Stable polls required before an answer counts as finished; defaults to the service value. */
+  stablePolls?: number
+  /** Milliseconds between answer polls; defaults to the service value. */
+  pollMs?: number
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-experimental-chathub-host -->
+
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-experimental-claude-code-mods -->
 <a id="deepseek-aidsh-experimental-claude-code-mods"></a>
 
