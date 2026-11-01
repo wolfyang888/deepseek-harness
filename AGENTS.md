@@ -174,6 +174,7 @@ Real-API tests/demos read `DEEPSEEK_API_KEY`, optional `DEEPSEEK_BASE_URL`, and 
 - A switch checkpoints the outgoing provider, appends a `ModelSwitchRecord`, then renders the compiled semantic context for the incoming provider; raw transcripts never cross a switch.
 - Browser login state stays in the host-supplied `WebChatTransport`; providers keep no cookies or tokens and log none.
 - Add a model by implementing one adapter and registering it through `webProviderAdapters` or `ProviderRegistry`.
+- The [unified Web UI design](chatDeepDoc/chatHub-web-ui-plan.md) splits the panel across `chathub-host` (`chatHub` Remote controller, durable storage domain) and `client-ui-chathub` (browser-only sidebar panel); UI actions stay Remote calls, never in-process controller imports.
 
 ## Defensive patterns
 
