@@ -212,6 +212,36 @@ export class SessionManager {
   }
 
   /**
+   * Track a session restored from durable storage without re-recording its
+   * creation. The record keeps its id, timeline, and checkpoints; the manager
+   * only resumes tracking its runtime state.
+   * @param session - Persisted session to track again.
+   * @param status - Status the storage snapshot recorded; defaults to `idle`.
+   * @param lastError - Retained failure from the storage snapshot, when present.
+   */
+  adopt(session: ChatSessionRecord, status: SessionRuntimeStatus = 'idle', lastError?: string): void {
+    this.sessions.set(session.id, session)
+    const state: SessionRuntimeState = {
+      sessionId: session.id,
+      currentProvider: session.currentProvider,
+      activeGoal: session.goal,
+      status,
+    }
+    if (lastError !== undefined) state.lastError = lastError
+    this.states.set(session.id, state)
+  }
+
+  /**
+   * Stop tracking a deleted session. The caller owns durable deletion; this
+   * only drops the manager's record and runtime state.
+   * @param sessionId - Session to stop tracking.
+   */
+  forget(sessionId: string): void {
+    this.sessions.delete(sessionId)
+    this.states.delete(sessionId)
+  }
+
+  /**
    * Read a tracked session's runtime state.
    * @param sessionId - Session id to inspect.
    * @returns Its runtime state, or undefined when the manager did not create it.
@@ -237,6 +267,7 @@ export class SessionManager {
     if (lastError !== undefined) next.lastError = lastError
     this.states.set(sessionId, next)
     const session = this.sessions.get(sessionId)
+    /* v8 ignore next -- records and runtime states are always populated together, so a tracked state always has its record */
     if (session !== undefined) {
       this.timeline.record(session, {
         kind: 'status',

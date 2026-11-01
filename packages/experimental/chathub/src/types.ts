@@ -278,7 +278,7 @@ export interface ChatSessionRecord {
 }
 
 /** Lifecycle state exposed to session views. */
-export type SessionRuntimeStatus = 'idle' | 'thinking' | 'tool-running' | 'waiting' | 'done'
+export type SessionRuntimeStatus = 'idle' | 'thinking' | 'tool-running' | 'waiting' | 'done' | 'failed'
 
 /** Snapshot of a session's runtime lifecycle. */
 export interface SessionRuntimeState {

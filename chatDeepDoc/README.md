@@ -2,7 +2,7 @@
 
 English | [中文](README.zh.md)
 
-This directory records the design and implementation documents for ChatHub's browser plan. This page gives the manual validation steps for the host-layer `WebChatTransport` implementation ([`packages/experimental/chathub-host`](../packages/experimental/chathub-host/README.md); design in [WebChat_design.md](WebChat_design.md)).
+This directory records the design and implementation documents for ChatHub's browser plan. This page gives the manual validation steps for the host-layer `WebChatTransport` implementation ([`packages/experimental/chathub-host`](../packages/experimental/chathub-host/README.md); design in [chatHub-web-ui-plan.md](chatHub-web-ui-plan.md)).
 
 ## Coverage
 

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "ChatHub",
+    "description": "Multi-model sessions over browser-backed providers, with checkpointed model switching."
+  }
+}

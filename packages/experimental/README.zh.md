@@ -90,6 +90,7 @@ kind: "package-group"
 | [`browser-use-runtime`](browser-use-runtime/README.zh.md) | 实验性提供方共享的 Session 浏览器资源 | — |
 | [`chathub`](chathub/README.zh.md) | 与提供方无关的多模型会话，切换模型时经检查点完成语义交接 | 库与协议，不使用 ctx key |
 | [`chathub-host`](chathub-host/README.zh.md) | 宿主独占的 Chromium 运行时与 ChatHub 浏览器传输 Remote，含登录与稳定失败码 | `ctx.webChatTransport` |
+| [`client-ui-chathub`](client-ui-chathub/README.zh.md) | ChatHub 侧边栏面板：浏览器 provider、带检查点的模型切换与跨模型会话 | — |
 | [`inspector`](inspector/README.zh.md) | 用于 Host 调试、Client Runtime 检查、网络采集与 Cordis 树的跨 realm CDP hub | `ctx.inspector` |
 | [`session-inspector`](session-inspector/README.zh.md) | 展示原始 Session 日志与 Chat 节点的 Sidebar 表格 | — |
 | [`inspector-profile`](inspector-profile/README.zh.md) | 用于 Session 日志与 Chat 节点检查的可选 Web 组合包 | — |

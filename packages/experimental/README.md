@@ -90,6 +90,7 @@ Promotion requires a named product role, documented public behavior and limitati
 | [`browser-use-runtime`](browser-use-runtime/README.md) | Session-owned browser resources shared by experimental providers | — |
 | [`chathub`](chathub/README.md) | Provider-agnostic multi-model sessions with checkpointed semantic handoff across model switches | library and protocol — no ctx key |
 | [`chathub-host`](chathub-host/README.md) | Host-owned Chromium runtime and Remote for ChatHub's browser transport, with sign-in and stable failure codes | `ctx.webChatTransport` |
+| [`client-ui-chathub`](client-ui-chathub/README.md) | Sidebar panel for ChatHub: browser providers, checkpointed model switching, and cross-provider sessions | — |
 | [`inspector`](inspector/README.md) | Cross-realm CDP hub for Host debugging, Client Runtime inspection, network capture, and Cordis trees | `ctx.inspector` |
 | [`session-inspector`](session-inspector/README.md) | Sidebar tables for raw Session logs and Chat nodes | — |
 | [`inspector-profile`](inspector-profile/README.md) | Optional Web bundle for Session log and Chat node inspection | — |

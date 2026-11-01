@@ -90,6 +90,11 @@ async function harness(options: {
   const ctx = new Context()
   contexts.push(ctx)
   ctx.provide('typert', { lookups: { get: () => undefined } } as never)
+  // The service declares storageDomain for the ChatHub controller; these specs
+  // never touch session persistence, so a loud fake is enough.
+  ctx.provide('storageDomain', {
+    open: () => Promise.reject(new Error('service.spec never opens the chathub domain')),
+  } as never)
   await ctx.plugin(WebChatTransportService, options.cdp === true ? cdpConfig(dir) : config(dir, options.drivers))
   return { ctx, service: ctx.webChatTransport, opened }
 }
@@ -167,6 +172,9 @@ describe('WebChatTransportService', () => {
     const ctx = new Context()
     contexts.push(ctx)
     ctx.provide('typert', { lookups: { get: () => undefined } } as never)
+    ctx.provide('storageDomain', {
+      open: () => Promise.reject(new Error('service.spec never opens the chathub domain')),
+    } as never)
     const service = new WebChatTransportService(ctx, config(dir))
     const views = await service.providers()
     expect(views).toHaveLength(4)

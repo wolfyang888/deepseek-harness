@@ -3,8 +3,8 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write chatDeepDoc/README.md
 /chatdeepdoc-validation-guide:
-  en: 312e9b4279272944
-  zh: 61edbf202e059faa
+  en: 11d888b40c26c2ba
+  zh: 7766827a350f1810
 /chatdeepdoc-validation-guide/coverage:
   en: ed67e5dc65d7dc67
   zh: 213daae981a5fb20

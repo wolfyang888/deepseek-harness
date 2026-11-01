@@ -62,7 +62,7 @@ function antiDetectionScript(): void {
     ? navigator.plugins
     : []
   define(navigator, 'plugins', pluginArray)
-  const win = window as unknown as { chrome?: Record<string, unknown> }
+  const win = window as Window & { chrome?: Record<string, unknown> }
   if (win.chrome === undefined) {
     win.chrome = { runtime: {}, app: { isInstalled: false } }
   }

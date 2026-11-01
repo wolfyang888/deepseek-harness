@@ -1,6 +1,7 @@
 # Opt-in ChatHub browser transport layer: mount the host-owned Chromium
 # runtime and its `webChat` Remote namespace (`providers`, `login`,
-# `reauthenticate`). Shipped profiles do not include this layer; apply it with
+# `reauthenticate`), the `chatHub` session controller, and the client panel
+# package. Shipped profiles do not include this layer; apply it with
 #   dsh web --patch packages/experimental/chathub-host/cordis.patch.yml
 # from a source checkout, or the same relative path inside an installation.
 # Mounting only registers the four browser adapters — Chrome launches on the
@@ -31,3 +32,5 @@
         maxQueuedTurns: !!js Number(process.env.DSH_CHATHUB_MAX_QUEUED_TURNS ?? 2)
         typeDelayMs: !!js Number(process.env.DSH_CHATHUB_TYPE_DELAY_MS ?? 0)
         drivers: {}
+    - id: ui-chathub
+      name: '@deepseek-ai/dsh-experimental-client-ui-chathub'

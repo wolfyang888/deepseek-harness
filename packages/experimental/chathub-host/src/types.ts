@@ -1,9 +1,11 @@
 /** Host transport configuration, page-driver facts, and browser automation faces. */
 
 import type {
+  ChatMessage,
   IModelProvider,
   ModelCapabilities,
   ModelKind,
+  ProviderErrorCode,
   ProviderHealth,
 } from '@deepseek-ai/dsh-experimental-chathub'
 
@@ -297,4 +299,73 @@ export interface TransportRuntime extends TurnGate {
   login(providerId: string, driver: SiteDriverConfig, timeoutMs: number, signal: AbortSignal): Promise<boolean>
   /** @returns Resolves when every page and browser resource is released. */
   dispose(): Promise<void>
+}
+
+/** Lifecycle state of one ChatHub session as the panel shows it. */
+export type SessionStatus = 'idle' | 'thinking' | 'tool-running' | 'waiting' | 'done' | 'failed'
+
+/** Connection state of one provider as the panel shows it; `expired` maps to `needs-auth`. */
+export type ProviderStatus = 'not-started' | 'ready' | 'needs-auth' | 'failed'
+
+/** One provider row of the panel's provider selector. */
+export interface ChatHubProviderView {
+  id: string
+  name: string
+  kind: ModelKind
+  capabilities: ModelCapabilities
+  status: ProviderStatus
+  /** Stable failure category when the last probe could not confirm readiness. */
+  failureReason?: ProviderErrorCode
+}
+
+/** One session row of the panel's session list. */
+export interface ChatHubSessionSummary {
+  id: string
+  title: string
+  createdAt: number
+  updatedAt: number
+  currentProvider: string
+  status: SessionStatus
+  /** Stable failure of the most recent failed turn, when the session has one. */
+  lastError?: string
+}
+
+/** One session opened in the panel: a summary plus the task facts the switch handoff preserves. */
+export interface ChatHubSessionView extends ChatHubSessionSummary {
+  goal: string
+  providerHistory: string[]
+}
+
+/** Everything the panel renders on load or refresh. */
+export interface ChatHubPanelState {
+  providers: ChatHubProviderView[]
+  sessions: ChatHubSessionSummary[]
+}
+
+/** Inputs for one new panel session. */
+export interface ChatHubCreateInput {
+  title: string
+  goal: string
+  /** Provider the session starts on; must be registered. */
+  provider: string
+}
+
+/** Outcome of one completed turn as the panel shows it. */
+export interface ChatHubTurnResult {
+  sessionId: string
+  status: SessionStatus
+  /** The provider's answer; absent when the turn failed. */
+  assistant?: ChatMessage
+  /** Stable `provider: code` failure of the turn, when it failed. */
+  lastError?: string
+}
+
+/** Outcome of one completed model switch as the panel shows it. */
+export interface ChatHubSwitchResult {
+  sessionId: string
+  from: string
+  to: string
+  /** Checkpoint written before the target provider saw the task. */
+  checkpointId: string
+  status: SessionStatus
 }

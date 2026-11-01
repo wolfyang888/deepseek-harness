@@ -18,6 +18,7 @@ import { BrowserTransportError } from './errors.ts'
 import { assertEveryAdapterHasDriver, resolveSiteDrivers } from './drivers.ts'
 import { PlaywrightBrowserRuntime } from './runtime.ts'
 import { PlaywrightWebChatTransport, WEB_TRANSPORT_FAILURE_RULES } from './transport.ts'
+import { ChatHubController } from './controller.ts'
 import type {
   BrowserContextLike,
   ChromiumLauncher,
@@ -34,12 +35,32 @@ export { PlaywrightPage } from './page.ts'
 export { PlaywrightBrowserRuntime } from './runtime.ts'
 export { PlaywrightChatSession } from './session.ts'
 export { PlaywrightWebChatTransport, WEB_TRANSPORT_FAILURE_RULES } from './transport.ts'
+export { ChatHubController, type ChatHubControllerOptions } from './controller.ts'
+export {
+  chatHubDomainSpec,
+  ChatHubRepository,
+  chatHubStoredSession,
+  chatHubStoredMessage,
+  chatHubStoredTimelineEntry,
+  chatHubStoredCheckpoint,
+  chatHubProviderState,
+} from './storage.ts'
+export type {
+  ChatHubSessionSnapshot,
+  ChatHubStoredSession,
+  ChatHubStoredMessage,
+  ChatHubStoredTimelineEntry,
+  ChatHubStoredCheckpoint,
+  ChatHubProviderState,
+} from './storage.ts'
 export type * from './types.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
     /** ChatHub browser transport Remote controller. */
     webChatTransport: WebChatTransportService
+    /** ChatHub session orchestration Remote controller. */
+    chatHub: ChatHubController
   }
 }
 
@@ -81,7 +102,7 @@ function lazyChromiumLauncher(): ChromiumLauncher {
  * provider.
  */
 export class WebChatTransportService extends TypertRemoteService {
-  static inject = ['typert']
+  static inject = ['typert', 'storageDomain']
 
   static Config: z<Config> = z.object({
     browser: z.union([
@@ -148,6 +169,8 @@ export class WebChatTransportService extends TypertRemoteService {
       this.registry.register(provider)
       this.targets.set(providerId, { driver: drivers[providerId], provider })
     }
+    // The controller registers itself on the context under its `chatHub` namespace.
+    new ChatHubController(ctx, { registry: this.registry })
     ctx.effect(() => () => this.shutdown())
   }
 

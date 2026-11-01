@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-本目录记录 ChatHub 浏览器方案的设计与实现文档。本文给出宿主层 `WebChatTransport` 实现（[`packages/experimental/chathub-host`](../packages/experimental/chathub-host/README.zh.md)，设计见 [WebChat_design.md](WebChat_design.md)）的手动验校步骤。
+本目录记录 ChatHub 浏览器方案的设计与实现文档。本文给出宿主层 `WebChatTransport` 实现（[`packages/experimental/chathub-host`](../packages/experimental/chathub-host/README.zh.md)，设计见 [chatHub-web-ui-plan.md](chatHub-web-ui-plan.md)）的手动验校步骤。
 
 ## 覆盖范围
 

@@ -13,7 +13,7 @@ import type {
   ChatSessionRecord,
   SessionManagerOptions,
 } from '@deepseek-ai/dsh-experimental-chathub'
-import { FakeProvider, fakeProvider, planStep, userMessage } from './fixtures.ts'
+import { FakeProvider, fakeProvider, planStep, sessionRecord, userMessage } from './fixtures.ts'
 
 const AT = Date.UTC(2026, 9, 31, 10)
 
@@ -273,6 +273,45 @@ describe('SessionManager runtime state', () => {
     const { manager } = setup()
     expect(() => manager.setStatus('sess_unknown', 'done'))
       .toThrow(expect.objectContaining({ code: 'session-not-tracked' }))
+  })
+})
+
+describe('SessionManager adopt and forget', () => {
+  it('adopts a restored session with its retained failure and leaves its timeline untouched', () => {
+    const { manager } = setup()
+    const restored = sessionRecord({ id: 'sess_restored' })
+    manager.adopt(restored, 'failed', 'deepseek-web: rate-limited')
+    expect(manager.getState('sess_restored')).toEqual({
+      sessionId: 'sess_restored',
+      currentProvider: 'deepseek-web',
+      activeGoal: 'fix the build error',
+      status: 'failed',
+      lastError: 'deepseek-web: rate-limited',
+    })
+    expect(restored.timeline).toHaveLength(0)
+  })
+
+  it('defaults the adopted status to idle and rewrites the state on repeat adoption', () => {
+    const { manager } = setup()
+    const restored = sessionRecord({ id: 'sess_restored' })
+    manager.adopt(restored)
+    expect(manager.getState('sess_restored')?.status).toBe('idle')
+    manager.adopt(restored, 'done')
+    const state = manager.getState('sess_restored')
+    expect(state?.status).toBe('done')
+    expect(state?.lastError).toBeUndefined()
+  })
+
+  it('stops tracking a forgotten session and adopts it again cleanly', () => {
+    const { manager } = setup()
+    const session = manager.create({ title: 'Fix', goal: 'goal', provider: 'deepseek-web' })
+    manager.forget(session.id)
+    expect(() => manager.setStatus(session.id, 'done'))
+      .toThrow(expect.objectContaining({ code: 'session-not-tracked' }))
+    expect(manager.getState(session.id)).toBeUndefined()
+    expect(() => { manager.forget(session.id) }).not.toThrow()
+    manager.adopt(session, 'done')
+    expect(manager.getState(session.id)).toMatchObject({ status: 'done' })
   })
 })
 

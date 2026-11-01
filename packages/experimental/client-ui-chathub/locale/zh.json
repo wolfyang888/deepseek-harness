@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "ChatHub",
+    "description": "基于浏览器 provider 的多模型会话，支持带检查点的模型切换。"
+  }
+}
