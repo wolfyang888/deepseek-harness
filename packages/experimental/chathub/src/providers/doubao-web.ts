@@ -16,7 +16,7 @@ const DOUBAO_WEB: WebProviderConfig = {
   capabilities: WEB_PROVIDER_CAPABILITIES,
   promptStyle: { heading: 'Task context' },
   failureRules: [
-    { code: 'auth-required', pattern: /登录|未登录|账号异常/ },
+    { code: 'auth-required', pattern: /登录|未登录|账号异常|from_logout|logout|session expired/ },
     { code: 'provider-unavailable', pattern: /服务繁忙|系统繁忙/ },
   ],
 }

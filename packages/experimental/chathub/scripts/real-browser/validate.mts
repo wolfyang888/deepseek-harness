@@ -38,7 +38,12 @@ function providerIds(): string {
 }
 
 async function withTransport<T>(run: (transport: PlaywrightWebChatTransport) => Promise<T>): Promise<T> {
-  const transport = new PlaywrightWebChatTransport({ profileDir: PROFILE_DIR, storageState: STATE_FILE })
+  const transport = new PlaywrightWebChatTransport({
+    profileDir: PROFILE_DIR,
+    storageState: STATE_FILE,
+    headless: process.env.CHATHUB_HEADLESS === '1',
+    loginWaitMs: Number(process.env.CHATHUB_LOGIN_WAIT_MS ?? 20000),
+  })
   try {
     return await run(transport)
   } finally {

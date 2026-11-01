@@ -55,7 +55,7 @@ const SITE_DRIVERS: Record<string, SiteDriver> = {
   },
   'doubao-web': {
     url: 'https://www.doubao.com/chat',
-    input: 'textarea',
+    input: '.ProseMirror[contenteditable="true"]',
     answer: '[class*="markdown"]',
   },
 }
@@ -115,7 +115,7 @@ export class PlaywrightWebChatTransport implements WebChatTransport {
       const fallback = page.locator('textarea, [contenteditable="true"], [contenteditable="plaintext-only"]').first()
       try {
         await fallback.waitFor({ state: 'visible', timeout: Math.max(0, deadline - Date.now()) })
-        const info = await fallback.evaluate(el => ({ tag: el.tagName, id: (el as HTMLElement).id, cls: (el as HTMLElement).className, ph: el.getAttribute('placeholder') }))
+        const info = await fallback.evaluate((el: Element) => ({ tag: el.tagName, id: (el as HTMLElement).id, cls: (el as HTMLElement).className, ph: el.getAttribute('placeholder') }))
         console.error(`[transport] configured input "${driver.input}" not found; using fallback:`, info)
         inputFound = true
       } catch {
@@ -149,6 +149,11 @@ export class PlaywrightWebChatTransport implements WebChatTransport {
         args: ['--disable-blink-features=AutomationControlled'],
         ...this.options.storageState === undefined ? {} : { storageState: this.options.storageState },
       })
+      await this.context.addInitScript(() => {
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined })
+        Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en'] })
+        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] })
+      })
     }
     return this.context
   }
@@ -164,6 +169,7 @@ class PlaywrightTransportSession implements WebChatTransportSession {
   async send(payload: WebChatPayload): Promise<WebChatRawResponse> {
     const before = await this.answerCount()
     await this.submit(payload.prompt)
+    await this.assertNotLoggedOut()
     const text = await this.waitForComplete(before)
     return { content: text, finishReason: 'stop' }
   }
@@ -171,6 +177,7 @@ class PlaywrightTransportSession implements WebChatTransportSession {
   async *stream(payload: WebChatPayload): AsyncIterable<string> {
     const before = await this.answerCount()
     await this.submit(payload.prompt)
+    await this.assertNotLoggedOut()
     yield* this.streamUntilComplete(before)
   }
 
@@ -178,30 +185,57 @@ class PlaywrightTransportSession implements WebChatTransportSession {
     if (!this.page.isClosed()) await this.page.close()
   }
 
+  /** Throw when the site redirects to a login or logout page after submit. */
+  private async assertNotLoggedOut(): Promise<void> {
+    if (this.page.isClosed()) throw new Error('session expired: page closed')
+    const url = this.page.url()
+    if (/from_logout|sign_in|login|expired/.test(url)) {
+      throw new Error(`session expired: redirected to ${url}`)
+    }
+  }
+
+  /** Run a page action, rethrowing closed-target errors as session-expired. */
+  private async runWithSessionGuard<T>(action: () => Promise<T>): Promise<T> {
+    try {
+      return await action()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (/Target page, context or browser has been closed/.test(message)) {
+        throw new Error('session expired: page closed')
+      }
+      throw error
+    }
+  }
+
   private async answerCount(): Promise<number> {
-    return this.page.locator(this.driver.answer).count()
+    return this.runWithSessionGuard(() => this.page.locator(this.driver.answer).count())
   }
 
   private async lastAnswerText(): Promise<string> {
-    const answers = this.page.locator(this.driver.answer)
-    const count = await answers.count()
-    if (count === 0) return ''
-    return (await answers.nth(count - 1).innerText()).trim()
+    const text = await this.runWithSessionGuard(async () => {
+      const answers = this.page.locator(this.driver.answer)
+      const count = await answers.count()
+      if (count === 0) return ''
+      return (await answers.nth(count - 1).innerText()).trim()
+    })
+    return text
   }
 
   private async submit(prompt: string): Promise<void> {
-    const input = this.page.locator(this.driver.input).first()
-    await input.click()
-    const tag = await input.evaluate(el => ({
-      name: el.tagName.toLowerCase(),
-      editable: (el as HTMLElement).isContentEditable,
-    }))
-    if (tag.name === 'textarea' || tag.name === 'input') {
-      await input.fill(prompt)
-    } else {
-      await this.page.keyboard.insertText(prompt)
-    }
-    await this.page.keyboard.press('Enter')
+    await this.runWithSessionGuard(async () => {
+      const input = this.page.locator(this.driver.input).first()
+      await input.click()
+      const tag = await input.evaluate((el: Element) => ({
+        name: el.tagName.toLowerCase(),
+        editable: (el as HTMLElement).isContentEditable,
+      }))
+      if (tag.name === 'textarea' || tag.name === 'input') {
+        await input.fill(prompt)
+      } else {
+        await this.page.keyboard.insertText(prompt)
+      }
+      await this.page.keyboard.press('Enter')
+    })
   }
 
   private async waitForComplete(before: number): Promise<string> {
