@@ -893,6 +893,52 @@ it('replaces a provider under same id', () => {
 - verify no API token is required
 - verify user can continue the same task
 
+### 15.4 真实站点验证（Real-Browser Validation）
+
+本节记录使用 owner-local Playwright transport（`packages/experimental/chathub/scripts/real-browser/`）对真实站点进行端到端验证的方法与结论。该 harness 不随包发布，仅用于在合并前验证 browser adapter 与站点真实行为的契约。
+
+#### 15.4.1 验证方法
+
+- **持久化 profile + storage state**：`playwright-transport.mts` 通过 `launchPersistentContext` 使用系统 Chrome（`channel: 'chrome'`）写入 `.real-browser-profile/`；`login` 命令将 cookies + localStorage 保存到 `storage-state.json`，后续 `send`/`stream` 复用同一会话。
+- **CDP 模式**（`CHATHUB_CDP=1`）：直接 `spawn` Chrome 并 `connectOverCDP`，绕开 Playwright 的 launch 标志（如 `--remote-debugging-pipe`）。CDP 连接的默认 tab 上 `waitForSelector` / `locator` / `addInitScript` 会挂起，因此所有 DOM 交互改用 `page.evaluate` 轮询，输入使用真实 `page.mouse.click` + `page.keyboard.type`。
+- **反检测**：`antiDetectionScript` 覆盖 `navigator.webdriver`、`languages`、`hardwareConcurrency`、`platform`、`window.chrome`、Permissions API、WebGL vendor/renderer；可选 `CHATHUB_STEALTH=1` 加载 `playwright-extra` + `puppeteer-extra-plugin-stealth`（需 owner 自行 `npm install` 到 `/tmp/node_modules`）。
+
+#### 15.4.2 DeepSeek Web（deepseek-web）
+
+- **health / send / stream**：全部通过。真实模型返回文本完整，流式 delta 按增量产出。
+- **真实 bug 修复**：验证中发现 `WebProvider.streamMessage` 将 `session.stream` 解构为独立函数调用导致 `this` 丢失，已改为 `session.stream(payload)`。回归测试见 `web-provider.spec.ts`。
+- **跨 provider 切换（switch-self）**：以 DeepSeek 同时注册为 `deepseek-web` 与 `deepseek-web-2`，完成完整 SessionManager 切换流程：checkpoint 写入、timeline 追加、compiled semantic context 注入次级 provider 的新页面；次级 provider（无共享历史）成功回忆起种子 token `harbor-88364`，证明上下文交接有效。
+
+#### 15.4.3 豆包 Web（doubao-web）— 反爬绕过验证
+
+豆包（ByteDance）的反自动化检测强度高于 DeepSeek，验证覆盖以下绕过路径：
+
+| 手段 | 结果 |
+|---|---|
+| 仅 `--disable-blink-features=AutomationControlled` + JS 指纹伪造 | 提交后跳转 `?from_logout=1`，页面关闭 |
+| + `puppeteer-extra-plugin-stealth` | 仍触发 `from_logout` |
+| + CDP 模式（手动 spawn Chrome，无 Playwright launch 标志） | 偶发成功（URL 变为 `/chat/local_<id>`），多数仍触发 `from_logout` 或页面 reload |
+| + 真实鼠标点击 + `keyboard.type`（非 `textContent` 注入） | 提交成功率提升，但仍不稳定 |
+
+**结论**：当前技术栈无法稳定绕过豆包反爬。当检测触发时，transport 通过 `runWithSessionGuard` 将 `Target page closed` / `Execution context was destroyed` 统一映射为 `session expired`，`DoubaoWebProvider.failureRules` 将 `from_logout|logout|session expired` 归类为 `auth-required`，不向错误字段泄漏任何站点原文。这是符合设计契约的退化行为——用户需要重新登录。
+
+#### 15.4.4 运行命令
+
+```sh
+# 登录（headed，手动完成站点登录）
+node_modules/.bin/tsx packages/experimental/chathub/scripts/real-browser/validate.mts login <provider>
+
+# 发送 / 流式 / 健康检查
+node_modules/.bin/tsx packages/experimental/chathub/scripts/real-browser/validate.mts send <provider> '<prompt>'
+node_modules/.bin/tsx packages/experimental/chathub/scripts/real-browser/validate.mts stream <provider> '<prompt>'
+node_modules/.bin/tsx packages/experimental/chathub/scripts/real-browser/validate.mts health <provider>
+
+# 豆包：使用 CDP + 真实键鼠（owner 需先在 /tmp 安装 playwright-extra 等）
+CHATHUB_CDP=1 node_modules/.bin/tsx ... validate.mts send doubao-web 'hi'
+```
+
+环境变量：`CHATHUB_HEADLESS=1`（无头）、`CHATHUB_CDP=1`（CDP 模式）、`CHATHUB_STEALTH=1`（stealth 插件）、`CHATHUB_LOGIN_WAIT_MS`（登录等待超时）。
+
 ## 16. 非功能要求
 
 ### 16.1 安全
