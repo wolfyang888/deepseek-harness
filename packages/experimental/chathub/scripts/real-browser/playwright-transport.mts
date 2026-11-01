@@ -42,6 +42,13 @@ const SITE_DRIVERS: Record<string, SiteDriver> = {
     input: 'textarea',
     answer: '.ds-markdown',
   },
+  // Secondary alias for the same site; used by the switch-self drill to
+  // exercise the cross-provider path without a second signed-in site.
+  'deepseek-web-2': {
+    url: 'https://chat.deepseek.com/',
+    input: 'textarea',
+    answer: '.ds-markdown',
+  },
   'chatgpt-web': {
     url: 'https://chatgpt.com/',
     input: '#prompt-textarea',

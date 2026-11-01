@@ -21,7 +21,9 @@ import { CheckpointService } from '../../src/checkpoint.ts'
 import { ContextCompiler } from '../../src/context-compiler.ts'
 import { ChatHubError } from '../../src/errors.ts'
 import { ProviderRegistry } from '../../src/provider-registry.ts'
+import { DeepSeekWebProvider } from '../../src/providers/deepseek-web.ts'
 import { webProviderAdapters } from '../../src/providers/adapters.ts'
+import type { WebChatTransport } from '../../src/providers/web-provider.ts'
 import { SessionManager } from '../../src/session-manager.ts'
 import { SessionTimelineService } from '../../src/timeline.ts'
 import { PlaywrightWebChatTransport, SITE_DRIVERS } from './playwright-transport.mts'
@@ -160,6 +162,63 @@ async function switchDrill(fromId: string, toId: string): Promise<void> {
   })
 }
 
+/**
+ * Cross-provider switch drill using DeepSeek as both providers.
+ *
+ * Validates the full SessionManager switch path — checkpoint write, semantic
+ * context compilation, and target-provider recall — against two real LLM
+ * calls without needing a second signed-in site.
+ */
+async function switchSelfDrill(): Promise<void> {
+  await withTransport(async transport => {
+    class DeepSeekSecondary extends DeepSeekWebProvider {
+      override readonly id = 'deepseek-web-2'
+      override readonly name = 'DeepSeek Chat (secondary)'
+      constructor(t: WebChatTransport) { super(t) }
+    }
+    const registry = new ProviderRegistry()
+    registry.register(new DeepSeekWebProvider(transport))
+    registry.register(new DeepSeekSecondary(transport))
+    const manager = new SessionManager({
+      registry,
+      compiler: new ContextCompiler(),
+      checkpoints: new CheckpointService(),
+      timeline: new SessionTimelineService(),
+    })
+    const magic = `harbor-${Math.floor(Math.random() * 100_000)}`
+    const session = manager.create({
+      title: 'switch-self drill',
+      goal: 'remember a fact across a model switch',
+      provider: 'deepseek-web',
+    })
+    await registry.get('deepseek-web')!.init()
+    await registry.get('deepseek-web-2')!.init()
+
+    const seedRequest = manager.buildRequest(session, {
+      messages: [{ role: 'user', content: `Remember this magic token and nothing else matters: ${magic}. Reply with: remembered` }],
+    })
+    const seed = await registry.get('deepseek-web')!.sendMessage(seedRequest)
+    console.log(`[switch-self] primary seed answer:`, JSON.stringify(seed.content.slice(0, 120)))
+
+    // Simulate the orchestrator's memory extraction: persist the seeded fact
+    // into the session's semantic context before the switch.
+    session.context.facts.push(`The user asked the primary provider to remember magic token "${magic}".`)
+    session.context.workingMemory.push(`Magic token to remember across the switch: ${magic}`)
+
+    const outcome = await manager.switchProvider(session, 'deepseek-web-2', 'real-browser switch-self drill')
+    console.log(`[switch-self] checkpoint ${outcome.checkpoint.id} written; timeline entries: ${session.timeline.length}`)
+    console.log(`[switch-self] compiled prompt carries objective: ${outcome.prompt.includes(session.goal) ? 'YES' : 'NO'}`)
+
+    const recallRequest = manager.buildRequest(session, {
+      messages: [{ role: 'user', content: 'What is the magic token I asked you to remember? Reply with just the token.' }],
+    })
+    const recall = await registry.get('deepseek-web-2')!.sendMessage(recallRequest)
+    console.log(`[switch-self] secondary recall answer:`, JSON.stringify(recall.content.slice(0, 200)))
+    console.log(`[switch-self] context carried: ${recall.content.includes(magic) ? 'YES' : 'NO (token not in answer)'}`)
+    if (!recall.content.includes(magic)) process.exitCode = 1
+  })
+}
+
 function reportFailure(label: string, error: unknown): void {
   if (error instanceof ChatHubError) {
     console.log(`[${label}] ChatHubError code=${error.code} message=${JSON.stringify(error.message)}`)
@@ -188,7 +247,10 @@ switch (command) {
   case 'switch':
     await switchDrill(args[0] ?? '', args[1] ?? '')
     break
+  case 'switch-self':
+    await switchSelfDrill()
+    break
   default:
-    console.log(`commands: login|health|send|stream|switch <${providerIds()}> [prompt]`)
+    console.log(`commands: login|health|send|stream|switch|switch-self <${providerIds()}> [prompt]`)
     process.exitCode = 1
 }
