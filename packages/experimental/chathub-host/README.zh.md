@@ -1,6 +1,6 @@
 ---
 description: "在宿主内独占 ChatHub 随包浏览器适配器所需的 Chromium 页面，并提供登录 Remote 调用与稳定失败码。"
-kind: "package-reference"
+kind: "package-bundle"
 ---
 
 # @deepseek-ai/dsh-experimental-chathub-host
@@ -30,6 +30,16 @@ kind: "package-reference"
 ### 何时选用
 
 当组合挂载 [`dsh-experimental-chathub`](../chathub/README.zh.md) 浏览器提供方，并需要这些适配器留给宿主的页面归属、持久登录与轮次顺序时选用本服务。若每个会话只需一个已配置 API 模型，应改用 [`dsh-llm`](../../llm/llm/README.zh.md)；本包驱动用户登录的站点，不提供模型路由。`managed` 模式拉起自己的持久化 profile，`cdp` 模式连接用户已运行的 Chrome。
+
+### 组合进 profile
+
+本包随附可选的 bundle 层 [`cordis.patch.yml`](cordis.patch.yml)，通过 manifest 的 `dsh.bundle` 块声明，不进入随包发布的 profile。在源码检出中按如下方式应用：
+
+```sh
+pnpm dsh web --patch packages/experimental/chathub-host/cordis.patch.yml
+```
+
+该层挂载一行 `chathub-host`，默认值由环境变量驱动：`DSH_CHATHUB_PROFILE_DIR`（默认 `$DSH_HOME/chathub-profile`）、`DSH_CHATHUB_HEADLESS`、`DSH_CHATHUB_CDP_ENDPOINT`、`DSH_CHATHUB_EXECUTABLE_PATH`，以及每个计时字段各一个 `DSH_CHATHUB_*` 变量。挂载仅注册四个适配器，不启动 Chrome；浏览器在首次提供方调用或登录时才启动。
 
 ### 最小配置
 

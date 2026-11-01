@@ -37,7 +37,7 @@ apps / profile (opt-in composition)
 
 仓库接入清单（缺一不可）：
 
-1. `packages/experimental/chathub-host/package.json`、`tsconfig.json`、`README.md`、`README.zh.md`、`README.i18n.yaml`；
+1. `packages/experimental/chathub-host/package.json`（含 `dsh.bundle` 声明）、`tsconfig.json`、`README.md`、`README.zh.md`、`README.i18n.yaml`、`cordis.patch.yml`（可选 bundle 层）；
 2. `tsconfig.base.json` 增加 `@deepseek-ai/dsh-experimental-chathub-host` 路径别名；
 3. `tsconfig.host.json` 增加 project reference；
 4. `scripts/verify-package-readme-model-experience.ts` 登记该包的 Model Experience 形式（服务插件默认按 `package-reference` 校验，无需登记到 library 白名单）；
@@ -347,6 +347,8 @@ export interface Config {
 ```
 
 服务持有 registry 与 transport。第二阶段 `ChatHubController` 通过 `ctx.webChatTransport` 的 Remote 调用驱动登录与状态，并按需要由服务暴露 registry 访问入口，不自行创建浏览器。
+
+包内随附可选 bundle 层 [`packages/experimental/chathub-host/cordis.patch.yml`](../packages/experimental/chathub-host/cordis.patch.yml)（manifest 的 `dsh.bundle.patch`，`listedByDefault: false`），通过 `dsh web --patch packages/experimental/chathub-host/cordis.patch.yml` 应用；默认值由 `DSH_CHATHUB_*` 环境变量驱动，profile 目录默认 `$DSH_HOME/chathub-profile`。
 
 ## 15. 测试与验收
 

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "ChatHub-Browser-Transport",
+    "description": "Führt die Chromium-Seiten hinter den Browser-Anbietern von ChatHub im Host aus, mit dauerhafter Anmeldung, Reihenfolge der Runden pro Anbieter und Remote-Aufrufen für Login und Status."
+  }
+}

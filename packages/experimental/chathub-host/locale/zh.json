@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "ChatHub 浏览器传输",
+    "description": "在宿主内运行 ChatHub 浏览器提供方背后的 Chromium 页面，提供持久登录、按提供方的轮次顺序，以及登录与健康检查的远程调用。"
+  }
+}

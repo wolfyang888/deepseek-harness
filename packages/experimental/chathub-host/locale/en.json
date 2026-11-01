@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "ChatHub Browser Transport",
+    "description": "Run the Chromium pages behind ChatHub's browser providers inside the Host, with persistent sign-in, per-provider turn order, and Remote calls for login and health."
+  }
+}

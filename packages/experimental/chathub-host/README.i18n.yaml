@@ -3,8 +3,8 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/experimental/chathub-host/README.md
 /:
-  en: 0fa8fd373a914984
-  zh: 154f09890687283d
+  en: 1e235c69222fafa8
+  zh: 53cdc1b541e71cec
 /deepseek-ai-dsh-experimental-chathub-host:
   en: 2cfd19d74348b4a0
   zh: 0c05849356eabdbd
@@ -20,6 +20,9 @@
 /deepseek-ai-dsh-experimental-chathub-host/use-this-package/when-to-choose-it:
   en: 652c1cef7ae14643
   zh: 1cfff8188c81763b
+/deepseek-ai-dsh-experimental-chathub-host/use-this-package/compose-it-into-a-profile:
+  en: 9bea73c0f18e45a4
+  zh: 24c054290eafb82e
 /deepseek-ai-dsh-experimental-chathub-host/use-this-package/minimal-configuration:
   en: 840312113331eb90
   zh: 2c15cee511d86083

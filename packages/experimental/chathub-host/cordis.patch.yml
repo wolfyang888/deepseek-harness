@@ -1,0 +1,33 @@
+# Opt-in ChatHub browser transport layer: mount the host-owned Chromium
+# runtime and its `webChat` Remote namespace (`providers`, `login`,
+# `reauthenticate`). Shipped profiles do not include this layer; apply it with
+#   dsh web --patch packages/experimental/chathub-host/cordis.patch.yml
+# from a source checkout, or the same relative path inside an installation.
+# Mounting only registers the four browser adapters — Chrome launches on the
+# first provider call or login.
+#
+# Environment inputs (every one optional):
+#   DSH_CHATHUB_PROFILE_DIR      persistent Chrome profile (default `$DSH_HOME/chathub-profile`)
+#   DSH_CHATHUB_HEADLESS         `false` shows the browser window (default headless)
+#   DSH_CHATHUB_CDP_ENDPOINT     attach to a running Chrome instead of launching one
+#   DSH_CHATHUB_EXECUTABLE_PATH  Chrome binary override for managed mode
+#   DSH_CHATHUB_LOGIN_TIMEOUT_MS / DSH_CHATHUB_TURN_TIMEOUT_MS /
+#   DSH_CHATHUB_ACTION_TIMEOUT_MS / DSH_CHATHUB_POLL_MS /
+#   DSH_CHATHUB_STABLE_POLLS / DSH_CHATHUB_MAX_QUEUED_TURNS /
+#   DSH_CHATHUB_TYPE_DELAY_MS    timing and queue overrides
+- insert:
+    - id: chathub-host
+      name: '@deepseek-ai/dsh-experimental-chathub-host'
+      config:
+        browser: !!js >-
+          process.env.DSH_CHATHUB_CDP_ENDPOINT !== undefined
+            ? { mode: 'cdp', profileDir: process.env.DSH_CHATHUB_PROFILE_DIR ?? dshHomePath('chathub-profile'), cdpEndpoint: process.env.DSH_CHATHUB_CDP_ENDPOINT, headless: false }
+            : { mode: 'managed', profileDir: process.env.DSH_CHATHUB_PROFILE_DIR ?? dshHomePath('chathub-profile'), ...(process.env.DSH_CHATHUB_EXECUTABLE_PATH !== undefined ? { executablePath: process.env.DSH_CHATHUB_EXECUTABLE_PATH } : {}), headless: process.env.DSH_CHATHUB_HEADLESS !== 'false' }
+        loginTimeoutMs: !!js Number(process.env.DSH_CHATHUB_LOGIN_TIMEOUT_MS ?? 300_000)
+        turnTimeoutMs: !!js Number(process.env.DSH_CHATHUB_TURN_TIMEOUT_MS ?? 180_000)
+        actionTimeoutMs: !!js Number(process.env.DSH_CHATHUB_ACTION_TIMEOUT_MS ?? 15_000)
+        pollMs: !!js Number(process.env.DSH_CHATHUB_POLL_MS ?? 500)
+        stablePolls: !!js Number(process.env.DSH_CHATHUB_STABLE_POLLS ?? 3)
+        maxQueuedTurns: !!js Number(process.env.DSH_CHATHUB_MAX_QUEUED_TURNS ?? 2)
+        typeDelayMs: !!js Number(process.env.DSH_CHATHUB_TYPE_DELAY_MS ?? 0)
+        drivers: {}

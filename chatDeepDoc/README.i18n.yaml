@@ -1,0 +1,31 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write chatDeepDoc/README.md
+/chatdeepdoc-validation-guide:
+  en: 312e9b4279272944
+  zh: 61edbf202e059faa
+/chatdeepdoc-validation-guide/coverage:
+  en: ed67e5dc65d7dc67
+  zh: 213daae981a5fb20
+/chatdeepdoc-validation-guide/1-automated-checks-no-browser:
+  en: ab4766a71e75a1a6
+  zh: c8b15d029ee6f93e
+/chatdeepdoc-validation-guide/2-composition-entry-check-no-browser:
+  en: e131abf21fe2ce7a
+  zh: 1c0619c85c017727
+/chatdeepdoc-validation-guide/3-launch-the-web-composition-optional:
+  en: 81a90cbe62e28fd3
+  zh: 8b648dff36529182
+/chatdeepdoc-validation-guide/4-real-browser-check-the-manual-core:
+  en: a34c6437dfd0e521
+  zh: 919b311129e9154d
+/chatdeepdoc-validation-guide/5-common-failures-and-their-meaning:
+  en: 16b67d4e3b64d7c5
+  zh: cd7f8ae7a1333857
+/chatdeepdoc-validation-guide/6-cleanup:
+  en: 858fd486f6a10519
+  zh: 8cb4c1b4dcc71938
+/chatdeepdoc-validation-guide/7-not-covered-in-this-phase:
+  en: 90b5f9c2ea344b33
+  zh: 49cdf5282dc42a9b

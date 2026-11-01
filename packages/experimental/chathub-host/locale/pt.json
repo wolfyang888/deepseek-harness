@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Transporte de navegador do ChatHub",
+    "description": "Executa no Host as páginas do Chromium usadas pelos provedores de navegador do ChatHub, com login persistente, ordem de turnos por provedor e chamadas remotas de login e integridade."
+  }
+}

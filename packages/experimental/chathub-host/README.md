@@ -1,6 +1,6 @@
 ---
 description: "Own the Chromium pages behind ChatHub's shipped browser providers, with sign-in Remote calls and stable failure codes."
-kind: "package-reference"
+kind: "package-bundle"
 ---
 
 # @deepseek-ai/dsh-experimental-chathub-host
@@ -30,6 +30,16 @@ Run the browser that ChatHub's DeepSeek Chat, ChatGPT, Gemini, and Doubao adapte
 ### When to choose it
 
 Mount this service when a composition runs [`dsh-experimental-chathub`](../chathub/README.md) browser providers and needs the page ownership, persistent sign-in, and turn order those adapters leave to the host. Choose [`dsh-llm`](../../llm/llm/README.md) when one configured API model per Session is enough; this package drives sites a user signs into and does not add model routing. `managed` mode launches its own persistent profile, while `cdp` mode attaches to a Chrome the user already runs.
+
+### Compose it into a profile
+
+The package ships an opt-in bundle layer, [`cordis.patch.yml`](cordis.patch.yml), declared through its manifest's `dsh.bundle` block and excluded from shipped profiles. Apply it to a source checkout with:
+
+```sh
+pnpm dsh web --patch packages/experimental/chathub-host/cordis.patch.yml
+```
+
+The layer mounts one `chathub-host` row with environment-driven defaults: `DSH_CHATHUB_PROFILE_DIR` (default `$DSH_HOME/chathub-profile`), `DSH_CHATHUB_HEADLESS`, `DSH_CHATHUB_CDP_ENDPOINT`, `DSH_CHATHUB_EXECUTABLE_PATH`, and one `DSH_CHATHUB_*` variable per timing field. Mounting registers the four adapters without launching Chrome; the browser starts on the first provider call or login.
 
 ### Minimal configuration
 

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Transport de navigateur ChatHub",
+    "description": "Exécute dans l'hôte les pages Chromium utilisées par les fournisseurs de navigateur de ChatHub, avec connexion persistante, ordre des tours par fournisseur et appels distants de connexion et d'état."
+  }
+}
