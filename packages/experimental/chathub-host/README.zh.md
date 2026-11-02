@@ -89,7 +89,7 @@ pnpm dsh web --patch packages/experimental/chathub-host/cordis.patch.yml
 
 `drivers.ts` 把宿主覆盖合并到四个适配器的随包站点事实，并在任何浏览器操作之前校验合并后的驱动，因此错误的选择器会在加载期而不是轮次中途失败。`runtime.ts` 用进程 id 预留 `profileDir/chathub.lock`，把不可读或进程已退出的持有者视为过期，并拒绝仍被活动进程占用的 profile；它打开一个 context——受管持久启动或 CDP 连接——按键记录一个页面，并通过 promise 链与有界等待队列按键串行化轮次。销毁会等待在飞轮次、关闭页面与自有 context，并移除锁。
 
-`page.ts` 轮询元素可见性与答案文本，而不是使用 `waitForSelector`，因为 CDP 连接与 contenteditable 输入在 Playwright 的选择器等待下并不可靠。它把 Playwright 失败映射为稳定 token：页面关闭或执行上下文销毁报告 `chathub-signed-out`，传输失败报告 `chathub-network`，其余报告 `chathub-ui-drift`。`session.ts` 点击输入框中心、键入提示、按下提交键，并轮询最后一个答案容器，直到其文本连续 `stablePolls` 次不变；`stream` 对增长的答案产出前缀差量，站点整体替换时产出全文，精确等于提示的回显不计为答案。
+`page.ts` 轮询元素可见性与答案文本，而不是使用 `waitForSelector`，因为 CDP 连接与 contenteditable 输入在 Playwright 的选择器等待下并不可靠。它把 Playwright 失败映射为稳定 token：页面关闭或执行上下文销毁报告 `chathub-signed-out`，传输失败报告 `chathub-network`，其余报告 `chathub-ui-drift`。`session.ts` 点击输入框中心、把提示作为一次文本插入、按下提交键，并轮询最后一个答案容器，直到其文本连续 `stablePolls` 次不变；`stream` 对增长的答案产出前缀差量，站点整体替换时产出全文，空白归一化后等于提示的回显不计为答案。
 
 `transport.ts` 按提供方或会话键打开或复用页面，站点未登录时返回 `{ closed: true, reason: 'not-signed-in' }`，使 ChatHub 探测保持 `needs-auth` 而不记录失败。它还导出每个适配器都会收到的失败规则，让传输 token 在不携带站点原文的情况下转换为提供方错误码：
 
@@ -138,7 +138,7 @@ pnpm dsh web --patch packages/experimental/chathub-host/cordis.patch.yml
 
 #### KV Cache 影响
 
-传输层不添加自己的提示文本：它键入 ChatHub 适配器已渲染的提示，并轮询站点的答案容器，因此各站点自己的缓存取决于其自身渲染，本包不重算任何前缀。
+传输层不添加自己的提示文本：它把 ChatHub 适配器已渲染的提示作为一次文本插入，并轮询站点的答案容器，因此各站点自己的缓存取决于其自身渲染，本包不重算任何前缀。
 
 ## 已知限制与暂缓工作
 

@@ -104,12 +104,12 @@ it('classifies other answer read failures', async () => {
   await expect(wrapper.answerText(DRIVER.answer)).rejects.toMatchObject({ token: 'chathub-signed-out' })
 })
 
-it('clicks the input, types the prompt, and submits', async () => {
+it('clicks the input, inserts the prompt as one text insertion, and submits', async () => {
   const { wrapper, fake } = page()
   fake.boxes[DRIVER.input] = { x: 10, y: 20, width: 100, height: 40 }
-  await wrapper.submit('hello', DRIVER, 5)
+  await wrapper.submit('hello\nworld', DRIVER, 5)
   expect(fake.clicks).toEqual([{ x: 60, y: 40 }])
-  expect(fake.typed).toEqual(['hello'])
+  expect(fake.typed).toEqual(['hello\nworld'])
   expect(fake.keys).toEqual(['Enter'])
 })
 
@@ -121,7 +121,7 @@ it('reports an input without a layout box as UI drift', async () => {
 it('classifies submission failures', async () => {
   const { wrapper, fake } = page()
   fake.boxes[DRIVER.input] = { x: 0, y: 0, width: 10, height: 10 }
-  fake.errors.type = new Error('connect ECONNREFUSED')
+  fake.errors.insertText = new Error('connect ECONNREFUSED')
   await expect(wrapper.submit('hello', DRIVER, 5)).rejects.toMatchObject({ token: 'chathub-network' })
 })
 

@@ -150,7 +150,9 @@ export class PlaywrightChatSession implements WebChatTransportSession {
    * @returns The answer candidate, or an empty string.
    */
   private answerFrom(text: string, prompt: string): string {
-    if (text.length === 0 || text === prompt) return ''
+    if (text.length === 0) return ''
+    const normalize = (value: string): string => value.replace(/\s+/g, ' ').trim()
+    if (normalize(text) === normalize(prompt)) return ''
     return text
   }
 }

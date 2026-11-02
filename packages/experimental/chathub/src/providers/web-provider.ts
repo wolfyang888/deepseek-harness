@@ -191,18 +191,46 @@ export function splitRequestMessages(request: ChatRequest): { system: string; me
   return { system, messages }
 }
 
+/** Site models read the context heading as the question; state what to answer. */
+const ANSWER_INSTRUCTION =
+  'Answer the message below; treat the task context above as background, not as the question.'
+
 /**
  * Render one provider-styled prompt for a browser chat box.
+ *
+ * The signed-in site keeps its own conversation history, so the prompt carries
+ * only the latest user message; earlier turns stay in the compiled task
+ * context instead of being replayed verbatim on every send.
  * @param system - Compiled task context, empty when the caller sent none.
- * @param messages - Conversation messages, in order.
+ * @param messages - Conversation messages, in order, as produced by
+ *   {@link splitRequestMessages}.
  * @param style - Provider-specific heading.
  * @returns The prompt a transport types into the site's chat box.
+ * @throws ChatHubError with `unsupported-request` for an empty message list.
  */
 export function renderWebPrompt(system: string, messages: readonly ChatMessage[], style: WebPromptStyle): string {
-  const conversation = messages.map(message => `${message.role}: ${message.content}`).join('\n')
+  const latestUser = [...messages].reverse().find(message => message.role === 'user')
+  const latest = latestUser !== undefined ? latestUser : lastEntry(messages)
   return system.length > 0
-    ? `${style.heading}\n${system}\n\nConversation:\n${conversation}`
-    : `Conversation:\n${conversation}`
+    ? `${style.heading}\n${system}\n\n${ANSWER_INSTRUCTION}\n\n${latest.content}`
+    : latest.content
+}
+
+/**
+ * Return the last message of a non-empty conversation.
+ * @param messages - Conversation messages, in order.
+ * @returns The final message.
+ * @throws ChatHubError with `unsupported-request` for an empty list.
+ */
+function lastEntry(messages: readonly ChatMessage[]): ChatMessage {
+  const last = messages.at(-1)
+  if (last === undefined) {
+    throw new ChatHubError(
+      'unsupported-request',
+      'a browser chat prompt needs at least one user or assistant message',
+    )
+  }
+  return last
 }
 
 /**
@@ -232,6 +260,8 @@ export abstract class WebModelProvider implements IModelProvider {
   #sessionKey: string | undefined
   #closedReason: 'not-signed-in' | 'expired' | undefined
   #initialized = false
+  /** Whether the next turn still owes the site the compiled task context. */
+  #contextPending = true
 
   /**
    * @param transport - Opener for the provider's signed-in browser sessions.
@@ -303,6 +333,7 @@ export abstract class WebModelProvider implements IModelProvider {
     const payload = this.normalizeRequest(request)
     try {
       const raw = await this.session().send(payload)
+      this.markContextSent()
       return this.normalizeResponse(raw, request.sessionId, this.id)
     } catch (error) {
       throw this.failure(error)
@@ -320,6 +351,7 @@ export abstract class WebModelProvider implements IModelProvider {
     if (session.stream === undefined) {
       try {
         const raw = await session.send(payload)
+        this.markContextSent()
         yield {
           index: 0,
           content: raw.content,
@@ -338,6 +370,7 @@ export abstract class WebModelProvider implements IModelProvider {
     } catch (error) {
       throw this.failure(error)
     }
+    this.markContextSent()
     yield { index: 0, finishReason: 'stop' }
   }
 
@@ -364,16 +397,28 @@ export abstract class WebModelProvider implements IModelProvider {
     } else {
       this.#session = result
       this.#closedReason = undefined
+      // A freshly opened site conversation has not seen the task context yet.
+      this.#contextPending = true
     }
+  }
+
+  /** Record that this session's site conversation received the task context. */
+  private markContextSent(): void {
+    this.#contextPending = false
   }
 
   /**
    * Turn the request into the payload a browser transport types on the site.
+   *
+   * The compiled task context rides only on the first turn of a site
+   * conversation; the signed-in site keeps its own history, so later turns
+   * carry the latest user message alone.
    * @param request - The provider-agnostic turn.
    * @returns The normalized page payload.
    */
   protected normalizeRequest(request: ChatRequest): WebChatPayload {
-    const { system, messages } = splitRequestMessages(request)
+    const { system: compiled, messages } = splitRequestMessages(request)
+    const system = this.#contextPending ? compiled : ''
     return {
       providerId: this.id,
       system,

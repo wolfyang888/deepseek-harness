@@ -140,16 +140,32 @@ describe('splitRequestMessages', () => {
 })
 
 describe('renderWebPrompt', () => {
-  it('prefixes the provider heading when task context exists', () => {
-    expect(renderWebPrompt('context', [userMessage('hello')], { heading: 'Task context' }))
-      .toBe('Task context\ncontext\n\nConversation:\nuser: hello')
+  it('sends the context heading and only the latest user message when task context exists', () => {
+    expect(renderWebPrompt('context', [
+      userMessage('earlier question'),
+      { role: 'assistant', content: 'earlier answer' },
+      userMessage('hello'),
+    ], { heading: 'Task context' }))
+      .toBe('Task context\ncontext\n\nAnswer the message below; treat the task context above as background, not as the question.\n\nhello')
   })
 
-  it('renders only the conversation when no context exists', () => {
+  it('renders only the latest user message when no context exists', () => {
     expect(renderWebPrompt('', [
       userMessage('hello'),
       { role: 'assistant', content: 'hi' },
-    ], { heading: 'ignored' })).toBe('Conversation:\nuser: hello\nassistant: hi')
+      userMessage('next question'),
+    ], { heading: 'ignored' })).toBe('next question')
+  })
+
+  it('falls back to the last message when no user message exists', () => {
+    expect(renderWebPrompt('', [{ role: 'assistant', content: 'only reply' }], { heading: 'ignored' }))
+      .toBe('only reply')
+  })
+
+  it('rejects an empty message list', () => {
+    expect(() => renderWebPrompt('', [], { heading: 'ignored' })).toThrow(
+      expect.objectContaining({ code: 'unsupported-request' }),
+    )
   })
 })
 
@@ -250,7 +266,7 @@ describe('shipped adapters', () => {
 
       await provider.init()
       await provider.sendMessage(chatRequest({ providerId, systemPrompt: 'task state' }))
-      expect(session.payloads[0]!.prompt).toBe('Shared context\ntask state\n\nConversation:\nuser: fix the build error')
+      expect(session.payloads[0]!.prompt).toBe('Shared context\ntask state\n\nAnswer the message below; treat the task context above as background, not as the question.\n\nfix the build error')
     }
   })
 
@@ -403,7 +419,7 @@ describe('WebModelProvider sendMessage', () => {
     expect(payload.providerId).toBe('deepseek-web')
     expect(payload.system).toBe('task context')
     expect(payload.meta).toEqual({ origin: 'semantic-context' })
-    expect(payload.prompt).toBe('Task context\ntask context\n\nConversation:\nuser: fix the build error\nassistant: looking')
+    expect(payload.prompt).toBe('Task context\ntask context\n\nAnswer the message below; treat the task context above as background, not as the question.\n\nfix the build error')
   })
 
   it('defaults the finish reason and omits absent usage and metadata', async () => {
@@ -418,7 +434,65 @@ describe('WebModelProvider sendMessage', () => {
     expect(response.usage).toBeUndefined()
     expect(response.metadata).toBeUndefined()
     expect(session.payloads[0]!.meta).toEqual({ origin: 'raw-messages' })
-    expect(session.payloads[0]!.prompt).toBe('Conversation:\nuser: fix the build error')
+    expect(session.payloads[0]!.prompt).toBe('fix the build error')
+  })
+
+  it('sends the task context only on the first turn of a site conversation', async () => {
+    const transport = new FakeTransport()
+    const session = fakeSession()
+    transport.sessions.push(session)
+    const provider = new DeepSeekWebProvider(transport)
+    await provider.init()
+
+    await provider.sendMessage(chatRequest({
+      systemPrompt: 'task state',
+      messages: [userMessage('first question')],
+    }))
+    await provider.sendMessage(chatRequest({
+      systemPrompt: 'task state',
+      messages: [userMessage('second question')],
+    }))
+
+    expect(session.payloads[0]!.prompt).toBe(
+      'Task context\ntask state\n\nAnswer the message below; treat the task context above as background, not as the question.\n\nfirst question',
+    )
+    expect(session.payloads[1]!.prompt).toBe('second question')
+    expect(session.payloads[1]!.meta).toEqual({ origin: 'raw-messages' })
+  })
+
+  it('re-sends the task context after the site conversation reopens', async () => {
+    const transport = new FakeTransport()
+    const session = fakeSession()
+    transport.sessions.push(session, session)
+    const provider = new DeepSeekWebProvider(transport)
+    await provider.init()
+    await provider.sendMessage(chatRequest({ systemPrompt: 'task state' }))
+
+    await provider.close()
+    await provider.init()
+    await provider.sendMessage(chatRequest({ systemPrompt: 'task state' }))
+
+    expect(session.payloads[1]!.prompt).toBe(
+      'Task context\ntask state\n\nAnswer the message below; treat the task context above as background, not as the question.\n\nfix the build error',
+    )
+  })
+
+  it('keeps the task context pending when a turn fails', async () => {
+    const transport = new FakeTransport()
+    const failing = fakeSession({ raw: new Error('tab closed') })
+    const working = fakeSession()
+    transport.sessions.push(failing, working)
+    const provider = new DeepSeekWebProvider(transport)
+    await provider.init()
+
+    await expect(provider.sendMessage(chatRequest({ systemPrompt: 'task state' })))
+      .rejects.toMatchObject({ code: 'provider-call-failed' })
+    await provider.init()
+    await provider.sendMessage(chatRequest({ systemPrompt: 'task state' }))
+
+    expect(working.payloads[0]!.prompt).toBe(
+      'Task context\ntask state\n\nAnswer the message below; treat the task context above as background, not as the question.\n\nfix the build error',
+    )
   })
 
   it('wraps transport failures with the provider id', async () => {
@@ -463,7 +537,7 @@ describe('WebModelProvider streamMessage', () => {
       { index: 0, delta: 'cause' },
       { index: 0, finishReason: 'stop' },
     ])
-    expect(session.payloads[0]!.prompt).toContain('user: fix the build error')
+    expect(session.payloads[0]!.prompt).toContain('fix the build error')
   })
 
   it('invokes session.stream with its receiver bound so methods that use this work', async () => {

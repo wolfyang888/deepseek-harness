@@ -171,6 +171,13 @@ export interface BrowserPageLike {
      */
     type(text: string, options?: { delay?: number }): Promise<void>
     /**
+     * Insert text in one IME-style insertion without key events, so newline
+     * characters never reach the site as Enter presses.
+     * @param text - text to insert.
+     * @returns Resolves when the insertion is delivered.
+     */
+    insertText(text: string): Promise<void>
+    /**
      * @param key - key name to press.
      * @returns Resolves when the key is delivered.
      */

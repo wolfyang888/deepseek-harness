@@ -33,7 +33,11 @@ export const DEFAULT_SITE_DRIVERS: Readonly<SiteDrivers> = {
   'doubao-web': {
     url: 'https://www.doubao.com/chat',
     input: '.ProseMirror[contenteditable="true"]',
-    answer: '[class*="markdown"]',
+    // Doubao restructured its DOM in May 2026: assistant answers render in
+    // `.flow-markdown-body` / `.md-box-root` containers and older
+    // `receive_message` markers are kept only as legacy fallbacks, so the
+    // answer probe unions every receive-side candidate.
+    answer: '[data-testid="receive_message"], [class*="bg-g-receive-msg-bubble"], .flow-markdown-body, .md-box-root',
     signedOutPath: SIGNED_OUT_PATH,
     submitKey: 'Enter',
   },

@@ -100,10 +100,14 @@ export class PlaywrightPage implements ChatPageHandle {
   }
 
   /**
-   * Focus the chat input, type the prompt, and submit it.
+   * Focus the chat input, insert the prompt, and submit it.
+   *
+   * The prompt is inserted in one text insertion rather than typed keystroke
+   * by keystroke: typing presses Enter for every newline, and sites that
+   * submit on Enter would send each prompt line as its own message.
    * @param prompt - rendered prompt.
    * @param driver - site facts for input and submission.
-   * @param typeDelayMs - delay between keystrokes.
+   * @param typeDelayMs - settle delay between insertion and the submit key.
    * @returns Resolves when the prompt is submitted.
    */
   async submit(prompt: string, driver: SiteDriverConfig, typeDelayMs: number): Promise<void> {
@@ -113,7 +117,8 @@ export class PlaywrightPage implements ChatPageHandle {
         throw new BrowserTransportError('chathub-ui-drift', `${this.key}: input "${driver.input}" has no layout box`)
       }
       await this.page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
-      await this.page.keyboard.type(prompt, { delay: typeDelayMs })
+      await this.page.keyboard.insertText(prompt)
+      await sleep(typeDelayMs)
       await this.page.keyboard.press(driver.submitKey)
     } catch (error) {
       throw classifyPageError(error, `${this.key}: submitting the prompt`)

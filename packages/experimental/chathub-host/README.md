@@ -89,7 +89,7 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 
 `drivers.ts` merges host overrides over the shipped site facts for the four adapters and validates each merged driver before any browser work, so a bad selector fails at load rather than mid-turn. `runtime.ts` reserves `profileDir/chathub.lock` with the process id, treats an unreadable or dead owner as stale, and refuses a profile held by a live process; it opens one context — a managed persistent launch or a CDP attachment — records one page per key, and serializes turns per key through a promise chain with a bounded wait queue. Disposal waits for in-flight turns, closes pages and the context it owns, and removes the lock.
 
-`page.ts` polls for element visibility and answer text instead of `waitForSelector`, because CDP attachments and contenteditable inputs are unreliable under Playwright's selector waits. It maps Playwright failures to stable tokens: a closed page or destroyed execution context reports `chathub-signed-out`, transport failures report `chathub-network`, and everything else reports `chathub-ui-drift`. `session.ts` clicks the input center, types the prompt, presses the submit key, and polls the last answer container until its text is unchanged for `stablePolls` reads; `stream` yields prefixes of a growing answer and the whole text when the site replaces it, and an exact prompt echo does not count as an answer.
+`page.ts` polls for element visibility and answer text instead of `waitForSelector`, because CDP attachments and contenteditable inputs are unreliable under Playwright's selector waits. It maps Playwright failures to stable tokens: a closed page or destroyed execution context reports `chathub-signed-out`, transport failures report `chathub-network`, and everything else reports `chathub-ui-drift`. `session.ts` clicks the input center, inserts the prompt as one text insertion, presses the submit key, and polls the last answer container until its text is unchanged for `stablePolls` reads; `stream` yields prefixes of a growing answer and the whole text when the site replaces it, and a whitespace-normalized prompt echo does not count as an answer.
 
 `transport.ts` opens or reuses a page per provider or conversation key and returns `{ closed: true, reason: 'not-signed-in' }` when the site is signed out, which keeps ChatHub probing at `needs-auth` instead of recording a failure. It also exports the failure rules every adapter receives, so transport tokens become provider codes without site text:
 
@@ -138,7 +138,7 @@ Indirectly, through the browser pages the shipped adapters drive.
 
 #### KV Cache effect
 
-The transport adds no prompt text of its own: it types the prompt that ChatHub's adapter rendered and polls the site's answer container, so each site's own caching follows its own rendering and this package recomputes no prefix.
+The transport adds no prompt text of its own: it inserts the prompt that ChatHub's adapter rendered as one text insertion and polls the site's answer container, so each site's own caching follows its own rendering and this package recomputes no prefix.
 
 ## Known Limitations and Deferred Work
 

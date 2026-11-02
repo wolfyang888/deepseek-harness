@@ -111,6 +111,12 @@ it('does not treat the prompt echo or an empty container as an answer', async ()
   await expect(chat.send(payload())).resolves.toMatchObject({ content: 'hello answer' })
 })
 
+it('filters an echo whose whitespace the site rendered differently', async () => {
+  const { session: chat, page } = session()
+  page.answers = ['  hello\n', 'real answer', 'real answer', 'real answer']
+  await expect(chat.send(payload())).resolves.toMatchObject({ content: 'real answer' })
+})
+
 it('streams prefix deltas as the answer grows', async () => {
   const { session: chat, page } = session()
   page.answers = ['a', 'ab', 'abc', 'abc', 'abc']

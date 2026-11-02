@@ -20,6 +20,7 @@ type FakePageOperation =
   | 'innerText'
   | 'click'
   | 'type'
+  | 'insertText'
   | 'press'
 
 /** Locator double whose behavior follows its page's maps. */
@@ -97,6 +98,10 @@ export class FakePage implements BrowserPageLike {
   keyboard = {
     type: async (text: string): Promise<void> => {
       this.raise('type')
+      this.typed.push(text)
+    },
+    insertText: async (text: string): Promise<void> => {
+      this.raise('insertText')
       this.typed.push(text)
     },
     press: async (key: string): Promise<void> => {
