@@ -360,3 +360,33 @@ it('offers sign-in for needs-auth providers and re-authentication for failures',
   fireEvent.click(within(failedRow).getByRole('button', { name: zh['provider.reauthenticate'] }))
   expect(face.reauthenticate).toHaveBeenCalledWith('ollama-local')
 })
+
+it('offers first-time sign-in for providers that have not started', () => {
+  // Health probing never opens a browser, so a fresh host reports every provider
+  // as not-started; the sign-in action is the only way out of that state.
+  const { face } = fixture((actions) => {
+    applyLists(actions, [
+      { id: 'deepseek-web', name: 'DeepSeek Chat', kind: 'web', capabilities: CAPS, status: 'not-started' },
+      { id: 'chatgpt-web', name: 'ChatGPT', kind: 'web', capabilities: CAPS, status: 'not-started' },
+    ])
+  })
+  expect(screen.getAllByText(zh['provider.status.not-started'])).toHaveLength(2)
+  const rows = screen.getAllByText(zh['provider.status.not-started']).map((node) => {
+    const row = node.closest('div')
+    assert(row)
+    return row
+  })
+  fireEvent.click(within(rows[0]!).getByRole('button', { name: zh['provider.login'] }))
+  expect(face.login).toHaveBeenCalledWith('deepseek-web')
+  fireEvent.click(within(rows[1]!).getByRole('button', { name: zh['provider.login'] }))
+  expect(face.login).toHaveBeenCalledWith('chatgpt-web')
+  expect(face.reauthenticate).not.toHaveBeenCalled()
+})
+
+it('lists ready providers in the model section without a sign-in button', () => {
+  fixture((actions) => { applyLists(actions) })
+  expect(screen.getByText(zh['provider.status.ready'])).toBeTruthy()
+  const readyRow = screen.getByText(zh['provider.status.ready']).closest('div')
+  assert(readyRow)
+  expect(readyRow.querySelector('button')).toBeNull()
+})

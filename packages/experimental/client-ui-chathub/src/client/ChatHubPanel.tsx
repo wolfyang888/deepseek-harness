@@ -5,8 +5,8 @@
  * through the injected face; the component holds no Remote calls of its own.
  */
 
-import { useEffect, useState, type KeyboardEvent, type ReactNode } from 'react'
-import { Button, Input, StateDot, type StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
+import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { Button, Input, MarkdownText, StateDot, type MarkdownLabels, type StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsLocale, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ChatHubCreateInput, ChatHubProviderView, ProviderStatus, SessionStatus } from '@deepseek-ai/dsh-experimental-chathub-host/types'
 import type { ChatHubPanelFace } from './mount.ts'
@@ -91,6 +91,20 @@ function providerSelectable(status: ProviderStatus): boolean {
   return status === 'ready' || status === 'needs-auth'
 }
 
+/** Statuses whose row belongs to the sign-in section. */
+const SIGNIN_STATUSES: ReadonlySet<string> = new Set(['not-started', 'needs-auth', 'failed'])
+
+/**
+ * Whether the provider needs a sign-in action before it can serve a turn.
+ * @param status - the provider's probed connection status.
+ * @returns true for `not-started` (first sign-in), `needs-auth`, and `failed`;
+ * health probing never opens a browser, so an unstarted provider can only move
+ * to a signed-in state through the explicit sign-in action.
+ */
+function providerNeedsSignin(status: ProviderStatus): boolean {
+  return SIGNIN_STATUSES.has(status)
+}
+
 /** The create form's local fields. */
 interface Draft {
   title: string
@@ -121,6 +135,12 @@ export function ChatHubPanel(props: ChatHubPanelProps): ReactNode {
   // so every path that leaves it (back, delete) clears this state as well.
   const [pendingSwitch, setPendingSwitch] = useState<string | undefined>(undefined)
   const [message, setMessage] = useState('')
+  // Markdown chrome for assistant bubbles; stable across renders so the
+  // streaming memo does not rebuild its parser on every state change.
+  const markdownLabels = useMemo<MarkdownLabels>(() => ({
+    code: { copyLabel: t('message.code.copy'), copiedLabel: t('message.code.copied') },
+    footnotes: t('message.footnotes'),
+  }), [t])
 
   const providerName = (id: string): string => providers?.find(provider => provider.id === id)?.name ?? id
   // Options name their connection status so a greyed-out provider explains itself.
@@ -331,7 +351,9 @@ export function ChatHubPanel(props: ChatHubPanelProps): ReactNode {
             <div className={css.messages}>
               {messages.length === 0 ? <p className={css.messageEmpty}>{t('message.empty')}</p> : messages.map((entry, index) => (
                 <div key={index} className={`${css.message} ${entry.role === 'user' ? css.messageUser : css.messageAssistant}`}>
-                  {entry.content}
+                  {entry.role === 'assistant'
+                    ? <MarkdownText text={entry.content} labels={markdownLabels} variant="compact" />
+                    : entry.content}
                 </div>
               ))}
             </div>
@@ -340,37 +362,37 @@ export function ChatHubPanel(props: ChatHubPanelProps): ReactNode {
                 placeholder={t('message.placeholder')} disabled={busy}
                 onChange={(event) => { setMessage(event.target.value) }}
                 onKeyDown={onComposerKey} />
-              <Button variant="primary" size="sm" disabled={busy || message.trim() === ''} onClick={submitMessage}>
+              <Button variant="primary" size="md" className={css.composerSend} disabled={busy || message.trim() === ''} onClick={submitMessage}>
                 {t('message.send')}
               </Button>
             </div>
           </section>
         )}
-        {providers !== undefined && providers.some(provider => provider.status === 'needs-auth') && (
+        {providers !== undefined && providers.length > 0 && (
           <section className={css.section}>
             <h3 className={css.sectionTitle}>{t('provider.heading')}</h3>
             <div className={css.sessions}>
-              {providers.filter(provider => provider.status === 'needs-auth' || provider.status === 'failed').map(provider => (
+              {providers.map(provider => (
                 <div key={provider.id} className={css.bannerRow}>
                   <StateDot state={providerDot(provider.status)} />
                   <span className={css.sessionTitle}>{provider.name}</span>
                   <span className={css.sessionProvider}>
-                    {provider.status === 'needs-auth'
-                      ? t('provider.status.needs-auth')
-                      : provider.failureReason !== undefined
-                        ? t('provider.failure', { code: provider.failureReason })
-                        : t('provider.status.failed')}
+                    {provider.status === 'failed' && provider.failureReason !== undefined
+                      ? t('provider.failure', { code: provider.failureReason })
+                      : t(providerStatusLabel(provider.status))}
                   </span>
-                  <Button size="sm" disabled={pendingLogin !== undefined}
-                    onClick={() => {
-                      if (provider.status === 'needs-auth') {
-                        void login(provider.id)
-                      } else {
-                        void reauthenticate(provider.id)
-                      }
-                    }}>
-                    {provider.status === 'needs-auth' ? t('provider.login') : t('provider.reauthenticate')}
-                  </Button>
+                  {providerNeedsSignin(provider.status) && (
+                    <Button size="sm" disabled={pendingLogin !== undefined}
+                      onClick={() => {
+                        if (provider.status === 'failed') {
+                          void reauthenticate(provider.id)
+                        } else {
+                          void login(provider.id)
+                        }
+                      }}>
+                      {provider.status === 'failed' ? t('provider.reauthenticate') : t('provider.login')}
+                    </Button>
+                  )}
                 </div>
               ))}
             </div>
