@@ -1,14 +1,14 @@
 /**
  * The ChatHub panel: the provider selector with sign-in actions, the session
- * list with its create form, and the open conversation with its checkpointed
- * model switcher. Every action goes through the injected face; the component
- * holds no Remote calls of its own.
+ * list with its create form, and the open conversation whose model switcher
+ * summarizes the checkpoint handoff before switching. Every action goes
+ * through the injected face; the component holds no Remote calls of its own.
  */
 
 import { useEffect, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { Button, Input, StateDot, type StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsLocale, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
-import type { ChatHubCreateInput, ProviderStatus, SessionStatus } from '@deepseek-ai/dsh-experimental-chathub-host/types'
+import type { ChatHubCreateInput, ChatHubProviderView, ProviderStatus, SessionStatus } from '@deepseek-ai/dsh-experimental-chathub-host/types'
 import type { ChatHubPanelFace } from './mount.ts'
 import type { createPanelStore } from './panel-store.ts'
 import type { ChatHubLocaleKey } from './locales.ts'
@@ -49,6 +49,14 @@ const SESSION_STATUS_KEYS: Record<string, ChatHubLocaleKey> = {
   failed: 'session.status.failed',
 }
 
+/** Locale keys naming each provider connection status. */
+const PROVIDER_STATUS_KEYS: Record<string, ChatHubLocaleKey> = {
+  'not-started': 'provider.status.not-started',
+  ready: 'provider.status.ready',
+  'needs-auth': 'provider.status.needs-auth',
+  failed: 'provider.status.failed',
+}
+
 /** Session status as the shared state-dot semantics. */
 function sessionDot(status: SessionStatus): StateDotState {
   /* v8 ignore next -- noUncheckedIndexedAccess fallback; every session status maps */
@@ -65,6 +73,22 @@ function sessionStatusLabel(status: SessionStatus): ChatHubLocaleKey {
 function providerDot(status: ProviderStatus): StateDotState {
   /* v8 ignore next -- noUncheckedIndexedAccess fallback; every provider status maps */
   return PROVIDER_STATES[status] ?? 'idle'
+}
+
+/** Provider connection status as its locale key. */
+function providerStatusLabel(status: ProviderStatus): ChatHubLocaleKey {
+  /* v8 ignore next -- noUncheckedIndexedAccess fallback; every provider status maps */
+  return PROVIDER_STATUS_KEYS[status] ?? 'provider.status.not-started'
+}
+
+/**
+ * Whether a new session may start on this provider.
+ * @param status - the provider's probed connection status.
+ * @returns true for `ready` and `needs-auth`; an unstarted or failed provider is
+ * listed but never selectable, per the provider-selector rule of the UI plan.
+ */
+function providerSelectable(status: ProviderStatus): boolean {
+  return status === 'ready' || status === 'needs-auth'
 }
 
 /** The create form's local fields. */
@@ -92,9 +116,21 @@ export function ChatHubPanel(props: ChatHubPanelProps): ReactNode {
   const [draft, setDraft] = useState<Draft>({ title: '', goal: '', provider: undefined })
   const [confirmDelete, setConfirmDelete] = useState<string | undefined>(undefined)
   const [switchNote, setSwitchNote] = useState<string | undefined>(undefined)
+  // Target of the switch select, held until the user confirms the checkpoint.
+  // Invariant: a pending target only means something inside the open conversation,
+  // so every path that leaves it (back, delete) clears this state as well.
+  const [pendingSwitch, setPendingSwitch] = useState<string | undefined>(undefined)
   const [message, setMessage] = useState('')
 
   const providerName = (id: string): string => providers?.find(provider => provider.id === id)?.name ?? id
+  // Options name their connection status so a greyed-out provider explains itself.
+  const providerOptionText = (provider: ChatHubProviderView): string => provider.status === 'ready'
+    ? provider.name
+    : `${provider.name} · ${t(providerStatusLabel(provider.status))}`
+  // Only a ready provider can take a session over; the current one has nothing to switch to.
+  const switchTargets: readonly ChatHubProviderView[] = providers === undefined
+    ? []
+    : providers.filter(provider => provider.status === 'ready' && provider.id !== detail?.currentProvider)
   const createInput = (): ChatHubCreateInput | undefined => {
     const provider = draft.provider ?? providers?.find(candidate => candidate.status === 'ready')?.id
     if (provider === undefined || draft.title.trim() === '' || draft.goal.trim() === '') return undefined
@@ -111,6 +147,20 @@ export function ChatHubPanel(props: ChatHubPanelProps): ReactNode {
       event.preventDefault()
       submitMessage()
     }
+  }
+  const cancelSwitch = (): void => { setPendingSwitch(undefined) }
+  // The switch itself stays behind this confirmation: the host checkpoints the
+  // session before the target provider continues.
+  const confirmSwitch = (): void => {
+    const providerId = pendingSwitch
+    /* v8 ignore next -- the confirmation only renders while a target is pending */
+    if (providerId === undefined) return
+    setPendingSwitch(undefined)
+    void switchTo(providerId).then((switched) => {
+      if (switched !== undefined) {
+        setSwitchNote(t('switch.done', { provider: providerName(switched.to), checkpoint: switched.checkpointId }))
+      }
+    })
   }
 
   return (
@@ -157,7 +207,9 @@ export function ChatHubPanel(props: ChatHubPanelProps): ReactNode {
                     onChange={(event) => { setDraft(state => ({ ...state, provider: event.target.value === '' ? undefined : event.target.value })) }}>
                     <option value="" disabled>{t('session.provider.field')}</option>
                     {providers?.map(provider => (
-                      <option key={provider.id} value={provider.id}>{providerName(provider.id)}</option>
+                      <option key={provider.id} value={provider.id} disabled={!providerSelectable(provider.status)}>
+                        {providerOptionText(provider)}
+                      </option>
                     ))}
                   </select>
                 </label>
@@ -206,7 +258,7 @@ export function ChatHubPanel(props: ChatHubPanelProps): ReactNode {
         ) : (
           <section className={css.section}>
             <div className={css.bannerRow}>
-              <Button size="sm" variant="ghost" onClick={() => { setSwitchNote(undefined); close() }}>{t('session.back')}</Button>
+              <Button size="sm" variant="ghost" onClick={() => { setSwitchNote(undefined); setPendingSwitch(undefined); close() }}>{t('session.back')}</Button>
               <StateDot state={sessionDot(detail.status)} />
               <span>{t(sessionStatusLabel(detail.status))}</span>
               <Button size="sm" variant="ghost" disabled={busy}
@@ -214,6 +266,8 @@ export function ChatHubPanel(props: ChatHubPanelProps): ReactNode {
                 onClick={() => {
                   if (confirmDelete === detail.id) {
                     setConfirmDelete(undefined)
+                    // The open conversation closes with it, so a pending switch must not outlive it.
+                    setPendingSwitch(undefined)
                     void remove(detail.id)
                   } else {
                     setConfirmDelete(detail.id)
@@ -234,25 +288,46 @@ export function ChatHubPanel(props: ChatHubPanelProps): ReactNode {
             <div className={css.bannerRow}>
               <label>
                 {t('switch.label')}
-                <select className={css.formControl} value="" aria-label={t('switch.label')} disabled={busy}
+                <select className={css.formControl} value="" aria-label={t('switch.label')}
+                  disabled={busy || switchTargets.length === 0}
                   onChange={(event) => {
                     const providerId = event.target.value
                     event.target.value = ''
                     if (providerId === '') return
-                    void switchTo(providerId).then((switched) => {
-                      if (switched !== undefined) {
-                        setSwitchNote(t('switch.done', { provider: providerName(switched.to), checkpoint: switched.checkpointId }))
-                      }
-                    })
+                    setSwitchNote(undefined)
+                    setPendingSwitch(providerId)
                   }}>
                   <option value="" disabled>{t('switch.label')}</option>
-                  {providers?.filter(provider => provider.id !== detail.currentProvider).map(provider => (
-                    <option key={provider.id} value={provider.id}>{providerName(provider.id)}</option>
+                  {switchTargets.map(provider => (
+                    <option key={provider.id} value={provider.id}>{providerOptionText(provider)}</option>
                   ))}
                 </select>
               </label>
               {switchNote !== undefined && <span className={css.bannerText}>{switchNote}</span>}
             </div>
+            {pendingSwitch !== undefined && (
+              <div className={css.confirm}>
+                <p className={css.confirmTitle}>{t('switch.confirm.title')}</p>
+                <span className={css.detailFact}>
+                  {t('switch.confirm.route', { from: providerName(detail.currentProvider), to: providerName(pendingSwitch) })}
+                </span>
+                <span className={css.detailFact}>{t('switch.confirm.goal', { goal: detail.goal })}</span>
+                <span className={css.detailFact}>
+                  {t('switch.confirm.state', {
+                    status: t(sessionStatusLabel(detail.status)),
+                    // The chain starts with the session's first provider, so only its tail are switches.
+                    history: String(Math.max(0, detail.providerHistory.length - 1)),
+                  })}
+                </span>
+                <p className={css.confirmNote}>{t('switch.confirm.note')}</p>
+                <div className={css.bannerRow}>
+                  <Button variant="primary" size="sm" disabled={busy} onClick={confirmSwitch}>
+                    {t('switch.confirm.ok')}
+                  </Button>
+                  <Button size="sm" onClick={cancelSwitch}>{t('switch.confirm.cancel')}</Button>
+                </div>
+              </div>
+            )}
             <div className={css.messages}>
               {messages.length === 0 ? <p className={css.messageEmpty}>{t('message.empty')}</p> : messages.map((entry, index) => (
                 <div key={index} className={`${css.message} ${entry.role === 'user' ? css.messageUser : css.messageAssistant}`}>

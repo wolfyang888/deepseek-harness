@@ -44,6 +44,13 @@ export const zh = {
   'switch.label': '切换模型',
   'switch.reason': '从 ChatHub 面板手动切换',
   'switch.done': '已切换到 {provider}，检查点 {checkpoint}',
+  'switch.confirm.title': '确认切换模型',
+  'switch.confirm.route': '从 {from} 切换到 {to}',
+  'switch.confirm.goal': '本次会话的任务目标：{goal}',
+  'switch.confirm.state': '会话状态：{status}；切换记录 {history} 条',
+  'switch.confirm.note': '切换前会写入检查点，保留任务目标、计划、事实与待解决问题，再由目标模型继续',
+  'switch.confirm.ok': '确认切换',
+  'switch.confirm.cancel': '取消',
   'error.prefix': '操作失败',
 } as const
 
@@ -98,6 +105,13 @@ export const en: Record<ChatHubLocaleKey, string> = {
   'switch.label': 'Switch model',
   'switch.reason': 'Manual switch from the ChatHub panel',
   'switch.done': 'Switched to {provider}; checkpoint {checkpoint}',
+  'switch.confirm.title': 'Confirm the model switch',
+  'switch.confirm.route': 'From {from} to {to}',
+  'switch.confirm.goal': 'Task goal of this session: {goal}',
+  'switch.confirm.state': 'Session state: {status}; {history} switches on record',
+  'switch.confirm.note': 'A checkpoint is written before the switch, keeping the goal, plan, facts, and open questions, then the target model continues',
+  'switch.confirm.ok': 'Confirm switch',
+  'switch.confirm.cancel': 'Cancel',
   'error.prefix': 'Action failed',
 }
 
@@ -142,6 +156,13 @@ export const ja: Record<ChatHubLocaleKey, string> = {
   'switch.label': 'モデル切替',
   'switch.reason': 'ChatHub パネルからの手動切替',
   'switch.done': '{provider} に切替ました。チェックポイント {checkpoint}',
+  'switch.confirm.title': 'モデル切替の確認',
+  'switch.confirm.route': '{from} から {to} へ切り替え',
+  'switch.confirm.goal': 'このセッションのタスク目標：{goal}',
+  'switch.confirm.state': 'セッション状態：{status}、切替履歴 {history} 件',
+  'switch.confirm.note': '切替の前にチェックポイントを書き込み、タスク目標・計画・事実・未解決の課題を残したうえで、切替先のモデルが続行します',
+  'switch.confirm.ok': '切替を確定',
+  'switch.confirm.cancel': 'キャンセル',
   'error.prefix': '操作失敗',
 }
 
@@ -186,6 +207,13 @@ export const es: Record<ChatHubLocaleKey, string> = {
   'switch.label': 'Cambiar modelo',
   'switch.reason': 'Cambio manual desde el panel de ChatHub',
   'switch.done': 'Cambiado a {provider}; punto de control {checkpoint}',
+  'switch.confirm.title': 'Confirmar el cambio de modelo',
+  'switch.confirm.route': 'De {from} a {to}',
+  'switch.confirm.goal': 'Objetivo de esta sesión: {goal}',
+  'switch.confirm.state': 'Estado de la sesión: {status}; {history} cambios en el historial',
+  'switch.confirm.note': 'Antes del cambio se escribe un punto de control que conserva el objetivo, el plan, los hechos y las preguntas abiertas; después continúa el modelo de destino',
+  'switch.confirm.ok': 'Confirmar cambio',
+  'switch.confirm.cancel': 'Cancelar',
   'error.prefix': 'La acción falló',
 }
 
@@ -230,6 +258,13 @@ export const fr: Record<ChatHubLocaleKey, string> = {
   'switch.label': 'Changer de modèle',
   'switch.reason': 'Bascule manuelle depuis le panneau ChatHub',
   'switch.done': 'Basculé vers {provider} ; point de contrôle {checkpoint}',
+  'switch.confirm.title': 'Confirmer la bascule de modèle',
+  'switch.confirm.route': 'De {from} vers {to}',
+  'switch.confirm.goal': 'Objectif de cette session : {goal}',
+  'switch.confirm.state': 'État de la session : {status} ; {history} bascules enregistrées',
+  'switch.confirm.note': 'Un point de contrôle est écrit avant la bascule : il conserve l’objectif, le plan, les faits et les questions ouvertes, puis le modèle cible poursuit',
+  'switch.confirm.ok': 'Confirmer la bascule',
+  'switch.confirm.cancel': 'Annuler',
   'error.prefix': 'L’action a échoué',
 }
 
@@ -274,6 +309,13 @@ export const de: Record<ChatHubLocaleKey, string> = {
   'switch.label': 'Modell wechseln',
   'switch.reason': 'Manueller Wechsel aus dem ChatHub-Bereich',
   'switch.done': 'Zu {provider} gewechselt; Prüfpunkt {checkpoint}',
+  'switch.confirm.title': 'Modellwechsel bestätigen',
+  'switch.confirm.route': 'Von {from} zu {to}',
+  'switch.confirm.goal': 'Aufgabenziel dieser Sitzung: {goal}',
+  'switch.confirm.state': 'Sitzungsstatus: {status}; {history} Wechsel im Verlauf',
+  'switch.confirm.note': 'Vor dem Wechsel wird ein Prüfpunkt geschrieben, der Ziel, Plan, Fakten und offene Fragen bewahrt; danach führt das Zielmodell fort',
+  'switch.confirm.ok': 'Wechsel bestätigen',
+  'switch.confirm.cancel': 'Abbrechen',
   'error.prefix': 'Aktion fehlgeschlagen',
 }
 
@@ -318,6 +360,13 @@ export const ru: Record<ChatHubLocaleKey, string> = {
   'switch.label': 'Сменить модель',
   'switch.reason': 'Ручное переключение из панели ChatHub',
   'switch.done': 'Переключено на {provider}; контрольная точка {checkpoint}',
+  'switch.confirm.title': 'Подтвердить смену модели',
+  'switch.confirm.route': 'С {from} на {to}',
+  'switch.confirm.goal': 'Цель этой задачи: {goal}',
+  'switch.confirm.state': 'Состояние сеанса: {status}; переключений в истории: {history}',
+  'switch.confirm.note': 'Перед переключением создаётся контрольная точка: она сохраняет цель, план, факты и открытые вопросы, после чего работу продолжает целевая модель',
+  'switch.confirm.ok': 'Подтвердить переключение',
+  'switch.confirm.cancel': 'Отмена',
   'error.prefix': 'Действие не удалось',
 }
 
@@ -362,5 +411,12 @@ export const pt: Record<ChatHubLocaleKey, string> = {
   'switch.label': 'Trocar modelo',
   'switch.reason': 'Troca manual pelo painel do ChatHub',
   'switch.done': 'Trocado para {provider}; ponto de verificação {checkpoint}',
+  'switch.confirm.title': 'Confirmar a troca de modelo',
+  'switch.confirm.route': 'De {from} para {to}',
+  'switch.confirm.goal': 'Objetivo desta sessão: {goal}',
+  'switch.confirm.state': 'Estado da sessão: {status}; {history} trocas no histórico',
+  'switch.confirm.note': 'Antes da troca é gravado um ponto de verificação que preserva o objetivo, o plano, os fatos e as questões em aberto; em seguida o modelo de destino continua',
+  'switch.confirm.ok': 'Confirmar troca',
+  'switch.confirm.cancel': 'Cancelar',
   'error.prefix': 'A ação falhou',
 }
