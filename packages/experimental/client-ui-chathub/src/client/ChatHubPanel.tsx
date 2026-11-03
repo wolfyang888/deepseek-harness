@@ -312,6 +312,7 @@ export function ChatHubPanel(props: ChatHubPanelProps): ReactNode {
                     : entry.content}
                   {messageTime(entry.timestamp) !== '' && (
                     <span className={entry.role === 'user' ? css.messageTimeUser : css.messageTimeAssistant}>
+                      {entry.role === 'assistant' && entry.name !== undefined ? `${providerName(entry.name)} · ` : ''}
                       {messageTime(entry.timestamp)}
                     </span>
                   )}

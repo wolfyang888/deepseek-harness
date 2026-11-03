@@ -247,19 +247,21 @@ it('sends the trimmed composer draft with Enter and keeps Shift+Enter for a newl
   expect(composer.value).toBe('next')
 })
 
-it('shows the local HH:mm time on every message that carries a timestamp', () => {
+it('shows the local HH:mm time on every message and names the answering model', () => {
   fixture((actions) => {
     applyLists(actions)
     actions.openSession(DETAIL, [
       { role: 'user', content: 'question', timestamp: new Date(2026, 10, 3, 9, 5).getTime() },
-      { role: 'assistant', content: 'answer', timestamp: new Date(2026, 10, 3, 10, 30).getTime() },
+      // The host stamps the speaker's provider id, so an answer signs itself.
+      { role: 'assistant', content: 'answer', timestamp: new Date(2026, 10, 3, 10, 30).getTime(), name: 'deepseek-web' },
       { role: 'user', content: 'legacy row without a time' },
     ])
   })
   expect(screen.getByText('09:05')).toBeTruthy()
-  expect(screen.getByText('10:30')).toBeTruthy()
+  // The signature resolves the id to the provider's display name.
+  expect(screen.getByText('DeepSeek Web · 10:30')).toBeTruthy()
   expect(screen.getByText('legacy row without a time')).toBeTruthy()
-  expect(screen.getAllByText(/^\d{2}:\d{2}$/)).toHaveLength(2)
+  expect(screen.getAllByText(/·/)).toHaveLength(1)
 })
 
 it('renders the switch select inside the composer bar', () => {
