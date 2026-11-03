@@ -25,7 +25,7 @@ Run the browser that ChatHub's DeepSeek Chat, ChatGPT, Gemini, and Doubao adapte
 <a id="use-this-package"></a>
 ## Use this package
 
-`WebChatTransportService` implements the `WebChatTransport` that ChatHub's browser adapters accept, registers all four shipped providers, and exposes `providers`, `login`, and `reauthenticate` through the `webChat` Remote namespace. The Host reaches the service as `ctx.webChatTransport`.
+`WebChatTransportService` implements the `WebChatTransport` that ChatHub's browser adapters accept, registers all five shipped providers, and exposes `providers`, `login`, and `reauthenticate` through the `webChat` Remote namespace. The Host reaches the service as `ctx.webChatTransport`.
 
 ### When to choose it
 
@@ -39,7 +39,7 @@ The package ships an opt-in bundle layer, [`cordis.patch.yml`](cordis.patch.yml)
 pnpm dsh web --patch packages/experimental/chathub-host/cordis.patch.yml
 ```
 
-The layer mounts one `chathub-host` row with environment-driven defaults: `DSH_CHATHUB_PROFILE_DIR` (default `$DSH_HOME/chathub-profile`), `DSH_CHATHUB_HEADLESS`, `DSH_CHATHUB_CDP_ENDPOINT`, `DSH_CHATHUB_EXECUTABLE_PATH`, `DSH_CHATHUB_PROXY` (proxy URL for the launched Chrome), and one `DSH_CHATHUB_*` variable per timing field. Mounting registers the four adapters without launching Chrome; the browser starts on the first provider call or login.
+The layer mounts one `chathub-host` row with environment-driven defaults: `DSH_CHATHUB_PROFILE_DIR` (default `$DSH_HOME/chathub-profile`), `DSH_CHATHUB_HEADLESS`, `DSH_CHATHUB_CDP_ENDPOINT`, `DSH_CHATHUB_EXECUTABLE_PATH`, `DSH_CHATHUB_PROXY` (proxy URL for the launched Chrome), and one `DSH_CHATHUB_*` variable per timing field. Mounting registers the five adapters without launching Chrome; the browser starts on the first provider call or login.
 
 ### Minimal configuration
 
@@ -87,7 +87,7 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-`drivers.ts` merges host overrides over the shipped site facts for the four adapters and validates each merged driver before any browser work, so a bad selector fails at load rather than mid-turn. `runtime.ts` reserves `profileDir/chathub.lock` with the process id, treats an unreadable or dead owner as stale, and refuses a profile held by a live process; it opens one context — a managed persistent launch or a CDP attachment — records one page per key, and serializes turns per key through a promise chain with a bounded wait queue. Disposal waits for in-flight turns, closes pages and the context it owns, and removes the lock.
+`drivers.ts` merges host overrides over the shipped site facts for the five adapters and validates each merged driver before any browser work, so a bad selector fails at load rather than mid-turn. `runtime.ts` reserves `profileDir/chathub.lock` with the process id, treats an unreadable or dead owner as stale, and refuses a profile held by a live process; it opens one context — a managed persistent launch or a CDP attachment — records one page per key, and serializes turns per key through a promise chain with a bounded wait queue. Disposal waits for in-flight turns, closes pages and the context it owns, and removes the lock.
 
 `page.ts` polls for element visibility and answer text instead of `waitForSelector`, because CDP attachments and contenteditable inputs are unreliable under Playwright's selector waits. It maps Playwright failures to stable tokens: a closed page or destroyed execution context reports `chathub-signed-out`, transport failures report `chathub-network`, and everything else reports `chathub-ui-drift`. `session.ts` clicks the input center, inserts the prompt as one text insertion, presses the submit key, and polls the last answer container until its text is unchanged for `stablePolls` reads; `stream` yields prefixes of a growing answer and the whole text when the site replaces it, and a whitespace-normalized prompt echo does not count as an answer.
 
@@ -104,7 +104,7 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 | `chathub-profile-locked` | `provider-unavailable` | Another process owns the profile |
 | `chathub-browser-unavailable` | `provider-unavailable` | Chrome missing, a page failed to open, or the runtime is disposed |
 
-`index.ts` builds the runtime and transport, registers the four adapters, and loads `playwright-core` on the first browser use, so a composition that never opens a browser does not need it installed.
+`index.ts` builds the runtime and transport, registers the five adapters, and loads `playwright-core` on the first browser use, so a composition that never opens a browser does not need it installed.
 
 | File | Role |
 |---|---|

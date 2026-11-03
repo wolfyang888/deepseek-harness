@@ -7,6 +7,7 @@ import {
   DeepSeekWebProvider,
   DoubaoWebProvider,
   GeminiWebProvider,
+  QianwenWebProvider,
   ModelRouter,
   ProviderRegistry,
   WebModelProvider,
@@ -210,6 +211,7 @@ describe('shipped adapters', () => {
     expect(webProviderAdapters['chatgpt-web']({ transport }).id).toBe('chatgpt-web')
     expect(webProviderAdapters['gemini-web']({ transport }).id).toBe('gemini-web')
     expect(webProviderAdapters['doubao-web']({ transport }).id).toBe('doubao-web')
+    expect(webProviderAdapters['qianwen-web']({ transport }).id).toBe('qianwen-web')
   })
 
   it('honors one minimal contract across every shipped adapter', async () => {
@@ -277,6 +279,8 @@ describe('shipped adapters', () => {
       { provider: new ChatGptWebProvider(transport), message: 'verify you are human', code: 'auth-required' },
       { provider: new GeminiWebProvider(transport), message: 'resource exhausted', code: 'rate-limited' },
       { provider: new DoubaoWebProvider(transport), message: '账号异常', code: 'auth-required' },
+      { provider: new QianwenWebProvider(transport), message: '请先登录', code: 'auth-required' },
+      { provider: new QianwenWebProvider(transport), message: '请求过于频繁', code: 'provider-unavailable' },
     ]
     for (const item of cases) {
       expect(item.provider.normalizeError(new Error(item.message))).toBe(item.code)

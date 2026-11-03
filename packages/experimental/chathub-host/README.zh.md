@@ -25,7 +25,7 @@ kind: "package-bundle"
 <a id="use-this-package"></a>
 ## 使用此包
 
-`WebChatTransportService` 实现 ChatHub 浏览器适配器接受的 `WebChatTransport`，注册全部四个随包提供方，并通过 `webChat` Remote 命名空间暴露 `providers`、`login` 与 `reauthenticate`。宿主通过 `ctx.webChatTransport` 访问该服务。
+`WebChatTransportService` 实现 ChatHub 浏览器适配器接受的 `WebChatTransport`，注册全部五个随包提供方，并通过 `webChat` Remote 命名空间暴露 `providers`、`login` 与 `reauthenticate`。宿主通过 `ctx.webChatTransport` 访问该服务。
 
 ### 何时选用
 
@@ -39,7 +39,7 @@ kind: "package-bundle"
 pnpm dsh web --patch packages/experimental/chathub-host/cordis.patch.yml
 ```
 
-该层挂载一行 `chathub-host`，默认值由环境变量驱动：`DSH_CHATHUB_PROFILE_DIR`（默认 `$DSH_HOME/chathub-profile`）、`DSH_CHATHUB_HEADLESS`、`DSH_CHATHUB_CDP_ENDPOINT`、`DSH_CHATHUB_EXECUTABLE_PATH`、`DSH_CHATHUB_PROXY`（启动的 Chrome 所用代理地址），以及每个计时字段各一个 `DSH_CHATHUB_*` 变量。挂载仅注册四个适配器，不启动 Chrome；浏览器在首次提供方调用或登录时才启动。
+该层挂载一行 `chathub-host`，默认值由环境变量驱动：`DSH_CHATHUB_PROFILE_DIR`（默认 `$DSH_HOME/chathub-profile`）、`DSH_CHATHUB_HEADLESS`、`DSH_CHATHUB_CDP_ENDPOINT`、`DSH_CHATHUB_EXECUTABLE_PATH`、`DSH_CHATHUB_PROXY`（启动的 Chrome 所用代理地址），以及每个计时字段各一个 `DSH_CHATHUB_*` 变量。挂载仅注册五个适配器，不启动 Chrome；浏览器在首次提供方调用或登录时才启动。
 
 ### 最小配置
 
@@ -87,7 +87,7 @@ pnpm dsh web --patch packages/experimental/chathub-host/cordis.patch.yml
 <details>
 <summary>实现内部——点击展开</summary>
 
-`drivers.ts` 把宿主覆盖合并到四个适配器的随包站点事实，并在任何浏览器操作之前校验合并后的驱动，因此错误的选择器会在加载期而不是轮次中途失败。`runtime.ts` 用进程 id 预留 `profileDir/chathub.lock`，把不可读或进程已退出的持有者视为过期，并拒绝仍被活动进程占用的 profile；它打开一个 context——受管持久启动或 CDP 连接——按键记录一个页面，并通过 promise 链与有界等待队列按键串行化轮次。销毁会等待在飞轮次、关闭页面与自有 context，并移除锁。
+`drivers.ts` 把宿主覆盖合并到五个适配器的随包站点事实，并在任何浏览器操作之前校验合并后的驱动，因此错误的选择器会在加载期而不是轮次中途失败。`runtime.ts` 用进程 id 预留 `profileDir/chathub.lock`，把不可读或进程已退出的持有者视为过期，并拒绝仍被活动进程占用的 profile；它打开一个 context——受管持久启动或 CDP 连接——按键记录一个页面，并通过 promise 链与有界等待队列按键串行化轮次。销毁会等待在飞轮次、关闭页面与自有 context，并移除锁。
 
 `page.ts` 轮询元素可见性与答案文本，而不是使用 `waitForSelector`，因为 CDP 连接与 contenteditable 输入在 Playwright 的选择器等待下并不可靠。它把 Playwright 失败映射为稳定 token：页面关闭或执行上下文销毁报告 `chathub-signed-out`，传输失败报告 `chathub-network`，其余报告 `chathub-ui-drift`。`session.ts` 点击输入框中心、把提示作为一次文本插入、按下提交键，并轮询最后一个答案容器，直到其文本连续 `stablePolls` 次不变；`stream` 对增长的答案产出前缀差量，站点整体替换时产出全文，空白归一化后等于提示的回显不计为答案。
 
@@ -104,7 +104,7 @@ pnpm dsh web --patch packages/experimental/chathub-host/cordis.patch.yml
 | `chathub-profile-locked` | `provider-unavailable` | 另一进程占用该 profile |
 | `chathub-browser-unavailable` | `provider-unavailable` | Chrome 缺失、页面打开失败或运行时已销毁 |
 
-`index.ts` 构建运行时与传输层，注册四个适配器，并在首次使用浏览器时才加载 `playwright-core`，因此从不打开浏览器的组合无需安装它。
+`index.ts` 构建运行时与传输层，注册五个适配器，并在首次使用浏览器时才加载 `playwright-core`，因此从不打开浏览器的组合无需安装它。
 
 | 文件 | 职责 |
 |---|---|

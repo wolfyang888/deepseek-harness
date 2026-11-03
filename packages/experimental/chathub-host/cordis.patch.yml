@@ -4,7 +4,7 @@
 # package. Shipped profiles do not include this layer; apply it with
 #   dsh web --patch packages/experimental/chathub-host/cordis.patch.yml
 # from a source checkout, or the same relative path inside an installation.
-# Mounting only registers the four browser adapters — Chrome launches on the
+# Mounting only registers the five browser adapters — Chrome launches on the
 # first provider call or login.
 #
 # Environment inputs (every one optional):

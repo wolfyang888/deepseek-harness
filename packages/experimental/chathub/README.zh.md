@@ -9,7 +9,7 @@ kind: "package-library"
 
 ## 概述
 
-`dsh-experimental-chathub` 让同一个任务在用户更换模型时保持连贯：它记录任务目标、计划、事实、未解问题与决定，并为下一轮接手的提供方渲染交接内容。把提供方注册到同一个适配接口之后，路由器可以按任务挑选有能力处理的模型、在调用失败时降级，并在每次切换前写入检查点。这是一个库：没有 profile 挂载它，没有 `cordis.yml` 行引用它。它随包提供 DeepSeek Chat、ChatGPT、Gemini 与 Doubao 的浏览器适配器，并驱动由宿主提供的已登录浏览器传输。
+`dsh-experimental-chathub` 让同一个任务在用户更换模型时保持连贯：它记录任务目标、计划、事实、未解问题与决定，并为下一轮接手的提供方渲染交接内容。把提供方注册到同一个适配接口之后，路由器可以按任务挑选有能力处理的模型、在调用失败时降级，并在每次切换前写入检查点。这是一个库：没有 profile 挂载它，没有 `cordis.yml` 行引用它。它随包提供 DeepSeek Chat、ChatGPT、Gemini、Doubao 与 Qianwen 的浏览器适配器，并驱动由宿主提供的已登录浏览器传输。
 
 ## 目录
 
@@ -119,6 +119,7 @@ const outcome = await manager.switchProvider(session, 'gemini-web', 'need long-c
 | [`src/providers/chatgpt-web.ts`](src/providers/chatgpt-web.ts) | ChatGPT 适配器 |
 | [`src/providers/gemini-web.ts`](src/providers/gemini-web.ts) | Gemini 适配器 |
 | [`src/providers/doubao-web.ts`](src/providers/doubao-web.ts) | Doubao 适配器 |
+| [`src/providers/qianwen-web.ts`](src/providers/qianwen-web.ts) | Qianwen 适配器 |
 | [`src/providers/adapters.ts`](src/providers/adapters.ts) | 按提供方 id 索引的随包适配器构造函数 |
 | [`src/session-manager.ts`](src/session-manager.ts) | 会话创建、请求构建、模型切换与运行时状态 |
 | [`src/timeline.ts`](src/timeline.ts) | 供宿主视图与回放使用的有序会话时间线条目 |

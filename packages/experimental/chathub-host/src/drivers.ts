@@ -6,7 +6,7 @@ import type { SiteDriverConfig, SiteDrivers } from './types.ts'
 /** Path patterns that identify a site's login, logout, or expired-session redirect. */
 const SIGNED_OUT_PATH = 'login|logout|sign_in|signin|expired'
 
-/** Site facts for the four shipped browser adapters; hosts override any field. */
+/** Site facts for the five shipped browser adapters; hosts override any field. */
 export const DEFAULT_SITE_DRIVERS: Readonly<SiteDrivers> = {
   'deepseek-web': {
     url: 'https://chat.deepseek.com/',
@@ -38,6 +38,16 @@ export const DEFAULT_SITE_DRIVERS: Readonly<SiteDrivers> = {
     // `receive_message` markers are kept only as legacy fallbacks, so the
     // answer probe unions every receive-side candidate.
     answer: '[data-testid="receive_message"], [class*="bg-g-receive-msg-bubble"], .flow-markdown-body, .md-box-root',
+    signedOutPath: SIGNED_OUT_PATH,
+    submitKey: 'Enter',
+  },
+  'qianwen-web': {
+    url: 'https://www.qianwen.com/',
+    input: 'div[contenteditable="true"], textarea.ant-input',
+    // Qianwen renders each answer inside a chat-answers-card-wrap block on the
+    // new qianwen.com UI; the hashed answerItem classes are kept as the
+    // legacy tongyi.aliyun.com fallback.
+    answer: '[class*="chat-answers-card-wrap"], [class*="answerItem"]',
     signedOutPath: SIGNED_OUT_PATH,
     submitKey: 'Enter',
   },
