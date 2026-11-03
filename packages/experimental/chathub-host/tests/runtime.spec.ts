@@ -82,6 +82,18 @@ it('omits executablePath when the host did not configure one', async () => {
   await browser.dispose()
 })
 
+it('passes a configured proxy to the launched Chrome', async () => {
+  const dir = await profileDir()
+  const { runtime: browser, launcher } = await runtime(managed(dir, { proxy: 'http://127.0.0.1:7890' }))
+  await browser.acquire('deepseek-web', DRIVER)
+  expect(launcher.launched[0]?.options).toEqual({
+    headless: true,
+    viewport: null,
+    args: ['--disable-blink-features=AutomationControlled', '--proxy-server=http://127.0.0.1:7890'],
+  })
+  await browser.dispose()
+})
+
 it('refuses a profile owned by a live process', async () => {
   const dir = await profileDir()
   await writeFile(join(dir, 'chathub.lock'), `${process.pid}\n`)

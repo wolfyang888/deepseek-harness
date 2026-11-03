@@ -43,6 +43,8 @@ export type BrowserRuntimeConfig =
     executablePath?: string
     /** Run without a visible window. */
     headless: boolean
+    /** Proxy URL the launched Chrome uses for every request; omitted connects directly. */
+    proxy?: string
   }
   | {
     /** The Host attaches to a Chrome the user already runs. */

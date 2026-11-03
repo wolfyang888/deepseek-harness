@@ -311,7 +311,7 @@ export class PlaywrightBrowserRuntime implements TransportRuntime {
       const options = {
         headless,
         viewport: null,
-        args: [...LAUNCH_ARGS],
+        args: [...LAUNCH_ARGS, ...(this.config.proxy === undefined ? [] : [`--proxy-server=${this.config.proxy}`])],
         ...(this.config.executablePath === undefined ? {} : { executablePath: this.config.executablePath }),
       }
       const context = await this.launcher.launchPersistentContext(this.config.profileDir, options)

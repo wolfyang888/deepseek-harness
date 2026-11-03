@@ -111,6 +111,7 @@ export class WebChatTransportService extends TypertRemoteService {
         profileDir: z.string().min(1).required(),
         executablePath: z.string().min(1),
         headless: z.boolean().required(),
+        proxy: z.string().min(1),
       }),
       z.object({
         mode: z.const('cdp').required(),

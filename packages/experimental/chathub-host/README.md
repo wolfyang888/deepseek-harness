@@ -39,7 +39,7 @@ The package ships an opt-in bundle layer, [`cordis.patch.yml`](cordis.patch.yml)
 pnpm dsh web --patch packages/experimental/chathub-host/cordis.patch.yml
 ```
 
-The layer mounts one `chathub-host` row with environment-driven defaults: `DSH_CHATHUB_PROFILE_DIR` (default `$DSH_HOME/chathub-profile`), `DSH_CHATHUB_HEADLESS`, `DSH_CHATHUB_CDP_ENDPOINT`, `DSH_CHATHUB_EXECUTABLE_PATH`, and one `DSH_CHATHUB_*` variable per timing field. Mounting registers the four adapters without launching Chrome; the browser starts on the first provider call or login.
+The layer mounts one `chathub-host` row with environment-driven defaults: `DSH_CHATHUB_PROFILE_DIR` (default `$DSH_HOME/chathub-profile`), `DSH_CHATHUB_HEADLESS`, `DSH_CHATHUB_CDP_ENDPOINT`, `DSH_CHATHUB_EXECUTABLE_PATH`, `DSH_CHATHUB_PROXY` (proxy URL for the launched Chrome), and one `DSH_CHATHUB_*` variable per timing field. Mounting registers the four adapters without launching Chrome; the browser starts on the first provider call or login.
 
 ### Minimal configuration
 

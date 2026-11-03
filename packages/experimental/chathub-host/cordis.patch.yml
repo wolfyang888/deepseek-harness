@@ -12,6 +12,8 @@
 #   DSH_CHATHUB_HEADLESS         `false` shows the browser window (default headless)
 #   DSH_CHATHUB_CDP_ENDPOINT     attach to a running Chrome instead of launching one
 #   DSH_CHATHUB_EXECUTABLE_PATH  Chrome binary override for managed mode
+#   DSH_CHATHUB_PROXY            proxy URL for the launched Chrome (e.g. `http://127.0.0.1:7890`);
+#                                needed for sites the machine cannot reach directly (gemini, chatgpt)
 #   DSH_CHATHUB_LOGIN_TIMEOUT_MS / DSH_CHATHUB_TURN_TIMEOUT_MS /
 #   DSH_CHATHUB_ACTION_TIMEOUT_MS / DSH_CHATHUB_POLL_MS /
 #   DSH_CHATHUB_STABLE_POLLS / DSH_CHATHUB_MAX_QUEUED_TURNS /
@@ -23,7 +25,7 @@
         browser: !!js >-
           process.env.DSH_CHATHUB_CDP_ENDPOINT !== undefined
             ? { mode: 'cdp', profileDir: process.env.DSH_CHATHUB_PROFILE_DIR ?? dshHomePath('chathub-profile'), cdpEndpoint: process.env.DSH_CHATHUB_CDP_ENDPOINT, headless: false }
-            : { mode: 'managed', profileDir: process.env.DSH_CHATHUB_PROFILE_DIR ?? dshHomePath('chathub-profile'), ...(process.env.DSH_CHATHUB_EXECUTABLE_PATH !== undefined ? { executablePath: process.env.DSH_CHATHUB_EXECUTABLE_PATH } : {}), headless: process.env.DSH_CHATHUB_HEADLESS !== 'false' }
+            : { mode: 'managed', profileDir: process.env.DSH_CHATHUB_PROFILE_DIR ?? dshHomePath('chathub-profile'), ...(process.env.DSH_CHATHUB_EXECUTABLE_PATH !== undefined ? { executablePath: process.env.DSH_CHATHUB_EXECUTABLE_PATH } : {}), headless: process.env.DSH_CHATHUB_HEADLESS !== 'false', ...(process.env.DSH_CHATHUB_PROXY !== undefined && process.env.DSH_CHATHUB_PROXY !== '' ? { proxy: process.env.DSH_CHATHUB_PROXY } : {}) }
         loginTimeoutMs: !!js Number(process.env.DSH_CHATHUB_LOGIN_TIMEOUT_MS ?? 300_000)
         turnTimeoutMs: !!js Number(process.env.DSH_CHATHUB_TURN_TIMEOUT_MS ?? 180_000)
         actionTimeoutMs: !!js Number(process.env.DSH_CHATHUB_ACTION_TIMEOUT_MS ?? 15_000)

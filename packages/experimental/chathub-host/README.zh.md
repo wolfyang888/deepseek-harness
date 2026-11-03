@@ -39,7 +39,7 @@ kind: "package-bundle"
 pnpm dsh web --patch packages/experimental/chathub-host/cordis.patch.yml
 ```
 
-该层挂载一行 `chathub-host`，默认值由环境变量驱动：`DSH_CHATHUB_PROFILE_DIR`（默认 `$DSH_HOME/chathub-profile`）、`DSH_CHATHUB_HEADLESS`、`DSH_CHATHUB_CDP_ENDPOINT`、`DSH_CHATHUB_EXECUTABLE_PATH`，以及每个计时字段各一个 `DSH_CHATHUB_*` 变量。挂载仅注册四个适配器，不启动 Chrome；浏览器在首次提供方调用或登录时才启动。
+该层挂载一行 `chathub-host`，默认值由环境变量驱动：`DSH_CHATHUB_PROFILE_DIR`（默认 `$DSH_HOME/chathub-profile`）、`DSH_CHATHUB_HEADLESS`、`DSH_CHATHUB_CDP_ENDPOINT`、`DSH_CHATHUB_EXECUTABLE_PATH`、`DSH_CHATHUB_PROXY`（启动的 Chrome 所用代理地址），以及每个计时字段各一个 `DSH_CHATHUB_*` 变量。挂载仅注册四个适配器，不启动 Chrome；浏览器在首次提供方调用或登录时才启动。
 
 ### 最小配置
 
