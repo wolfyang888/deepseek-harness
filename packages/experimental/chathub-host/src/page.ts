@@ -83,16 +83,21 @@ export class PlaywrightPage implements ChatPageHandle {
   }
 
   /**
-   * Read the last answer container's text.
+   * Read the last answer container's markup.
+   *
+   * The container is read as markup rather than text: an answer's emphasis,
+   * lists, tables, code, and images exist only in the site's DOM, and its
+   * `innerText` flattens all of them into plain lines. The panel sanitizes and
+   * lays the markup out itself.
    * @param selector - answer container selector.
-   * @returns Trimmed answer text, or an empty string when the container does not exist yet.
+   * @returns Trimmed answer markup, or an empty string when the container does not exist yet.
    */
-  async answerText(selector: string): Promise<string> {
+  async answerHtml(selector: string): Promise<string> {
     try {
       const locator = this.page.locator(selector)
       const count = await locator.count()
       if (count === 0) return ''
-      return (await locator.nth(count - 1).innerText({ timeout: this.actionTimeoutMs })).trim()
+      return (await locator.nth(count - 1).innerHTML({ timeout: this.actionTimeoutMs })).trim()
     } catch (error) {
       if (isOperationTimeout(error)) return ''
       throw classifyPageError(error, `${this.key}: reading answer "${selector}"`)

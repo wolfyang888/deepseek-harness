@@ -149,7 +149,9 @@ export class ChatHubController extends TypertRemoteService {
     try {
       const response = await provider.sendMessage(request)
       const at = this.now()
-      const assistant: ChatMessage = { role: 'assistant', content: response.content, timestamp: at }
+      // The speaker name records which model answered, so the panel can sign
+      // the bubble even after the session switched providers since.
+      const assistant: ChatMessage = { role: 'assistant', content: response.content, timestamp: at, name: record.currentProvider }
       await repository.appendMessage(sessionId, assistant)
       await repository.markProviderUsed(record.currentProvider, at)
       this.manager.setStatus(sessionId, 'done')

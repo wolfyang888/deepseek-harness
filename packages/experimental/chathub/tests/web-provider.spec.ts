@@ -212,6 +212,7 @@ describe('shipped adapters', () => {
     expect(webProviderAdapters['gemini-web']({ transport }).id).toBe('gemini-web')
     expect(webProviderAdapters['doubao-web']({ transport }).id).toBe('doubao-web')
     expect(webProviderAdapters['qianwen-web']({ transport }).id).toBe('qianwen-web')
+    expect(webProviderAdapters['glm-web']({ transport }).id).toBe('glm-web')
   })
 
   it('honors one minimal contract across every shipped adapter', async () => {

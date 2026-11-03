@@ -5,6 +5,7 @@ import { ChatGptWebProvider } from './chatgpt-web.ts'
 import { DeepSeekWebProvider } from './deepseek-web.ts'
 import { DoubaoWebProvider } from './doubao-web.ts'
 import { GeminiWebProvider } from './gemini-web.ts'
+import { GlmWebProvider } from './glm-web.ts'
 import { QianwenWebProvider } from './qianwen-web.ts'
 import type { WebChatTransport, WebProviderOverrides } from './web-provider.ts'
 
@@ -26,4 +27,6 @@ export const webProviderAdapters = {
     new DoubaoWebProvider(options.transport, options),
   'qianwen-web': (options: WebProviderAdapterOptions): IModelProvider =>
     new QianwenWebProvider(options.transport, options),
+  'glm-web': (options: WebProviderAdapterOptions): IModelProvider =>
+    new GlmWebProvider(options.transport, options),
 } satisfies Record<string, (options: WebProviderAdapterOptions) => IModelProvider>

@@ -75,33 +75,33 @@ it('classifies a thrown visibility check', async () => {
     .rejects.toMatchObject({ token: 'chathub-ui-drift' })
 })
 
-it('reads the last answer container text', async () => {
+it('reads the last answer container markup', async () => {
   const { wrapper, fake } = page()
   fake.counts[DRIVER.answer] = 2
-  fake.texts[DRIVER.answer] = '  answer  '
-  await expect(wrapper.answerText(DRIVER.answer)).resolves.toBe('answer')
+  fake.texts[DRIVER.answer] = '  <p>answer</p>  '
+  await expect(wrapper.answerHtml(DRIVER.answer)).resolves.toBe('<p>answer</p>')
 })
 
 it('treats a missing answer container as no answer', async () => {
   const { wrapper } = page()
-  await expect(wrapper.answerText(DRIVER.answer)).resolves.toBe('')
+  await expect(wrapper.answerHtml(DRIVER.answer)).resolves.toBe('')
 })
 
 it('treats an answer read timeout as no answer yet', async () => {
   const { wrapper, fake } = page()
   fake.counts[DRIVER.answer] = 1
-  fake.errors.innerText = Object.assign(new Error('timed out'), { name: 'TimeoutError' })
-  await expect(wrapper.answerText(DRIVER.answer)).resolves.toBe('')
+  fake.errors.innerHTML = Object.assign(new Error('timed out'), { name: 'TimeoutError' })
+  await expect(wrapper.answerHtml(DRIVER.answer)).resolves.toBe('')
 })
 
 it('classifies other answer read failures', async () => {
   const { wrapper, fake } = page()
   fake.counts[DRIVER.answer] = 1
-  fake.errors.innerText = new Error('element is not attached')
-  await expect(wrapper.answerText(DRIVER.answer)).rejects.toMatchObject({ token: 'chathub-ui-drift' })
-  fake.errors.innerText = undefined
+  fake.errors.innerHTML = new Error('element is not attached')
+  await expect(wrapper.answerHtml(DRIVER.answer)).rejects.toMatchObject({ token: 'chathub-ui-drift' })
+  fake.errors.innerHTML = undefined
   fake.errors.count = new Error('browser has been closed')
-  await expect(wrapper.answerText(DRIVER.answer)).rejects.toMatchObject({ token: 'chathub-signed-out' })
+  await expect(wrapper.answerHtml(DRIVER.answer)).rejects.toMatchObject({ token: 'chathub-signed-out' })
 })
 
 it('clicks the input, inserts the prompt as one text insertion, and submits', async () => {

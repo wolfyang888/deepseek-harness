@@ -10,6 +10,35 @@ interface TurnContent {
   content: string
 }
 
+/** Entities that carry visible text in provider markup, keyed by lower-cased name. */
+const ANSWER_ENTITIES: Readonly<Record<string, string>> = {
+  nbsp: ' ',
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  '#39': "'",
+  apos: "'",
+}
+
+/**
+ * Visible text of one answer markup.
+ *
+ * Answers are carried as markup so the panel can render their emphasis, lists,
+ * tables, code, and images; the turn itself still needs the plain text to tell a
+ * prompt echo or a site status line from a real answer.
+ * @param html - answer container markup.
+ * @returns Whitespace-collapsed text without tags.
+ */
+function answerTextOf(html: string): string {
+  return html
+    .replace(/<(?:script|style)\b[^>]*>[\s\S]*?<\/(?:script|style)>/giu, ' ')
+    .replace(/<[^>]*>/gu, ' ')
+    .replace(/&([#0-9a-z]+);/giu, (_match: string, name: string) => ANSWER_ENTITIES[name.toLowerCase()] ?? ' ')
+    .replace(/\s+/gu, ' ')
+    .trim()
+}
+
 /**
  * Consume an answer stream without exposing its deltas.
  * @param stream - deltas produced while an answer stabilizes.
@@ -102,7 +131,7 @@ export class PlaywrightChatSession implements WebChatTransportSession {
       }
       await sleep(Math.min(pollMs, remaining))
       this.assertNotSignedOut()
-      const current = this.answerFrom(await this.page.answerText(this.driver.answer), prompt)
+      const current = this.answerFrom(await this.page.answerHtml(this.driver.answer), prompt)
       if (current.length > 0 && current === lastText) stable += 1
       else stable = 0
       lastText = current
@@ -146,20 +175,20 @@ export class PlaywrightChatSession implements WebChatTransportSession {
   /**
    * Treat the prompt echo, a thinking placeholder, or an empty container as
    * "no answer yet".
-   * @param text - text read from the answer container.
+   * @param html - markup read from the answer container.
    * @param prompt - rendered prompt.
-   * @returns The answer candidate, or an empty string.
+   * @returns The answer markup, or an empty string.
    */
-  private answerFrom(text: string, prompt: string): string {
-    if (text.length === 0) return ''
-    const normalized = text.replace(/\s+/g, ' ').trim()
+  private answerFrom(html: string, prompt: string): string {
+    if (html.length === 0) return ''
+    const normalized = answerTextOf(html)
     const promptNormalized = prompt.replace(/\s+/g, ' ').trim()
     if (normalized === promptNormalized) return ''
     // A site's "thinking" placeholder sits in the same container and can stay
     // unchanged for several polls; counting it as an answer ends the turn with
     // the placeholder instead of the reply that follows it.
     if (this.driver.pending !== undefined && this.isPending(normalized, this.driver.pending)) return ''
-    return text
+    return html
   }
 
   /**

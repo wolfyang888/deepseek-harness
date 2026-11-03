@@ -124,9 +124,9 @@ export interface BrowserLocatorLike {
   boundingBox(options?: { timeout?: number }): Promise<{ x: number; y: number; width: number; height: number } | null>
   /**
    * @param options - optional operation timeout.
-   * @returns The element's visible text.
+   * @returns The element's inner markup, which keeps an answer's formatting.
    */
-  innerText(options?: { timeout?: number }): Promise<string>
+  innerHTML(options?: { timeout?: number }): Promise<string>
 }
 
 /** Locator face the page wrapper drives. */
@@ -249,9 +249,9 @@ export interface TurnPage {
   url(): string
   /**
    * @param selector - answer container selector.
-   * @returns The last answer's text, or an empty string when none exists.
+   * @returns The last answer's markup, or an empty string when none exists.
    */
-  answerText(selector: string): Promise<string>
+  answerHtml(selector: string): Promise<string>
   /**
    * @param prompt - rendered prompt to type.
    * @param driver - site facts for input and submission.

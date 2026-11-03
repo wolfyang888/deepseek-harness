@@ -47,8 +47,8 @@ class ScriptedPage implements TurnPage {
     return this.urlValue
   }
 
-  /** @returns The next scripted answer. */
-  async answerText(): Promise<string> {
+  /** @returns The next scripted answer markup. */
+  async answerHtml(): Promise<string> {
     const index = Math.min(this.reads, this.answers.length - 1)
     this.reads += 1
     return this.answers[index] ?? ''
@@ -97,63 +97,72 @@ function session(page = new ScriptedPage(), gate = new FakeGate(), driver = DRIV
   return { session: new PlaywrightChatSession('deepseek-web', page, driver, CONFIG, gate), page, gate }
 }
 
-it('sends one prompt and returns the stabilized answer', async () => {
+it('sends one prompt and returns the stabilized answer markup', async () => {
   const { session: chat, page } = session()
-  page.answers = ['a', 'ab', 'ab', 'ab']
+  page.answers = ['<p>a</p>', '<p>ab</p>', '<p>ab</p>', '<p>ab</p>']
   const answer = await chat.send(payload())
-  expect(answer).toEqual({ content: 'ab', finishReason: 'stop' })
+  // The markup, not its text: emphasis, tables, and images survive the read.
+  expect(answer).toEqual({ content: '<p>ab</p>', finishReason: 'stop' })
   expect(page.submitted).toEqual(['hello'])
 })
 
 it('does not treat the prompt echo or an empty container as an answer', async () => {
   const { session: chat, page } = session()
-  page.answers = ['', 'hello', 'hello answer', 'hello answer', 'hello answer']
-  await expect(chat.send(payload())).resolves.toMatchObject({ content: 'hello answer' })
+  page.answers = ['', '<p>hello</p>', '<p>hello answer</p>', '<p>hello answer</p>', '<p>hello answer</p>']
+  await expect(chat.send(payload())).resolves.toMatchObject({ content: '<p>hello answer</p>' })
 })
 
 it('filters an echo whose whitespace the site rendered differently', async () => {
   const { session: chat, page } = session()
-  page.answers = ['  hello\n', 'real answer', 'real answer', 'real answer']
-  await expect(chat.send(payload())).resolves.toMatchObject({ content: 'real answer' })
+  page.answers = ['  <p>hello\n</p>', '<p>real   answer</p>', '<p>real   answer</p>', '<p>real   answer</p>']
+  await expect(chat.send(payload())).resolves.toMatchObject({ content: '<p>real   answer</p>' })
 })
 
 it('does not treat a stable thinking placeholder as the answer', async () => {
   // The placeholder outlives stablePolls before the reply replaces it.
   const driver: SiteDriverConfig = { ...DRIVER, pending: '问题分析中|思考中' }
   const { session: chat, page } = session(new ScriptedPage(), new FakeGate(), driver)
-  page.answers = ['问题分析中', '问题分析中', '问题分析中', '问题分析中', '答案正文', '答案正文', '答案正文']
-  await expect(chat.send(payload())).resolves.toMatchObject({ content: '答案正文' })
+  page.answers = ['<div>问题分析中</div>', '<div>问题分析中</div>', '<div>问题分析中</div>', '<div>问题分析中</div>', '<p>答案正文</p>', '<p>答案正文</p>', '<p>答案正文</p>']
+  await expect(chat.send(payload())).resolves.toMatchObject({ content: '<p>答案正文</p>' })
 })
 
 it('accepts an answer that only mentions the placeholder phrase', async () => {
   const driver: SiteDriverConfig = { ...DRIVER, pending: '思考中' }
   const { session: chat, page } = session(new ScriptedPage(), new FakeGate(), driver)
-  page.answers = ['为什么界面一直显示思考中？', '为什么界面一直显示思考中？', '为什么界面一直显示思考中？']
-  await expect(chat.send(payload())).resolves.toMatchObject({ content: '为什么界面一直显示思考中？' })
+  page.answers = ['<p>为什么界面一直显示思考中？</p>', '<p>为什么界面一直显示思考中？</p>', '<p>为什么界面一直显示思考中？</p>']
+  await expect(chat.send(payload())).resolves.toMatchObject({ content: '<p>为什么界面一直显示思考中？</p>' })
 })
 
-it('streams prefix deltas as the answer grows', async () => {
+it('streams markup prefix deltas as the answer grows', async () => {
   const { session: chat, page } = session()
-  page.answers = ['a', 'ab', 'abc', 'abc', 'abc']
+  // Each poll appends one block, so every read extends the last as a prefix.
+  page.answers = [
+    '<p>a</p>',
+    '<p>a</p><p>b</p>',
+    '<p>a</p><p>b</p><p>c</p>',
+    '<p>a</p><p>b</p><p>c</p>',
+    '<p>a</p><p>b</p><p>c</p>',
+  ]
   const deltas: string[] = []
   for await (const delta of chat.stream?.(payload()) ?? []) deltas.push(delta)
-  expect(deltas).toEqual(['a', 'b', 'c'])
+  // Deltas carry markup so emphasis and blocks survive the stream too.
+  expect(deltas).toEqual(['<p>a</p>', '<p>b</p>', '<p>c</p>'])
 })
 
-it('yields the full text when the site replaces the answer', async () => {
+it('yields the full markup when the site replaces the answer', async () => {
   const { session: chat, page } = session()
-  page.answers = ['a', 'b', 'b', 'b']
+  page.answers = ['<p>a</p>', '<p>b</p>', '<p>b</p>', '<p>b</p>']
   const deltas: string[] = []
   for await (const delta of chat.stream?.(payload()) ?? []) deltas.push(delta)
-  expect(deltas).toEqual(['a', 'b'])
+  expect(deltas).toEqual(['<p>a</p>', '<p>b</p>'])
 })
 
 it('skips a replacement that matches what was already emitted', async () => {
   const { session: chat, page } = session()
-  page.answers = ['a', 'a', 'a', 'a']
+  page.answers = ['<p>a</p>', '<p>a</p>', '<p>a</p>', '<p>a</p>']
   const deltas: string[] = []
   for await (const delta of chat.stream?.(payload()) ?? []) deltas.push(delta)
-  expect(deltas).toEqual(['a'])
+  expect(deltas).toEqual(['<p>a</p>'])
 })
 
 it('fails a turn that never stabilizes', async () => {
@@ -188,9 +197,9 @@ it('fails when the site URL cannot be parsed', async () => {
 it('skips the path check when the driver has no signed-out pattern', async () => {
   const unsigned: SiteDriverConfig = { url: DRIVER.url, input: DRIVER.input, answer: DRIVER.answer, submitKey: DRIVER.submitKey }
   const { session: chat, page } = session(undefined, undefined, unsigned)
-  page.answers = ['answer', 'answer', 'answer']
+  page.answers = ['<p>answer</p>', '<p>answer</p>', '<p>answer</p>']
   page.urlValue = '::'
-  await expect(chat.send(payload())).resolves.toMatchObject({ content: 'answer' })
+  await expect(chat.send(payload())).resolves.toMatchObject({ content: '<p>answer</p>' })
 })
 
 it('releases the turn lease after success and failure', async () => {
@@ -213,12 +222,22 @@ it('propagates a full turn queue', async () => {
 
 it('uses driver poll and stability overrides', async () => {
   const { session: chat, page } = session(undefined, undefined, { ...DRIVER, stablePolls: 1, pollMs: 1 })
-  page.answers = ['answer']
-  await expect(chat.send(payload())).resolves.toMatchObject({ content: 'answer' })
+  page.answers = ['<p>answer</p>']
+  await expect(chat.send(payload())).resolves.toMatchObject({ content: '<p>answer</p>' })
 })
 
 it('releases the page when the session closes', async () => {
   const { session: chat, gate } = session()
   await chat.close()
   expect(gate.released).toEqual(['deepseek-web'])
+})
+
+it('reads entities, scripts, and styling out of the answer text', async () => {
+  const driver: SiteDriverConfig = { ...DRIVER, pending: '思考中' }
+  const { session: chat, page } = session(new ScriptedPage(), new FakeGate(), driver)
+  // A styled wrapper, an entity-bearing body, and a script the page injected.
+  const answer = '<div class="md"><p>结论&nbsp;如下&hellip;</p><script>track()</script><style>p{color:red}</style></div>'
+  page.answers = [answer, answer, answer]
+  // The markup comes back whole; the status check saw "结论 如下 …" and let it pass.
+  await expect(chat.send(payload())).resolves.toMatchObject({ content: answer })
 })

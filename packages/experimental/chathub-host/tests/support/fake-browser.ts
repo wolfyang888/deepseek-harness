@@ -17,7 +17,7 @@ type FakePageOperation =
   | 'count'
   | 'isVisible'
   | 'boundingBox'
-  | 'innerText'
+  | 'innerHTML'
   | 'click'
   | 'type'
   | 'insertText'
@@ -66,9 +66,9 @@ class FakeLocator implements BrowserInputLike {
     return this.page.boxes[this.selector] ?? null
   }
 
-  /** @returns The configured text. */
-  async innerText(): Promise<string> {
-    this.page.raise('innerText')
+  /** @returns The configured markup. */
+  async innerHTML(): Promise<string> {
+    this.page.raise('innerHTML')
     return this.page.texts[this.selector] ?? ''
   }
 }

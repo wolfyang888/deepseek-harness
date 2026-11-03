@@ -190,7 +190,7 @@ describe('ChatHubController turns', () => {
       expect(result).toEqual({
         sessionId: view.id,
         status: 'done',
-        assistant: { role: 'assistant', content: 'deepseek-web answer', timestamp: AT },
+        assistant: { role: 'assistant', content: 'deepseek-web answer', timestamp: AT, name: 'deepseek-web' },
       })
       expect(result.assistant?.content).toBe('deepseek-web answer')
       expect(deepseek.requests).toHaveLength(1)

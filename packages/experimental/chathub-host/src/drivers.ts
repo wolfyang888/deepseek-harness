@@ -6,7 +6,7 @@ import type { SiteDriverConfig, SiteDrivers } from './types.ts'
 /** Path patterns that identify a site's login, logout, or expired-session redirect. */
 const SIGNED_OUT_PATH = 'login|logout|sign_in|signin|expired'
 
-/** Site facts for the five shipped browser adapters; hosts override any field. */
+/** Site facts for the six shipped browser adapters; hosts override any field. */
 export const DEFAULT_SITE_DRIVERS: Readonly<SiteDrivers> = {
   'deepseek-web': {
     url: 'https://chat.deepseek.com/',
@@ -54,6 +54,18 @@ export const DEFAULT_SITE_DRIVERS: Readonly<SiteDrivers> = {
     // The answer card shows "问题分析中" while the model works, then swaps in
     // the reply; accepts both the bare status and its timed variants.
     pending: '问题分析中|正在分析|分析中|思考中|正在思考|生成中|正在生成|\\d+\\s*(?:s|秒)',
+    signedOutPath: SIGNED_OUT_PATH,
+    submitKey: 'Enter',
+  },
+  'glm-web': {
+    url: 'https://chatglm.cn/',
+    // The composer is a contenteditable rich editor; the plain textarea is the
+    // fallback for the older chatglm UI.
+    input: 'div[contenteditable="true"], textarea',
+    // Answers render in a markdown body inside the answer block; the hashed
+    // answer-item containers are the fallback when the class names churn.
+    answer: '.markdown-body, [class*="answer-content"], [class*="answerItem"]',
+    pending: '思考中|正在思考|生成中|正在生成|输出中|停止生成',
     signedOutPath: SIGNED_OUT_PATH,
     submitKey: 'Enter',
   },

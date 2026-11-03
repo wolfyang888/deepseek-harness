@@ -103,7 +103,7 @@ describe('WebChatTransportService', () => {
   it('lists every shipped provider as not-started without launching Chrome', async () => {
     const { service } = await harness()
     const views = await service.providers()
-    expect(views.map(view => view.id)).toEqual(['deepseek-web', 'chatgpt-web', 'gemini-web', 'doubao-web', 'qianwen-web'])
+    expect(views.map(view => view.id)).toEqual(['deepseek-web', 'chatgpt-web', 'gemini-web', 'doubao-web', 'qianwen-web', 'glm-web'])
     expect(views.every(view => view.health.status === 'not-started' && !view.health.ready)).toBe(true)
     expect(sharedLauncher.launched).toHaveLength(0)
   })
@@ -177,7 +177,7 @@ describe('WebChatTransportService', () => {
     } as never)
     const service = new WebChatTransportService(ctx, config(dir))
     const views = await service.providers()
-    expect(views).toHaveLength(5)
+    expect(views).toHaveLength(6)
   })
 
   it('opens providers on a browser attached over CDP', async () => {

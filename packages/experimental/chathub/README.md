@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-experimental-chathub` keeps one task coherent while its user moves between models: it records what the task aims at, the plan, facts, open questions, and decisions, then renders that handoff for whichever provider takes the next turn. Registering providers behind one adapter lets the router pick a capable model per turn, fall back when a call fails, and write a checkpoint before every switch. This is a library — no profile mounts it and no `cordis.yml` row names it. It ships browser adapters for DeepSeek Chat, ChatGPT, Gemini, Doubao, and Qianwen; the host supplies the signed-in browser transport they drive.
+`dsh-experimental-chathub` keeps one task coherent while its user moves between models: it records what the task aims at, the plan, facts, open questions, and decisions, then renders that handoff for whichever provider takes the next turn. Registering providers behind one adapter lets the router pick a capable model per turn, fall back when a call fails, and write a checkpoint before every switch. This is a library — no profile mounts it and no `cordis.yml` row names it. It ships browser adapters for DeepSeek Chat, ChatGPT, Gemini, Doubao, Qianwen, and GLM; the host supplies the signed-in browser transport they drive.
 
 ## Table of Contents
 
@@ -120,6 +120,7 @@ The session record is the canonical state: goal, plan, memory entries, semantic 
 | [`src/providers/gemini-web.ts`](src/providers/gemini-web.ts) | Gemini adapter |
 | [`src/providers/doubao-web.ts`](src/providers/doubao-web.ts) | Doubao adapter |
 | [`src/providers/qianwen-web.ts`](src/providers/qianwen-web.ts) | Qianwen adapter |
+| [`src/providers/glm-web.ts`](src/providers/glm-web.ts) | GLM adapter |
 | [`src/providers/adapters.ts`](src/providers/adapters.ts) | Provider-id keyed constructors for the shipped adapters |
 | [`src/session-manager.ts`](src/session-manager.ts) | Session creation, request building, model switching, and runtime state |
 | [`src/timeline.ts`](src/timeline.ts) | Ordered session timeline entries for host views and replay |
