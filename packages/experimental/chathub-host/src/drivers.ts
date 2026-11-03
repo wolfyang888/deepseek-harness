@@ -12,6 +12,8 @@ export const DEFAULT_SITE_DRIVERS: Readonly<SiteDrivers> = {
     url: 'https://chat.deepseek.com/',
     input: 'textarea',
     answer: '.ds-markdown',
+    // DeepSeek shows a bare status line in the answer slot while it works.
+    pending: '问题分析中|正在分析|思考中|正在思考|搜索中|\\d+\\s*(?:s|秒)',
     signedOutPath: SIGNED_OUT_PATH,
     submitKey: 'Enter',
   },
@@ -38,6 +40,7 @@ export const DEFAULT_SITE_DRIVERS: Readonly<SiteDrivers> = {
     // `receive_message` markers are kept only as legacy fallbacks, so the
     // answer probe unions every receive-side candidate.
     answer: '[data-testid="receive_message"], [class*="bg-g-receive-msg-bubble"], .flow-markdown-body, .md-box-root',
+    pending: '思考中|正在思考|正在生成|生成中',
     signedOutPath: SIGNED_OUT_PATH,
     submitKey: 'Enter',
   },
@@ -48,6 +51,9 @@ export const DEFAULT_SITE_DRIVERS: Readonly<SiteDrivers> = {
     // new qianwen.com UI; the hashed answerItem classes are kept as the
     // legacy tongyi.aliyun.com fallback.
     answer: '[class*="chat-answers-card-wrap"], [class*="answerItem"]',
+    // The answer card shows "问题分析中" while the model works, then swaps in
+    // the reply; accepts both the bare status and its timed variants.
+    pending: '问题分析中|正在分析|分析中|思考中|正在思考|生成中|正在生成|\\d+\\s*(?:s|秒)',
     signedOutPath: SIGNED_OUT_PATH,
     submitKey: 'Enter',
   },
@@ -99,6 +105,21 @@ export function validateSiteDriver(providerId: string, driver: SiteDriverConfig)
     throw new Error(`WebChatTransport: driver "${providerId}" has a stablePolls below 1`)
   }
   if (driver.signedOutPath !== undefined) validatePathPattern(providerId, driver.signedOutPath)
+  if (driver.pending !== undefined) validatePendingPattern(providerId, driver.pending)
+}
+
+/**
+ * Reject a thinking-placeholder pattern that does not compile.
+ * @param providerId - provider the pattern serves.
+ * @param pattern - regular-expression source matched against the whole answer text.
+ * @throws Error when the pattern does not compile.
+ */
+function validatePendingPattern(providerId: string, pattern: string): void {
+  try {
+    new RegExp(pattern, 'i')
+  } catch (error) {
+    throw new Error(`WebChatTransport: driver "${providerId}" has invalid pending`, { cause: error })
+  }
 }
 
 /**

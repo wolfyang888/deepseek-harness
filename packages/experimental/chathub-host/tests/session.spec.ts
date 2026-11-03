@@ -117,6 +117,21 @@ it('filters an echo whose whitespace the site rendered differently', async () =>
   await expect(chat.send(payload())).resolves.toMatchObject({ content: 'real answer' })
 })
 
+it('does not treat a stable thinking placeholder as the answer', async () => {
+  // The placeholder outlives stablePolls before the reply replaces it.
+  const driver: SiteDriverConfig = { ...DRIVER, pending: '问题分析中|思考中' }
+  const { session: chat, page } = session(new ScriptedPage(), new FakeGate(), driver)
+  page.answers = ['问题分析中', '问题分析中', '问题分析中', '问题分析中', '答案正文', '答案正文', '答案正文']
+  await expect(chat.send(payload())).resolves.toMatchObject({ content: '答案正文' })
+})
+
+it('accepts an answer that only mentions the placeholder phrase', async () => {
+  const driver: SiteDriverConfig = { ...DRIVER, pending: '思考中' }
+  const { session: chat, page } = session(new ScriptedPage(), new FakeGate(), driver)
+  page.answers = ['为什么界面一直显示思考中？', '为什么界面一直显示思考中？', '为什么界面一直显示思考中？']
+  await expect(chat.send(payload())).resolves.toMatchObject({ content: '为什么界面一直显示思考中？' })
+})
+
 it('streams prefix deltas as the answer grows', async () => {
   const { session: chat, page } = session()
   page.answers = ['a', 'ab', 'abc', 'abc', 'abc']

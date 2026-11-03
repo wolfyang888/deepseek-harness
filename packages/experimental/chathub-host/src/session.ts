@@ -144,15 +144,34 @@ export class PlaywrightChatSession implements WebChatTransportSession {
   }
 
   /**
-   * Treat the prompt echo or an empty container as "no answer yet".
+   * Treat the prompt echo, a thinking placeholder, or an empty container as
+   * "no answer yet".
    * @param text - text read from the answer container.
    * @param prompt - rendered prompt.
    * @returns The answer candidate, or an empty string.
    */
   private answerFrom(text: string, prompt: string): string {
     if (text.length === 0) return ''
-    const normalize = (value: string): string => value.replace(/\s+/g, ' ').trim()
-    if (normalize(text) === normalize(prompt)) return ''
+    const normalized = text.replace(/\s+/g, ' ').trim()
+    const promptNormalized = prompt.replace(/\s+/g, ' ').trim()
+    if (normalized === promptNormalized) return ''
+    // A site's "thinking" placeholder sits in the same container and can stay
+    // unchanged for several polls; counting it as an answer ends the turn with
+    // the placeholder instead of the reply that follows it.
+    if (this.driver.pending !== undefined && this.isPending(normalized, this.driver.pending)) return ''
     return text
+  }
+
+  /**
+   * Whether the answer slot holds nothing but the site's working status.
+   * @param normalized - whitespace-normalized answer text.
+   * @param pattern - the driver's status-phrase pattern.
+   * @returns true when removing the status phrases leaves only punctuation.
+   */
+  private isPending(normalized: string, pattern: string): boolean {
+    const remainder = normalized
+      .replace(new RegExp(pattern, 'gi'), '')
+      .replace(/[\s·•,，.。:：;；!！?？~～|/\\\-—_]+/g, '')
+    return remainder.length === 0
   }
 }

@@ -23,6 +23,13 @@ export interface SiteDriverConfig {
   signedOutPath?: string
   /** Key that submits the rendered prompt. */
   submitKey: string
+  /**
+   * Pattern for text that only means the site is still working, such as a
+   * "thinking" placeholder. Matches are removed before judging, so text that
+   * leaves only punctuation counts as pending while a real answer that merely
+   * mentions the phrase still counts as an answer.
+   */
+  pending?: string
   /** Stable polls required before an answer counts as finished; defaults to the service value. */
   stablePolls?: number
   /** Milliseconds between answer polls; defaults to the service value. */

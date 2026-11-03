@@ -50,6 +50,11 @@ it('rejects an uncompilable signed-out path', () => {
     .toThrow('driver "doubao-web" has invalid signedOutPath')
 })
 
+it('rejects an uncompilable thinking-placeholder pattern', () => {
+  expect(() => resolveSiteDrivers({ 'qianwen-web': { pending: '(' } }))
+    .toThrow('driver "qianwen-web" has invalid pending')
+})
+
 it('accepts a driver without a signed-out path', () => {
   const driver = { url: 'https://fake.test/', input: '#prompt', answer: '.answer', submitKey: 'Enter' }
   expect(() => { validateSiteDriver('deepseek-web', driver) }).not.toThrow()
