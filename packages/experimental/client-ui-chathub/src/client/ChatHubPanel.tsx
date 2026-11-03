@@ -105,6 +105,17 @@ function providerNeedsSignin(status: ProviderStatus): boolean {
   return SIGNIN_STATUSES.has(status)
 }
 
+/**
+ * Format one message timestamp as the panel's local clock time.
+ * @param timestamp - epoch millis the host recorded; absent on legacy rows.
+ * @returns The `HH:mm` label, or an empty string when the row has no time.
+ */
+function messageTime(timestamp: number | undefined): string {
+  if (timestamp === undefined) return ''
+  const at = new Date(timestamp)
+  return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
+}
+
 /** The create form's local fields. */
 interface Draft {
   title: string
@@ -305,26 +316,6 @@ export function ChatHubPanel(props: ChatHubPanelProps): ReactNode {
                 </span>
               )}
             </div>
-            <div className={css.bannerRow}>
-              <label>
-                {t('switch.label')}
-                <select className={css.formControl} value="" aria-label={t('switch.label')}
-                  disabled={busy || switchTargets.length === 0}
-                  onChange={(event) => {
-                    const providerId = event.target.value
-                    event.target.value = ''
-                    if (providerId === '') return
-                    setSwitchNote(undefined)
-                    setPendingSwitch(providerId)
-                  }}>
-                  <option value="" disabled>{t('switch.label')}</option>
-                  {switchTargets.map(provider => (
-                    <option key={provider.id} value={provider.id}>{providerOptionText(provider)}</option>
-                  ))}
-                </select>
-              </label>
-              {switchNote !== undefined && <span className={css.bannerText}>{switchNote}</span>}
-            </div>
             {pendingSwitch !== undefined && (
               <div className={css.confirm}>
                 <p className={css.confirmTitle}>{t('switch.confirm.title')}</p>
@@ -354,6 +345,11 @@ export function ChatHubPanel(props: ChatHubPanelProps): ReactNode {
                   {entry.role === 'assistant'
                     ? <MarkdownText text={entry.content} labels={markdownLabels} variant="compact" />
                     : entry.content}
+                  {messageTime(entry.timestamp) !== '' && (
+                    <span className={entry.role === 'user' ? css.messageTimeUser : css.messageTimeAssistant}>
+                      {messageTime(entry.timestamp)}
+                    </span>
+                  )}
                 </div>
               ))}
             </div>
@@ -362,9 +358,26 @@ export function ChatHubPanel(props: ChatHubPanelProps): ReactNode {
                 placeholder={t('message.placeholder')} disabled={busy}
                 onChange={(event) => { setMessage(event.target.value) }}
                 onKeyDown={onComposerKey} />
-              <Button variant="primary" size="md" className={css.composerSend} disabled={busy || message.trim() === ''} onClick={submitMessage}>
-                {t('message.send')}
-              </Button>
+              <div className={css.composerBar}>
+                <select className={css.composerSwitch} value="" aria-label={t('switch.label')}
+                  disabled={busy || switchTargets.length === 0}
+                  onChange={(event) => {
+                    const providerId = event.target.value
+                    event.target.value = ''
+                    if (providerId === '') return
+                    setSwitchNote(undefined)
+                    setPendingSwitch(providerId)
+                  }}>
+                  <option value="" disabled>{t('switch.label')}</option>
+                  {switchTargets.map(provider => (
+                    <option key={provider.id} value={provider.id}>{providerOptionText(provider)}</option>
+                  ))}
+                </select>
+                {switchNote !== undefined && <span className={css.composerNote}>{switchNote}</span>}
+                <Button variant="primary" size="md" className={css.composerSend} disabled={busy || message.trim() === ''} onClick={submitMessage}>
+                  {t('message.send')}
+                </Button>
+              </div>
             </div>
           </section>
         )}

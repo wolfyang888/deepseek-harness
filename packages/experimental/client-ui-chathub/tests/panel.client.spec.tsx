@@ -239,6 +239,32 @@ it('sends the trimmed composer draft with Enter and keeps Shift+Enter for a newl
   expect(composer.value).toBe('next')
 })
 
+it('shows the local HH:mm time on every message that carries a timestamp', () => {
+  fixture((actions) => {
+    applyLists(actions)
+    actions.openSession(DETAIL, [
+      { role: 'user', content: 'question', timestamp: new Date(2026, 10, 3, 9, 5).getTime() },
+      { role: 'assistant', content: 'answer', timestamp: new Date(2026, 10, 3, 10, 30).getTime() },
+      { role: 'user', content: 'legacy row without a time' },
+    ])
+  })
+  expect(screen.getByText('09:05')).toBeTruthy()
+  expect(screen.getByText('10:30')).toBeTruthy()
+  expect(screen.getByText('legacy row without a time')).toBeTruthy()
+  expect(screen.getAllByText(/^\d{2}:\d{2}$/)).toHaveLength(2)
+})
+
+it('renders the switch select inside the composer bar', () => {
+  fixture((actions) => {
+    applyLists(actions, [...PROVIDERS, READY_TARGET])
+    actions.openSession(DETAIL, [])
+  })
+  const composer = screen.getByPlaceholderText(zh['message.placeholder'])
+  const bar = composer.nextElementSibling
+  assert(bar)
+  expect(screen.getByRole('combobox')).toBe(bar.querySelector('select'))
+})
+
 it('disables the composer and the actions while a turn is in flight', () => {
   const { face } = fixture((actions) => {
     applyLists(actions)

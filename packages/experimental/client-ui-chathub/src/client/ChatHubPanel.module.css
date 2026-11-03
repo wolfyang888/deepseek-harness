@@ -231,6 +231,23 @@
   color: var(--dsw-alias-label-primary);
 }
 
+.messageTimeUser,
+.messageTimeAssistant {
+  display: block;
+  margin-top: 4px;
+  font: var(--dsw-font-xs-13);
+}
+
+.messageTimeUser {
+  text-align: right;
+  color: var(--dsw-alias-label-primary-foreground);
+  opacity: 0.75;
+}
+
+.messageTimeAssistant {
+  color: var(--dsw-alias-label-tertiary);
+}
+
 .messageEmpty {
   color: var(--dsw-alias-label-tertiary);
   padding: 20px 0;
@@ -239,23 +256,74 @@
 
 .composer {
   display: flex;
-  align-items: flex-end;
+  flex-direction: column;
   gap: 8px;
   max-width: 720px;
   margin-top: 6px;
-  padding-top: 12px;
-  border-top: 1px solid var(--dsw-alias-border-l4);
+  padding: 12px 12px 10px;
+  border: 1px solid var(--dsw-alias-border-l4);
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-base);
+  transition: border-color 0.15s ease;
+}
+
+.composer:focus-within {
+  border-color: var(--dsw-alias-state-business-primary);
 }
 
 .composerInput {
   min-height: 40px;
   max-height: 160px;
-  border-radius: 12px;
-  padding: 10px 12px;
+  border: 0;
+  border-radius: 0;
+  padding: 2px 2px 6px;
+  background: none;
+  resize: none;
+}
+
+.composerInput:focus {
+  border: 0;
+}
+
+.composerBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.composerSwitch {
+  box-sizing: border-box;
+  flex: none;
+  max-width: 240px;
+  padding: 5px 8px;
+  border: 1px solid var(--dsw-alias-border-l4);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xs-13);
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+
+.composerSwitch:hover:not(:disabled) {
+  border-color: var(--dsw-alias-state-business-primary);
+  color: var(--dsw-alias-label-primary);
+}
+
+.composerSwitch:disabled {
+  color: var(--dsw-alias-label-dimmed);
+  cursor: default;
+}
+
+.composerNote {
+  flex: 1;
+  min-width: 0;
+  color: var(--dsw-alias-label-secondary);
+  overflow-wrap: anywhere;
 }
 
 .composerSend {
   flex: none;
-  align-self: flex-end;
+  margin-left: auto;
   white-space: nowrap;
 }
