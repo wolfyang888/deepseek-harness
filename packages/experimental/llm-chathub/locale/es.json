@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Ruta de modelo web de ChatHub",
+    "description": "Ejecuta un sitio de chat web con sesión iniciada como un modelo de texto con llamadas a herramientas tras el bucle del agente de harness: un mensaje autocontenido por paso y como máximo una llamada por respuesta."
+  }
+}

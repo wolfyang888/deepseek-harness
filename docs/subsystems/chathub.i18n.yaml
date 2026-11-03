@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for chathub.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/subsystems/chathub.md
+/chathub:
+  en: 55885ccac01c1dfb
+  zh: a59086dde7972057
+/chathub/session-state-and-the-handoff:
+  en: 76a4d36545887c7d
+  zh: 0a77f9a15382b908
+/chathub/the-browser-transport:
+  en: 1c13e352bfc4ba49
+  zh: 6be1a8ae1959be87
+/chathub/the-panel-surface:
+  en: edb53606fb9cf471
+  zh: 75b9ebacec52e329
+/chathub/reusing-the-transport-as-an-llm-route:
+  en: 455301eb29a9310b
+  zh: e5c1594f8e539195

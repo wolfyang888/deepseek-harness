@@ -1,0 +1,29 @@
+# Opt-in web-model LLM route: run a signed-in ChatHub site as a text-only
+# tool-calling model behind the harness agent loop. Mount it together with the
+# ChatHub host layer, which owns the browser, the login state, and the per-page
+# turn queue:
+#   dsh web --patch packages/experimental/chathub-host/cordis.patch.yml \
+#           --patch packages/experimental/llm-chathub/cordis.patch.yml
+#
+# The adapter registers one LLM route (`<site>-chathub` by default) and opens a
+# fresh site conversation per attempt, so a retry never appends to the previous
+# page. Nothing here launches a browser of its own.
+#
+# Environment inputs (every one optional):
+#   DSH_CHATHUB_LLM_SITE     site provider the route drives (default `deepseek-web`)
+#   DSH_CHATHUB_LLM_MODEL    model id the route advertises (default `web-model`)
+#   DSH_CHATHUB_LLM_ROOT     absolute workspace root path arguments must stay
+#                            under (default: the host process's cwd)
+#   DSH_CHATHUB_LLM_TOOLS    comma-separated tool whitelist
+#                            (default `read,grep,glob,edit,write`)
+#   DSH_CHATHUB_LLM_VERIFY   comma-separated verification commands stated in the
+#                            prompt's project block (default `pnpm run typecheck`)
+- insert:
+    - id: llm-chathub
+      name: '@deepseek-ai/dsh-experimental-llm-chathub'
+      config:
+        site: !!js process.env.DSH_CHATHUB_LLM_SITE ?? 'deepseek-web'
+        model: !!js process.env.DSH_CHATHUB_LLM_MODEL ?? 'web-model'
+        workspaceRoot: !!js process.env.DSH_CHATHUB_LLM_ROOT ?? process.cwd()
+        allowTools: !!js (process.env.DSH_CHATHUB_LLM_TOOLS ?? 'read,grep,glob,edit,write').split(',')
+        verifyCommands: !!js (process.env.DSH_CHATHUB_LLM_VERIFY ?? 'pnpm run typecheck').split(',')

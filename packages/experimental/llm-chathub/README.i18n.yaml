@@ -1,0 +1,76 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/experimental/llm-chathub/README.md
+/:
+  en: 8e168529086591a7
+  zh: 10a2913b3d356b2a
+/deepseek-ai-dsh-experimental-llm-chathub:
+  en: b066f39de0171b95
+  zh: 8af708a4377d026f
+/deepseek-ai-dsh-experimental-llm-chathub/summary:
+  en: 6366537a52f4e0ae
+  zh: ce811440b67b9a6a
+/deepseek-ai-dsh-experimental-llm-chathub/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: 988e839059414d27
+/deepseek-ai-dsh-experimental-llm-chathub/use-this-package:
+  en: b8bbfc42be7e50ef
+  zh: 258d8321cdd8917f
+/deepseek-ai-dsh-experimental-llm-chathub/use-this-package/when-to-choose-it:
+  en: 1c2a4b2178e1eaad
+  zh: 48b290462e10c98f
+/deepseek-ai-dsh-experimental-llm-chathub/use-this-package/compose-it-into-a-profile:
+  en: 4a883e1c58cdef25
+  zh: 6cdd876bf09c6b7e
+/deepseek-ai-dsh-experimental-llm-chathub/use-this-package/configuration:
+  en: 57b5ffc29427f43c
+  zh: 69abfe33d163cc77
+/deepseek-ai-dsh-experimental-llm-chathub/use-this-package/one-step-through-the-adapter:
+  en: d1574894ced4b530
+  zh: 170bc42ea992c970
+/deepseek-ai-dsh-experimental-llm-chathub/use-this-package/failure-codes:
+  en: e09e99b28218b170
+  zh: 82a8887f258a3bdd
+/deepseek-ai-dsh-experimental-llm-chathub/understand-the-implementation:
+  en: 883334a46f7ec0fe
+  zh: 86b47c44adbb5245
+/deepseek-ai-dsh-experimental-llm-chathub/further-exploration:
+  en: 8b7e2c3f98325684
+  zh: daee81ae5b5389e6
+/deepseek-ai-dsh-experimental-llm-chathub/model-experience:
+  en: 215e7ba838619b7b
+  zh: a311da3843709f90
+/deepseek-ai-dsh-experimental-llm-chathub/model-experience/rendered-step-prompt:
+  en: 0265f17fe5f1295c
+  zh: 1046a6940d1c8ff7
+/deepseek-ai-dsh-experimental-llm-chathub/model-experience/rendered-step-prompt/what-the-model-sees:
+  en: e48816d09bd89dcf
+  zh: 13c70c0bbb35fc59
+/deepseek-ai-dsh-experimental-llm-chathub/model-experience/rendered-step-prompt/what-the-model-sees/protocol-block-the-reply-must-use:
+  en: a11ec7c2a36ceb6d
+  zh: f680f7d68725194e
+/deepseek-ai-dsh-experimental-llm-chathub/model-experience/rendered-step-prompt/token-effect:
+  en: 9dc2b8a557489fc4
+  zh: fa426e1c0b3d50f5
+/deepseek-ai-dsh-experimental-llm-chathub/model-experience/rendered-step-prompt/kv-cache-effect:
+  en: 4fc15c7c0689425c
+  zh: 6b8190736ffc9d62
+/deepseek-ai-dsh-experimental-llm-chathub/model-experience/correction-round:
+  en: 8a840e2259135628
+  zh: 6cee829aa25bf29b
+/deepseek-ai-dsh-experimental-llm-chathub/model-experience/correction-round/what-the-model-sees:
+  en: 41fa93412b7ffd8b
+  zh: df09c970776ecd79
+/deepseek-ai-dsh-experimental-llm-chathub/model-experience/correction-round/token-effect:
+  en: a774f8438e2eb9a0
+  zh: 9bad94f51259069d
+/deepseek-ai-dsh-experimental-llm-chathub/model-experience/correction-round/kv-cache-effect:
+  en: 22a5ebd96ce1c11a
+  zh: b1ceec91f6dc538f
+/deepseek-ai-dsh-experimental-llm-chathub/known-limitations-and-deferred-work:
+  en: 749d016c59bc1d60
+  zh: 2b05e75fa388ad20
+/deepseek-ai-dsh-experimental-llm-chathub/known-limitations-and-deferred-work/dev-note:
+  en: e67f633dc6fe7773
+  zh: 3bb0c20c93f16f98

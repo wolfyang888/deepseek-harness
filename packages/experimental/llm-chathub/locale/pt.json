@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Rota de modelo web do ChatHub",
+    "description": "Conduz um site de chat web com sessão iniciada como modelo somente de texto com chamadas de ferramentas atrás do laço do agente do harness: um prompt autossuficiente por passo e no máximo uma chamada por resposta."
+  }
+}

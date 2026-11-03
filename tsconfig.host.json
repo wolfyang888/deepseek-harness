@@ -572,6 +572,7 @@
     { "path": "./packages/experimental/hooks-codex" },
     { "path": "./packages/experimental/chathub" },
     { "path": "./packages/experimental/chathub-host" },
+    { "path": "./packages/experimental/llm-chathub" },
     { "path": "./packages/mcp/mcp-client" },
     { "path": "./packages/mcp/mcp-resources" },
     { "path": "./packages/host/directory-picker" },

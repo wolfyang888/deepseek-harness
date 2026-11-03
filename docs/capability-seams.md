@@ -315,6 +315,11 @@ flowchart LR
   svc_cordisInspect["ctx.cordisInspect<br/>Dynamic Cordis inspect registry"]
   pkg_experimental_liveshare["experimental-liveshare"]
   svc_liveshareShares["ctx.liveshareShares<br/>Owner share management Remote"]
+  pkg_experimental_chathub_host["experimental-chathub-host"]
+  svc_chatHub["ctx.chatHub<br/>ChatHub session Remote"]
+  pkg_experimental_client_ui_chathub["experimental-client-ui-chathub"]
+  svc_webChatTransport["ctx.webChatTransport<br/>ChatHub browser transport"]
+  pkg_experimental_llm_chathub["experimental-llm-chathub"]
   pkg_action_cards --> svc_actionCards
   pkg_agent --> svc_agents
   pkg_agent_default_model --> svc_agentDefaultModel
@@ -364,6 +369,8 @@ flowchart LR
   pkg_experimental_browser_use_chrome_devtools_mcp --> svc_browserUse
   pkg_experimental_browser_use_playwright_mcp --> svc_browserUse
   pkg_experimental_browser_use_stagehand_native --> svc_browserUse
+  pkg_experimental_chathub_host --> svc_chatHub
+  pkg_experimental_chathub_host --> svc_webChatTransport
   pkg_experimental_claude_code_mods --> svc_claudeCodeMods
   pkg_experimental_client_ui_cot_translation --> svc_cotTranslation
   pkg_experimental_client_ui_forge --> svc_forgePanel
@@ -503,6 +510,7 @@ flowchart LR
   svc_browserUse --> pkg_experimental_browser_use_chrome_devtools_mcp
   svc_browserUse --> pkg_experimental_browser_use_playwright_mcp
   svc_browserUse --> pkg_experimental_browser_use_stagehand_native
+  svc_chatHub --> pkg_experimental_client_ui_chathub
   svc_clientModules --> pkg_client_hmr
   svc_compaction --> pkg_compaction_basic
   svc_computerUse --> pkg_experimental_computer_use_cua_driver_mcp
@@ -630,6 +638,8 @@ flowchart LR
   svc_userQuestions --> pkg_tool_ask_user
   svc_web --> pkg_tool_web
   svc_webApp --> pkg_harness_dev_context
+  svc_webChatTransport --> pkg_experimental_client_ui_chathub
+  svc_webChatTransport --> pkg_experimental_llm_chathub
   svc_webServer --> pkg_client_connection
   svc_webServer --> pkg_client_hmr
   svc_webServer --> pkg_client_modules
@@ -758,5 +768,7 @@ flowchart LR
 | `ctx.dynamicCordisRunner` | `core` | [`cordis-host-runner`](../packages/extensions/cordis-host-runner) | - | [`tool-cordis`](../packages/extensions/tool-cordis) | - | Owns the in-memory definition registry, the vm sandbox for host halves, and the request-run round trip; browser pages reach the same service over the wire through its remote namespace. |
 | `ctx.cordisInspect` | `core` | [`cordis-host-runner`](../packages/extensions/cordis-host-runner) | - | [`tool-cordis`](../packages/extensions/tool-cordis) | - | Registers host inspect providers, mirrors the client provider manifest, and routes client queries through the dynamic Cordis transport. |
 | `ctx.liveshareShares` | `service` | [`experimental-liveshare`](../packages/experimental/liveshare) | - | - | - | Publishes the owner share-management operations as one Typert Remote namespace that the owner client face calls; every method delegates to the same operations the same-origin routes used. |
+| `ctx.chatHub` | `service` | [`experimental-chathub-host`](../packages/experimental/chathub-host) | - | [`experimental-client-ui-chathub`](../packages/experimental/client-ui-chathub) | - | Owns the provider-agnostic ChatHub records, writes the pre-switch checkpoint, compiles the incoming provider context, and serves the panel operations for state, messages, history, and timeline. |
+| `ctx.webChatTransport` | `service` | [`experimental-chathub-host`](../packages/experimental/chathub-host) | - | [`experimental-llm-chathub`](../packages/experimental/llm-chathub), [`experimental-client-ui-chathub`](../packages/experimental/client-ui-chathub) | - | Owns the Chromium profile, one page per provider or conversation key, the per-key turn queue, sign-in, and provider health; it reports stable transport tokens instead of site text. |
 
 Maintenance mode: hybrid: services are discovered from Cordis declarations; interface/implementation/consumer roles are classified in `scripts/gen-doc-graphs.ts` with a completeness guard.

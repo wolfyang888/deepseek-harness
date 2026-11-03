@@ -996,8 +996,8 @@ export interface StagehandModelConfig {
 
 ## `@deepseek-ai/dsh-experimental-chathub-host`
 
-- `inject`: `typert`
-- `source`: [`packages/experimental/chathub-host/src/types.ts:75`](../packages/experimental/chathub-host/src/types.ts)
+- `inject`: `typert` · `storageDomain`
+- `source`: [`packages/experimental/chathub-host/src/types.ts:86`](../packages/experimental/chathub-host/src/types.ts)
 
 ```ts config-catalog
 /** Service configuration after schema defaults have been applied. */
@@ -1037,6 +1037,8 @@ export type BrowserRuntimeConfig =
     executablePath?: string
     /** Run without a visible window. */
     headless: boolean
+    /** Proxy URL the launched Chrome uses for every request; omitted connects directly. */
+    proxy?: string
   }
   | {
     /** The Host attaches to a Chrome the user already runs. */
@@ -1063,6 +1065,13 @@ export interface SiteDriverConfig {
   signedOutPath?: string
   /** Key that submits the rendered prompt. */
   submitKey: string
+  /**
+   * Pattern for text that only means the site is still working, such as a
+   * "thinking" placeholder. Matches are removed before judging, so text that
+   * leaves only punctuation counts as pending while a real answer that merely
+   * mentions the phrase still counts as an answer.
+   */
+  pending?: string
   /** Stable polls required before an answer counts as finished; defaults to the service value. */
   stablePolls?: number
   /** Milliseconds between answer polls; defaults to the service value. */
@@ -1333,6 +1342,90 @@ export interface InspectorOptions {
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-experimental-inspector -->
+
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-experimental-llm-chathub -->
+<a id="deepseek-aidsh-experimental-llm-chathub"></a>
+
+## `@deepseek-ai/dsh-experimental-llm-chathub`
+
+- `inject`: `llm` · `webChatTransport`
+- `source`: [`packages/experimental/llm-chathub/src/index.ts:39`](../packages/experimental/llm-chathub/src/index.ts)
+
+```ts config-catalog
+/** Configuration as the mounting profile writes it; defaults fill the rest. */
+export type Config = Omit<ChatHubLlmConfig, 'onTurn' | 'route' | 'workspaceRoot'> & {
+  /** Provider route to register; defaults to `<site>-chathub`. */
+  route?: string
+  /** Absolute workspace root path arguments must stay under. */
+  workspaceRoot?: string
+}
+
+/**
+ * Runtime configuration of one adapter instance.
+ *
+ * One instance drives exactly one site route: two sites mean two mounts, which
+ * also keeps their page keys and browser profiles separable.
+ */
+export interface ChatHubLlmConfig {
+  /** Site provider id the host transport and drivers know, e.g. `deepseek-web`. */
+  readonly site: string
+  /** LLM provider route registered for this adapter, e.g. `deepseek-web-chathub`. */
+  readonly route: string
+  /** Model id advertised on that route; the site selects the model itself. */
+  readonly model: string
+  /** Declared context capacity in tokens, used by harness budget planning. */
+  readonly contextWindow: number
+  /** Hard upper bound of one rendered prompt, in characters. */
+  readonly maxPromptChars: number
+  /** Upper bound of one tool result inside the rendered prompt, in characters. */
+  readonly maxToolResultChars: number
+  /** Upper bound of the harness system prompt carried into the rendered prompt. */
+  readonly maxSystemChars: number
+  /** How many recent conversation entries stay verbatim; older ones collapse. */
+  readonly historyTurns: number
+  /** Tool names the model may call; anything else is a rejected answer. */
+  readonly allowTools: readonly string[]
+  /** Path segments no argument may address, e.g. `.git` or `node_modules`. */
+  readonly denyPaths: readonly string[]
+  /** Commands the prompt states as the completion check, e.g. a typecheck. */
+  readonly verifyCommands: readonly string[]
+  /**
+   * Absolute workspace root every path argument must stay under. When absent,
+   * only traversal and the deny list are enforced, because the adapter has no
+   * way to learn the root without the host's sandbox policy.
+   */
+  readonly workspaceRoot?: string
+  /** Upper bound of tool calls accepted from one reply; the protocol allows one. */
+  readonly maxToolCallsPerTurn: number
+  /** Extra rounds granted to a reply whose call block was rejected as illegal. */
+  readonly repairAttempts: number
+  /** Receives one record per completed turn; never carries prompt or answer text. */
+  readonly onTurn?: (record: ChatHubTurnObservation) => void
+}
+
+/** One turn's observable facts; no prompt, answer, or argument text. */
+export interface ChatHubTurnObservation {
+  /** Harness session the turn belongs to, when the loop stamped one. */
+  readonly sessionId?: string
+  /** Page key used for the last attempt. */
+  readonly pageKey: string
+  /** 1-based count of the attempt that produced the answer. */
+  readonly attempt: number
+  /** Rendered prompt length in characters. */
+  readonly promptChars: number
+  /** Answer length in characters. */
+  readonly answerChars: number
+  /** Tool name the reply asked for, when it asked for one. */
+  readonly toolName?: string
+  /** Rejection reason of the last reply, when it was rejected. */
+  readonly invalid?: string
+  /** Wall-clock duration of the whole turn. */
+  readonly ms: number
+  /** Conversation entries dropped to fit the prompt budget. */
+  readonly droppedEntries: number
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-experimental-llm-chathub -->
 
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-experimental-ptc-runtime-python -->
 <a id="deepseek-aidsh-experimental-ptc-runtime-python"></a>
@@ -4982,6 +5075,7 @@ export interface Config {
 | `@deepseek-ai/dsh-deliverable-file-references` | `systemPrompt` | [`packages/deliverables/deliverable-file-references/src/index.ts`](../packages/deliverables/deliverable-file-references/src/index.ts) |
 | `@deepseek-ai/dsh-experimental-auto-review` | `approval` · `llm` · `permissionPresets` · `sessions` · `tools` · `workingDirectory` | [`packages/experimental/auto-review/src/index.ts`](../packages/experimental/auto-review/src/index.ts) |
 | `@deepseek-ai/dsh-experimental-client-ui-agent-team` | — | [`packages/experimental/client-ui-agent-team/src/index.ts`](../packages/experimental/client-ui-agent-team/src/index.ts) |
+| `@deepseek-ai/dsh-experimental-client-ui-chathub` | — | [`packages/experimental/client-ui-chathub/src/index.ts`](../packages/experimental/client-ui-chathub/src/index.ts) |
 | `@deepseek-ai/dsh-experimental-client-ui-claude-code-mods` | — | [`packages/experimental/client-ui-claude-code-mods/src/index.ts`](../packages/experimental/client-ui-claude-code-mods/src/index.ts) |
 | `@deepseek-ai/dsh-experimental-client-ui-stats` | — | [`packages/experimental/client-ui-stats/src/index.ts`](../packages/experimental/client-ui-stats/src/index.ts) |
 | `@deepseek-ai/dsh-experimental-client-ui-voice-input` | — | [`packages/experimental/client-ui-voice-input/src/index.ts`](../packages/experimental/client-ui-voice-input/src/index.ts) |

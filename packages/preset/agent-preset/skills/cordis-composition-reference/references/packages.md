@@ -205,6 +205,7 @@ Every package below exports a Cordis plugin that a bundle patch can name in a Lo
 | `@deepseek-ai/dsh-experimental-chathub-host` | yes | Host-owned browser runtime and Remote for ChatHub's WebChatTransport |
 | `@deepseek-ai/dsh-experimental-claude-code-mods` | yes | Experimental bridge: load Claude Code mods (hooks modules) and run their hook chains on DeepSeek Harness extension points |
 | `@deepseek-ai/dsh-experimental-client-ui-agent-team` | no | Web Agent Teams roster, task board, and teammate navigation |
+| `@deepseek-ai/dsh-experimental-client-ui-chathub` | no | Sidebar panel for ChatHub: browser providers, checkpointed model switching, and cross-provider sessions behind the chatHub Remote |
 | `@deepseek-ai/dsh-experimental-client-ui-claude-code-mods` | no | Web band above the prompt for Claude Code mods: draws each session's mod tree and sends button presses back to the bridge |
 | `@deepseek-ai/dsh-experimental-client-ui-cot-translation` | yes | Optional machine translation of expanded reasoning, preserving original Session text |
 | `@deepseek-ai/dsh-experimental-client-ui-forge` | yes | Sidebar panel for a Session's change requests, with a worktree option for new Sessions and its Host Remote |
@@ -217,6 +218,7 @@ Every package below exports a Cordis plugin that a bundle patch can name in a Lo
 | `@deepseek-ai/dsh-experimental-forge-github` | yes | GitHub provider for the experimental forge registry, read through the GitHub CLI on the host |
 | `@deepseek-ai/dsh-experimental-forge-session` | yes | Binds change requests to the Session that created, pushed, or tracked them |
 | `@deepseek-ai/dsh-experimental-inspector` | yes | Experimental cross-realm CDP hub for Host debugging and Client Runtime inspection |
+| `@deepseek-ai/dsh-experimental-llm-chathub` | yes | LLM adapter that drives a signed-in web chat site as a text-only tool-calling model |
 | `@deepseek-ai/dsh-experimental-ptc-runtime-python` | yes | CPython subprocess implementation of the DeepSeek Harness PTC execution seam |
 | `@deepseek-ai/dsh-experimental-session-inspector` | no | Experimental virtualized Session log and live Chat group/node inspectors |
 | `@deepseek-ai/dsh-experimental-speech-to-text` | yes | Experimental speech recognition with independently selectable providers |

@@ -143,10 +143,15 @@ export const chatHubProviderState = z.object({
   lastUsedAt: z.number(),
 })
 
+/** One stored session row: the record plus the runtime state the panel restores. */
 export type ChatHubStoredSession = z.infer<typeof chatHubStoredSession>
+/** One stored message row, tagged with the session and its sequence. */
 export type ChatHubStoredMessage = z.infer<typeof chatHubStoredMessage>
+/** One stored timeline row, tagged with the session it belongs to. */
 export type ChatHubStoredTimelineEntry = z.infer<typeof chatHubStoredTimelineEntry>
+/** One stored checkpoint row, tagged with the session it belongs to. */
 export type ChatHubStoredCheckpoint = z.infer<typeof chatHubStoredCheckpoint>
+/** Per-provider row behind the panel's provider ordering. */
 export type ChatHubProviderState = z.infer<typeof chatHubProviderState>
 
 /**
@@ -228,6 +233,7 @@ export class ChatHubRepository {
   ) {}
 
   /**
+   * Build the repository over a domain the caller has already opened.
    * @param domain - The opened `chathub` domain.
    * @returns The repository over its five tables.
    */
@@ -319,6 +325,7 @@ export class ChatHubRepository {
   }
 
   /**
+   * Read one session's stored messages in the order they were appended.
    * @param sessionId - Session whose messages to read.
    * @returns The session's messages in sequence order.
    */
@@ -331,6 +338,7 @@ export class ChatHubRepository {
   }
 
   /**
+   * Read one session's recorded timeline entries.
    * @param sessionId - Session whose timeline to read.
    * @returns The session's timeline entries in recording order.
    */
@@ -341,6 +349,7 @@ export class ChatHubRepository {
   }
 
   /**
+   * Read the checkpoints written before this session's model switches.
    * @param sessionId - Session whose checkpoints to read.
    * @returns The session's checkpoints in creation order.
    */
@@ -378,6 +387,7 @@ export class ChatHubRepository {
   }
 
   /**
+   * Read the last-used stamp behind the panel's provider ordering.
    * @returns Each provider's last-used epoch millis, in table order.
    */
   providerLastUsed(): Record<string, number> {

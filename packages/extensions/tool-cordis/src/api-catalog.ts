@@ -606,6 +606,73 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'chatHub',
+    summary: 'The `chatHub` Remote service: session CRUD, one-turn sends, checkpointed model switches, and restart recovery over the `chathub` storage domain.',
+    description: 'The `chatHub` Remote service: session CRUD, one-turn sends, checkpointed model switches, and restart recovery over the `chathub` storage domain. ChatHub messages never enter Harness session logs; they live only here.',
+    methods: [
+      {
+        signature: '@Remote async state(): Promise<ChatHubPanelState>',
+        description: 'Read every provider\'s identity and panel-facing status plus the session list.',
+        parameters: [],
+        returns: 'The panel state; sessions are restored from storage on first read.',
+      },
+      {
+        signature: '@Remote async resume(): Promise<ChatHubPanelState>',
+        description: 'Restore every persisted session from storage, then read the panel state. Idempotent: adopting a stored session rewrites its runtime state.',
+        parameters: [],
+        returns: 'The restored panel state.',
+      },
+      {
+        signature: '@Remote async create(input: ChatHubCreateInput): Promise<ChatHubSessionView>',
+        description: 'Create a session bound to a registered provider and persist it.',
+        parameters: [{ name: 'input', description: 'Title, goal, and starting provider.' }],
+        returns: 'The new session\'s view.',
+        throws: ['ChatHubError with `provider-not-registered` when the provider is unknown.'],
+      },
+      {
+        signature: '@Remote async send(sessionId: string, content: string): Promise<ChatHubTurnResult>',
+        description: 'Run one turn: persist the user message, ask the current provider, persist the answer. A failed turn keeps the user message and a stable `provider: code` error and writes no assistant message.',
+        parameters: [{ name: 'sessionId', description: 'Session the turn belongs to.' }, { name: 'content', description: 'User message text.' }],
+        returns: 'The turn outcome.',
+        throws: ['ChatHubError when the session is unknown or its provider unregistered.'],
+      },
+      {
+        signature: '@Remote async switch(sessionId: string, providerId: string, reason: string): Promise<ChatHubSwitchResult>',
+        description: 'Switch the session\'s provider through the checkpointed handoff: the checkpoint, canonical context, compiled prompt, provider update, and timeline entry all happen inside the session manager before persistence. The switch leaves the session idle, awaiting its next turn.',
+        parameters: [{ name: 'sessionId', description: 'Session to switch.' }, { name: 'providerId', description: 'Target provider; must be registered and ready.' }, { name: 'reason', description: 'User-visible reason recorded in history and the checkpoint.' }],
+        returns: 'The switch outcome.',
+        throws: ['ChatHubError when the session or provider is unknown, the provider is not ready, or it already owns the session.'],
+      },
+      {
+        signature: '@Remote async history(sessionId: string): Promise<ChatMessage[]>',
+        description: 'Read one session\'s stored messages for a panel that renders the transcript.',
+        parameters: [{ name: 'sessionId', description: 'Session whose messages to read.' }],
+        returns: 'The session\'s messages in conversation order.',
+        throws: ['ChatHubError with `session-not-tracked` when the session is unknown.'],
+      },
+      {
+        signature: '@Remote async timeline(sessionId: string): Promise<SessionTimelineEntry[]>',
+        description: 'Read one session\'s recorded timeline for a panel that shows switches and status changes.',
+        parameters: [{ name: 'sessionId', description: 'Session whose timeline to read.' }],
+        returns: 'The session\'s timeline entries in recording order.',
+        throws: ['ChatHubError with `session-not-tracked` when the session is unknown.'],
+      },
+      {
+        signature: '@Remote async read(sessionId: string): Promise<ChatHubSessionView>',
+        description: 'Read one session\'s full panel view, including the goal and provider history the switch handoff preserves.',
+        parameters: [{ name: 'sessionId', description: 'Session to read.' }],
+        returns: 'The session\'s view.',
+        throws: ['ChatHubError with `session-not-tracked` when the session is unknown.'],
+      },
+      {
+        signature: '@Remote async delete(sessionId: string): Promise<void>',
+        description: 'Delete a session and every projected message, timeline, and checkpoint row.',
+        parameters: [{ name: 'sessionId', description: 'Session to delete.' }],
+        throws: ['ChatHubError with `session-not-tracked` when the session is unknown.'],
+      },
+    ],
+  },
+  {
     key: 'claudeCodeMods',
     summary: 'The bridge service: loaded mods, their hooks, and the harness listeners that raise their events.',
     description: 'The bridge service: loaded mods, their hooks, and the harness listeners that raise their events. Mods join through ClaudeCodeMods.add, which defineMod calls when a mod plugin mounts. The Remote methods let a Client draw each session\'s band above the prompt and press its buttons.',
@@ -4339,6 +4406,39 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'webChatTransport',
+    summary: 'Host-owned browser transport service.',
+    description: 'Host-owned browser transport service.\n\nProviders stay registered but unstarted until a Remote call or login needs them, so mounting this service never launches Chrome. Health probing stops at `not-started` until the user signs in, making the browser opt-in per provider.',
+    methods: [
+      {
+        signature: '@Remote async providers(): Promise<WebChatProviderView[]>',
+        description: 'Read every shipped provider\'s identity and current health.\n\nHealth probing never opens a browser, so an unstarted provider reports `not-started` and a signed-out one reports `needs-auth`.',
+        parameters: [],
+        returns: 'One view per shipped provider, in adapter order.',
+      },
+      {
+        signature: 'transportForAdapter(): WebChatTransport',
+        description: 'Hand the shared transport to a model route that does not go through the panel.\n\nThe ChatHub LLM adapter drives the same sites from the agent loop, so it must reuse this transport: a second one would mean a second browser profile, a second login, and two queues competing for one Chrome.',
+        parameters: [],
+        returns: 'The session opener, exposing no page or runtime handle.',
+      },
+      {
+        signature: '@Remote async login(providerId: string, signal: AbortSignal): Promise<ProviderHealth>',
+        description: 'Open a headful page so the user can sign in, then reopen the provider.',
+        parameters: [{ name: 'providerId', description: 'provider whose site the user signs in on.' }, { name: 'signal', description: 'Client cancellation; cancelling leaves the provider `needs-auth`.' }],
+        returns: 'The provider\'s health after sign-in, or its current health when the user cancelled or the page closed before the chat input appeared.',
+        throws: ['BrowserTransportError with `chathub-driver-missing` for an unregistered provider.'],
+      },
+      {
+        signature: '@Remote async reauthenticate(providerId: string): Promise<ProviderHealth>',
+        description: 'Close the provider\'s session and open it again under the current login state.',
+        parameters: [{ name: 'providerId', description: 'provider to reopen.' }],
+        returns: 'The provider\'s health after the reopen attempt.',
+        throws: ['BrowserTransportError with `chathub-driver-missing` for an unregistered provider.'],
+      },
+    ],
+  },
+  {
     key: 'webhookRuntime',
     summary: 'Fire-and-forget rule runtime.',
     description: 'Fire-and-forget rule runtime. Session creation is the only built-in action.',
@@ -4858,6 +4958,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
     summary: 'One authorization attempt has finished and released its key.',
     description: 'One authorization attempt has finished and released its key. Fires for every terminal outcome, failures included, so a surface watching a key it did not start (a second browser tab) learns the attempt is over.',
     parameters: [{ name: 'key', description: 'the credential record the finished attempt was authorizing.' }, { name: 'settlement', description: 'how it ended, including the `failed` case its caller sees as a thrown error.' }],
+  },
+  {
+    name: 'chathub-llm/turn',
+    mode: 'emit',
+    signature: '\'chathub-llm/turn\'(record: ChatHubTurnObservation): void',
+    summary: 'One completed ChatHub LLM turn, for budgeting and drift diagnosis.',
+    description: 'One completed ChatHub LLM turn, for budgeting and drift diagnosis.',
+    parameters: [{ name: 'record', description: 'lengths, tool name, and outcome; never prompt or answer text.' }],
   },
   {
     name: 'commands/change',
@@ -5806,6 +5914,54 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ChangeResult',
     declaration: 'export interface ChangeResult {\n    changed: boolean;\n    application: \'applied\' | \'restart-required\' | \'overridden\' | \'failed\' | \'cancelled\';\n    restartReason?: RestartReason;\n    stage: \'install\' | \'enable\' | \'remove\';\n    target: string;\n    enabled?: boolean;\n    error?: ManagementError;\n    warnings?: string[];\n    packageResult?: PackageResult;\n    bundle?: string;\n    version?: string;\n    pendingBuilds?: string[];\n    approvedBuilds?: string[];\n    registries?: Registry[];\n    failedAt?: \'registry\' | \'spec-host\';\n}',
+  },
+  {
+    name: 'ChatFinishReason',
+    declaration: 'export type ChatFinishReason = \'stop\' | \'length\' | \'tool_calls\' | \'error\';',
+  },
+  {
+    name: 'ChatHubCreateInput',
+    declaration: 'export interface ChatHubCreateInput {\n    title: string;\n    goal: string;\n    provider: string;\n}',
+  },
+  {
+    name: 'ChatHubPanelState',
+    declaration: 'export interface ChatHubPanelState {\n    providers: ChatHubProviderView[];\n    sessions: ChatHubSessionSummary[];\n}',
+  },
+  {
+    name: 'ChatHubProviderView',
+    declaration: 'export interface ChatHubProviderView {\n    id: string;\n    name: string;\n    kind: ModelKind;\n    capabilities: ModelCapabilities;\n    status: ProviderStatus;\n    failureReason?: ProviderErrorCode;\n}',
+  },
+  {
+    name: 'ChatHubSessionSummary',
+    declaration: 'export interface ChatHubSessionSummary {\n    id: string;\n    title: string;\n    createdAt: number;\n    updatedAt: number;\n    currentProvider: string;\n    status: SessionStatus;\n    lastError?: string;\n}',
+  },
+  {
+    name: 'ChatHubSessionView',
+    declaration: 'export interface ChatHubSessionView extends ChatHubSessionSummary {\n    goal: string;\n    providerHistory: string[];\n}',
+  },
+  {
+    name: 'ChatHubSwitchResult',
+    declaration: 'export interface ChatHubSwitchResult {\n    sessionId: string;\n    from: string;\n    to: string;\n    checkpointId: string;\n    status: SessionStatus;\n}',
+  },
+  {
+    name: 'ChatHubTurnObservation',
+    declaration: 'export interface ChatHubTurnObservation {\n    readonly sessionId?: string;\n    readonly pageKey: string;\n    readonly attempt: number;\n    readonly promptChars: number;\n    readonly answerChars: number;\n    readonly toolName?: string;\n    readonly invalid?: string;\n    readonly ms: number;\n    readonly droppedEntries: number;\n}',
+  },
+  {
+    name: 'ChatHubTurnResult',
+    declaration: 'export interface ChatHubTurnResult {\n    sessionId: string;\n    status: SessionStatus;\n    assistant?: ChatMessage;\n    lastError?: string;\n}',
+  },
+  {
+    name: 'ChatMessage',
+    declaration: 'export interface ChatMessage {\n    role: ChatRole;\n    content: string;\n    name?: string;\n    timestamp?: number;\n    toolCallId?: string;\n}',
+  },
+  {
+    name: 'ChatRole',
+    declaration: 'export type ChatRole = \'user\' | \'assistant\' | \'system\' | \'tool\';',
+  },
+  {
+    name: 'ChatUsage',
+    declaration: 'export interface ChatUsage {\n    promptTokens?: number;\n    completionTokens?: number;\n    totalTokens?: number;\n}',
   },
   {
     name: 'ChecksRollup',
@@ -7240,6 +7396,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface ModDefinition {\n    readonly name: string;\n    readonly version?: string;\n    readonly root?: string;\n    readonly options?: PluginOptions;\n    readonly register: ModRegister;\n}',
   },
   {
+    name: 'ModelCapabilities',
+    declaration: 'export interface ModelCapabilities {\n    reasoning: boolean;\n    coding: boolean;\n    vision: boolean;\n    webAccess: boolean;\n    streaming: boolean;\n}',
+  },
+  {
     name: 'ModelCatalog',
     declaration: 'export interface ModelCatalog {\n    readonly default: ModelSelection;\n    readonly routableProviders: readonly string[];\n    readonly groups: readonly ModelProviderGroup[];\n    readonly failures: readonly ModelCatalogFailure[];\n}',
   },
@@ -7250,6 +7410,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ModelCatalogModel',
     declaration: 'export interface ModelCatalogModel {\n    readonly id: string;\n    readonly name: string;\n    readonly description?: string;\n    readonly reasoning?: ModelReasoning;\n    readonly badge?: LlmModelBadge;\n}',
+  },
+  {
+    name: 'ModelKind',
+    declaration: 'export type ModelKind = \'web\' | \'api\' | \'local\';',
   },
   {
     name: 'ModelMessageSource',
@@ -7690,6 +7854,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'PromptSubmitResult',
     declaration: 'export type PromptSubmitResult = {\n    text: string;\n    context?: readonly string[];\n    drop?: undefined;\n} | {\n    drop: string;\n    text?: undefined;\n    context?: undefined;\n};',
+  },
+  {
+    name: 'ProviderErrorCode',
+    declaration: 'export type ProviderErrorCode = \'auth-required\' | \'provider-unavailable\' | \'rate-limited\' | \'network-error\' | \'stream-interrupted\' | \'unsupported-capability\' | \'unknown\';',
+  },
+  {
+    name: 'ProviderHealth',
+    declaration: 'export interface ProviderHealth {\n    providerId: string;\n    ready: boolean;\n    status: ProviderStatus;\n    lastCheckedAt: number;\n    failureReason?: ProviderErrorCode;\n}',
   },
   {
     name: 'ProviderRequestId',
@@ -8742,6 +8914,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SessionTelemetrySharingStatus',
     declaration: 'export type SessionTelemetrySharingStatus = \'full\' | \'feedback-only\' | \'disabled\';',
+  },
+  {
+    name: 'SessionTimelineEntry',
+    declaration: 'export interface SessionTimelineEntry {\n    id: string;\n    kind: SessionTimelineKind;\n    at: number;\n    provider: string;\n    detail: string;\n    checkpointId?: string;\n}',
+  },
+  {
+    name: 'SessionTimelineKind',
+    declaration: 'export type SessionTimelineKind = \'session-created\' | \'provider-switch\' | \'status\' | \'memory\';',
   },
   {
     name: 'SessionTitleAutomaticMode',
@@ -9914,6 +10094,30 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'WebBootRelease',
     declaration: 'export interface WebBootRelease {\n    version: string;\n    commit?: string;\n}',
+  },
+  {
+    name: 'WebChatPayload',
+    declaration: 'export interface WebChatPayload {\n    providerId: string;\n    system: string;\n    messages: ChatMessage[];\n    prompt: string;\n    meta: {\n        origin: \'semantic-context\' | \'raw-messages\';\n    };\n}',
+  },
+  {
+    name: 'WebChatProviderView',
+    declaration: 'export interface WebChatProviderView {\n    id: string;\n    name: string;\n    kind: ModelKind;\n    capabilities: ModelCapabilities;\n    health: ProviderHealth;\n}',
+  },
+  {
+    name: 'WebChatRawResponse',
+    declaration: 'export interface WebChatRawResponse {\n    content: string;\n    usage?: ChatUsage;\n    finishReason?: ChatFinishReason;\n    metadata?: Record<string, unknown>;\n}',
+  },
+  {
+    name: 'WebChatTransport',
+    declaration: 'export interface WebChatTransport {\n    open(providerId: string, sessionKey?: string): Promise<WebChatTransportSession | WebChatTransportClosed | undefined>;\n}',
+  },
+  {
+    name: 'WebChatTransportClosed',
+    declaration: 'export interface WebChatTransportClosed {\n    closed: true;\n    reason: \'not-signed-in\' | \'expired\';\n}',
+  },
+  {
+    name: 'WebChatTransportSession',
+    declaration: 'export interface WebChatTransportSession {\n    send(payload: WebChatPayload): Promise<WebChatRawResponse>;\n    stream?: (payload: WebChatPayload) => AsyncIterable<string>;\n    close(): Promise<void>;\n}',
   },
   {
     name: 'WebFetchBody',

@@ -151,6 +151,7 @@ function validatePathPattern(providerId: string, pattern: string): void {
 /**
  * Confirm that every shipped adapter has a site driver.
  * @param drivers - resolved drivers.
+ * @returns Nothing; the assertion narrows `drivers` to the shipped provider ids.
  * @throws Error when an adapter ships without a driver.
  */
 export function assertEveryAdapterHasDriver(

@@ -103,6 +103,33 @@ describe('ChatHubRepository', () => {
     }
   })
 
+  it('keeps the optional keys a stored row may carry', async () => {
+    const { ctx, repository } = await openRepository()
+    try {
+      await repository.putSession(record({
+        plan: [{ ...PLAN[0] as PlanStep, parentId: 'step_0' }],
+        checkpoints: [{ ...checkpoint('cp_1'), modelSwitchReason: 'manual' }],
+        timeline: [{ ...timelineEntry('tl_1'), kind: 'provider-switch', checkpointId: 'cp_1' }],
+      }), 'idle')
+      await repository.appendMessage('sess_20261101_001', {
+        role: 'assistant',
+        content: 'running',
+        timestamp: AT,
+        name: 'deepseek-web',
+        toolCallId: 'call_1',
+      })
+      const snapshot = await repository.getSession('sess_20261101_001')
+      expect(snapshot?.record.plan[0]?.parentId).toBe('step_0')
+      expect(snapshot?.record.checkpoints[0]?.modelSwitchReason).toBe('manual')
+      expect(snapshot?.record.timeline[0]?.checkpointId).toBe('cp_1')
+      const [answer] = await repository.listMessages('sess_20261101_001')
+      expect(answer?.name).toBe('deepseek-web')
+      expect(answer?.toolCallId).toBe('call_1')
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
   it('omits lastError and reports unknown ids', async () => {
     const { ctx, repository } = await openRepository()
     try {

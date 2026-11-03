@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "ChatHub-Webmodell-Route",
+    "description": "Treibt eine angemeldete Web-Chat-Seite als rein textuelles Modell mit Werkzeugaufrufen hinter der Agent-Schleife von harness an: ein eigenständiger Prompt pro Schritt und höchstens ein Werkzeugaufruf pro Antwort."
+  }
+}

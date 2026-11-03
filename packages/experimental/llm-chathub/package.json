@@ -1,0 +1,54 @@
+{
+  "name": "@deepseek-ai/dsh-experimental-llm-chathub",
+  "description": "LLM adapter that drives a signed-in web chat site as a text-only tool-calling model",
+  "version": "0.2.2-alpha.2",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "directory": "packages/experimental/llm-chathub"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./src/*": "./src/*",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "locale/*.json",
+    "lib/index.js",
+    "cordis.patch.yml",
+    "lib/types/**/*.d.ts"
+  ],
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml",
+      "listedByDefault": false
+    }
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "workspace:~"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "workspace:~",
+    "@deepseek-ai/dsh-experimental-chathub": "workspace:*",
+    "@deepseek-ai/dsh-experimental-chathub-host": "workspace:*",
+    "@deepseek-ai/dsh-llm": "workspace:*"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "workspace:~",
+    "@deepseek-ai/dsh-experimental-chathub": "workspace:*",
+    "@deepseek-ai/dsh-experimental-chathub-host": "workspace:*",
+    "@deepseek-ai/dsh-llm": "workspace:*"
+  }
+}

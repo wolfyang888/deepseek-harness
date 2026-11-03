@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "ChatHub Web Model Route",
+    "description": "Drive a signed-in web chat site as a text-only tool-calling model behind the harness agent loop, with one self-contained prompt per step and at most one tool call per reply."
+  }
+}

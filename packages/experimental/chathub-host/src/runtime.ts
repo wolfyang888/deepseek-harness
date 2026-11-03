@@ -32,7 +32,12 @@ interface TurnChain {
 /** Timing values the runtime needs from the service configuration. */
 type RuntimeTimings = Pick<TransportConfig, 'actionTimeoutMs' | 'pollMs'>
 
-/** Filesystem error code, or an empty string for non-filesystem rejections. */
+/**
+ * Read the stable `code` a filesystem rejection carries, so a lock held by a
+ * live process is told apart from an unreadable one.
+ * @param error - rejected value.
+ * @returns The code string, or an empty string for non-filesystem rejections.
+ */
 export function errorCode(error: unknown): string {
   if (typeof error === 'object' && error !== null && 'code' in error) {
     const code = (error as { code?: unknown }).code

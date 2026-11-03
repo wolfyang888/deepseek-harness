@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Route de modèle web ChatHub",
+    "description": "Pilote un site de chat web connecté comme un modèle textuel à appels d'outils derrière la boucle d'agent de harness : une invite autonome par étape et au plus un appel d'outil par réponse."
+  }
+}

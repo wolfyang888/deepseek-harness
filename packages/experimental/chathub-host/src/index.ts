@@ -13,6 +13,7 @@ import {
   ProviderRegistry,
   webProviderAdapters,
   type ProviderHealth,
+  type WebChatTransport,
 } from '@deepseek-ai/dsh-experimental-chathub'
 import { BrowserTransportError } from './errors.ts'
 import { assertEveryAdapterHasDriver, resolveSiteDrivers } from './drivers.ts'
@@ -196,6 +197,19 @@ export class WebChatTransportService extends TypertRemoteService {
       })
     }
     return views
+  }
+
+  /**
+   * Hand the shared transport to a model route that does not go through the
+   * panel.
+   *
+   * The ChatHub LLM adapter drives the same sites from the agent loop, so it
+   * must reuse this transport: a second one would mean a second browser
+   * profile, a second login, and two queues competing for one Chrome.
+   * @returns The session opener, exposing no page or runtime handle.
+   */
+  transportForAdapter(): WebChatTransport {
+    return this.transport
   }
 
   /**

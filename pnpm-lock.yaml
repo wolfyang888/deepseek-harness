@@ -10720,6 +10720,25 @@ importers:
         specifier: workspace:~
         version: link:../../../vendor/cordis
 
+  packages/experimental/llm-chathub:
+    dependencies:
+      '@deepseek-ai/schemastery':
+        specifier: link:../../../vendor/schemastery
+        version: link:../../../vendor/schemastery
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: workspace:~
+        version: link:../../../vendor/cordis
+      '@deepseek-ai/dsh-experimental-chathub':
+        specifier: workspace:*
+        version: link:../chathub
+      '@deepseek-ai/dsh-experimental-chathub-host':
+        specifier: workspace:*
+        version: link:../chathub-host
+      '@deepseek-ai/dsh-llm':
+        specifier: workspace:*
+        version: link:../../llm/llm
+
   packages/experimental/personalized-recommendations:
     dependencies:
       '@deepseek-ai/dsh-action-cards':

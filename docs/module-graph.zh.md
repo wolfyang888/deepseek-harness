@@ -274,8 +274,11 @@ flowchart TD
     pkg_experimental_browser_use_playwright_mcp["experimental-browser-use-playwright-mcp"]
     pkg_experimental_browser_use_runtime["experimental-browser-use-runtime"]
     pkg_experimental_browser_use_stagehand_native["experimental-browser-use-stagehand-native"]
+    pkg_experimental_chathub["experimental-chathub"]
+    pkg_experimental_chathub_host["experimental-chathub-host"]
     pkg_experimental_claude_code_mods["experimental-claude-code-mods"]
     pkg_experimental_client_ui_agent_team["experimental-client-ui-agent-team"]
+    pkg_experimental_client_ui_chathub["experimental-client-ui-chathub"]
     pkg_experimental_client_ui_claude_code_mods["experimental-client-ui-claude-code-mods"]
     pkg_experimental_client_ui_cot_translation["experimental-client-ui-cot-translation"]
     pkg_experimental_client_ui_forge["experimental-client-ui-forge"]
@@ -293,6 +296,7 @@ flowchart TD
     pkg_experimental_inspector_profile["experimental-inspector-profile"]
     pkg_experimental_liveshare["experimental-liveshare"]
     pkg_experimental_liveshare_protocol["experimental-liveshare-protocol"]
+    pkg_experimental_llm_chathub["experimental-llm-chathub"]
     pkg_experimental_plugin_market_bundle["experimental-plugin-market-bundle"]
     pkg_experimental_ptc_runtime_python["experimental-ptc-runtime-python"]
     pkg_experimental_ralph_bundle["experimental-ralph-bundle"]
@@ -504,6 +508,7 @@ flowchart TD
   pkg_credentials_local --> pkg_credentials
   pkg_credentials_local --> pkg_home_paths
   pkg_credentials_local --> pkg_launch_environment
+  pkg_experimental_chathub_host --> pkg_typert_protocol
   pkg_experimental_liveshare --> pkg_scope
   pkg_anonymous_user_id --> pkg_brand
   pkg_anonymous_user_id --> pkg_home_paths
@@ -534,6 +539,9 @@ flowchart TD
   pkg_experimental_computer_use_cua_driver_mcp --> pkg_computer_use
   pkg_experimental_forge_github --> pkg_experimental_forge
   pkg_experimental_forge_github --> pkg_subprocess
+  pkg_experimental_llm_chathub --> pkg_experimental_chathub
+  pkg_experimental_llm_chathub --> pkg_experimental_chathub_host
+  pkg_experimental_llm_chathub --> pkg_llm
   pkg_experimental_webworker_runtime --> pkg_client_connection
   pkg_experimental_webworker_runtime --> pkg_client_modules
   pkg_experimental_webworker_runtime --> pkg_host_webserver
@@ -1618,7 +1626,9 @@ flowchart TD
 | [`cua-bundle`](../packages/experimental/cua-bundle) | `experimental` | — |
 | [`experimental-agent-team-profile`](../packages/experimental/agent-team-profile) | `experimental` | — |
 | [`experimental-badge-skill-bundle`](../packages/experimental/badge-skill-bundle) | `experimental` | — |
+| [`experimental-chathub`](../packages/experimental/chathub) | `experimental` | — |
 | [`experimental-client-ui-agent-team`](../packages/experimental/client-ui-agent-team) | `experimental` | — |
+| [`experimental-client-ui-chathub`](../packages/experimental/client-ui-chathub) | `experimental` | — |
 | [`experimental-client-ui-claude-code-mods`](../packages/experimental/client-ui-claude-code-mods) | `experimental` | — |
 | [`experimental-client-ui-stats`](../packages/experimental/client-ui-stats) | `experimental` | — |
 | [`experimental-client-ui-voice-input`](../packages/experimental/client-ui-voice-input) | `experimental` | — |
@@ -1669,6 +1679,7 @@ flowchart TD
 | [`computer-use`](../packages/computer-use/computer-use) | `computer-use` | [`brand`](../packages/util/brand) |
 | [`authorization`](../packages/credentials/authorization) | `credentials` | [`credentials`](../packages/credentials/credentials), [`llm`](../packages/llm/llm) |
 | [`credentials-local`](../packages/credentials/credentials-local) | `credentials` | [`atomic-write`](../packages/util/atomic-write), [`credentials`](../packages/credentials/credentials), [`home-paths`](../packages/util/home-paths), [`launch-environment`](../packages/util/launch-environment) |
+| [`experimental-chathub-host`](../packages/experimental/chathub-host) | `experimental` | [`typert-protocol`](../packages/typert/protocol) |
 | [`experimental-liveshare`](../packages/experimental/liveshare) | `experimental` | [`scope`](../packages/core/scope) |
 | [`anonymous-user-id`](../packages/identity/anonymous-user-id) | `identity` | [`brand`](../packages/util/brand), [`home-paths`](../packages/util/home-paths) |
 | [`lsp`](../packages/lsp/lsp) | `lsp` | [`brand`](../packages/util/brand), [`llm`](../packages/llm/llm) |
@@ -1689,6 +1700,7 @@ flowchart TD
 | [`deliverable-file-references`](../packages/deliverables/deliverable-file-references) | `deliverables` | [`system-prompt`](../packages/core/system-prompt) |
 | [`experimental-computer-use-cua-driver-mcp`](../packages/experimental/computer-use-cua-driver-mcp) | `experimental` | [`computer-use`](../packages/computer-use/computer-use) |
 | [`experimental-forge-github`](../packages/experimental/forge-github) | `experimental` | [`experimental-forge`](../packages/experimental/forge), [`subprocess`](../packages/subprocess/subprocess) |
+| [`experimental-llm-chathub`](../packages/experimental/llm-chathub) | `experimental` | [`experimental-chathub`](../packages/experimental/chathub), [`experimental-chathub-host`](../packages/experimental/chathub-host), [`llm`](../packages/llm/llm) |
 | [`experimental-webworker-runtime`](../packages/experimental/webworker-runtime) | `experimental` | [`client-connection`](../packages/client/connection), [`client-modules`](../packages/client/modules), [`host-webserver`](../packages/host/webserver) |
 | [`plugin-recommendations`](../packages/experimental/plugin-recommendations) | `experimental` | [`llm`](../packages/llm/llm), [`skill`](../packages/skill/skill), [`typert-protocol`](../packages/typert/protocol) |
 | [`skill-badge`](../packages/experimental/skill-badge) | `experimental` | [`skill`](../packages/skill/skill) |

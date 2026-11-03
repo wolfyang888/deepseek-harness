@@ -40,6 +40,7 @@
       "@deepseek-ai/dsh-experimental-chathub/types": ["./packages/experimental/chathub/src/types.ts"],
       "@deepseek-ai/dsh-experimental-chathub-host": ["./packages/experimental/chathub-host/src/index.ts"],
       "@deepseek-ai/dsh-experimental-chathub-host/types": ["./packages/experimental/chathub-host/src/types.ts"],
+      "@deepseek-ai/dsh-experimental-llm-chathub": ["./packages/experimental/llm-chathub/src/index.ts"],
       "@deepseek-ai/dsh-experimental-client-ui-chathub": ["./packages/experimental/client-ui-chathub/src/index.ts"],
       "@deepseek-ai/dsh-experimental-client-ui-chathub/client": ["./packages/experimental/client-ui-chathub/src/client/index.ts"],
       "@deepseek-ai/dsh-experimental-session-search": ["./packages/experimental/session-search/src/index.ts"],

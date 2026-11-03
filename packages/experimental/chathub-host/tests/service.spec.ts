@@ -189,6 +189,16 @@ describe('WebChatTransportService', () => {
     expect(opened[0]?.pagesList[0]?.closed).toBe(false)
   })
 
+  it('hands the shared transport to a model route without opening a second browser', async () => {
+    const { service, opened } = await harness()
+    const transport = service.transportForAdapter()
+    expect(transport).toBe(service.transportForAdapter())
+    expect(sharedLauncher.launched).toHaveLength(0)
+    const session = await transport.open('deepseek-web', 'adapter:1')
+    expect(session).toBeDefined()
+    expect(opened[0]?.pagesList).toHaveLength(1)
+  })
+
   it('releases provider sessions and browser resources on context disposal', async () => {
     const { ctx, service, opened } = await harness()
     await service.reauthenticate('deepseek-web')

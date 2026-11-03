@@ -196,6 +196,7 @@ export class ChatHubController extends TypertRemoteService {
   }
 
   /**
+   * Read one session's stored messages for a panel that renders the transcript.
    * @param sessionId - Session whose messages to read.
    * @returns The session's messages in conversation order.
    * @throws ChatHubError with `session-not-tracked` when the session is unknown.
@@ -208,6 +209,7 @@ export class ChatHubController extends TypertRemoteService {
   }
 
   /**
+   * Read one session's recorded timeline for a panel that shows switches and status changes.
    * @param sessionId - Session whose timeline to read.
    * @returns The session's timeline entries in recording order.
    * @throws ChatHubError with `session-not-tracked` when the session is unknown.

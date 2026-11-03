@@ -974,6 +974,22 @@ const SERVICE_ROLES: ServiceRole[] = [
     mode: 'service',
     note: 'Publishes the owner share-management operations as one Typert Remote namespace that the owner client face calls; every method delegates to the same operations the same-origin routes used.',
   },
+  {
+    key: 'chatHub',
+    pkg: 'experimental-chathub-host',
+    title: 'ChatHub session Remote',
+    mode: 'service',
+    consumers: ['experimental-client-ui-chathub'],
+    note: 'Owns the provider-agnostic ChatHub records, writes the pre-switch checkpoint, compiles the incoming provider context, and serves the panel operations for state, messages, history, and timeline.',
+  },
+  {
+    key: 'webChatTransport',
+    pkg: 'experimental-chathub-host',
+    title: 'ChatHub browser transport',
+    mode: 'service',
+    consumers: ['experimental-llm-chathub', 'experimental-client-ui-chathub'],
+    note: 'Owns the Chromium profile, one page per provider or conversation key, the per-key turn queue, sign-in, and provider health; it reports stable transport tokens instead of site text.',
+  },
 ]
 
 function generatedHeader(title: string): string[] {

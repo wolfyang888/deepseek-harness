@@ -49,6 +49,8 @@ export function classifyPageError(error: unknown, detail: string): BrowserTransp
 }
 
 /**
+ * Distinguish a Playwright wait from a site failure, so a timeout keeps its
+ * own transport token instead of being reported as UI drift.
  * @param error - rejected value.
  * @returns Whether the rejection is a Playwright operation timeout.
  */

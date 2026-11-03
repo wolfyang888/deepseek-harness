@@ -71,7 +71,10 @@ export class PlaywrightWebChatTransport implements WebChatTransport {
     return new PlaywrightChatSession(key, page, driver, this.config, this.runtime)
   }
 
-  /** @returns Resolves when every page and browser resource is released. */
+  /**
+   * Release every page and browser resource this transport opened.
+   * @returns Resolves when every page and browser resource is released.
+   */
   async dispose(): Promise<void> {
     await this.runtime.dispose()
   }
