@@ -1,5 +1,15 @@
 调试 DSH 的思路是先确定问题属于哪一层：**配置组合 → Host 进程/插件 → 浏览器 Client → 会话数据**。按层选工具，比到处加 log 快得多。
 
+PS D:\work\code\github\deepseek-harness>
+>> node --import tsx/esm apps/cli/src/bin.ts web --patch packages/experimental/chathub-host/cordis.patch.yml --no-open
+>> $env:DSH_CHATHUB_EXECUTABLE_PATH = "C:\Users\www54\AppData\Local\Google\Chrome\Application\chrome.exe"
+>> $env:DSH_CHATHUB_HEADLESS = "false"
+>> $env:NODE_OPTIONS = ""
+>> $env:PATH = "D:\Program Files\nodejs;$env:PATH"
+>> cd D:\work\code\github\deepseek-harness
+dsh web: http://127.0.0.1:3080/?token=psMeO-mdUsxS-kKAf3c04WjaSyJjP7Z9Fil0uTqjrTw
+
+
 ## 1. 启动可调试的 Web / Host
 
 ```sh
