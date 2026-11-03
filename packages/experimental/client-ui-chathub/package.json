@@ -61,6 +61,7 @@
     "@deepseek-ai/dsh-experimental-chathub-host": "workspace:*",
     "@testing-library/react": "^16.1.0",
     "clsx": "^2.1.1",
+    "dompurify": "^3.4.16",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "@deepseek-ai/dsh-typert-protocol": "workspace:*"

@@ -8,7 +8,7 @@ import type { SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/c
 import type { WorkspaceSnapshot } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { GlobalStandardProps } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ChatMessage } from '@deepseek-ai/dsh-experimental-chathub'
-import type { ChatHubProviderView, ChatHubSessionView, ChatHubSwitchResult } from '@deepseek-ai/dsh-experimental-chathub-host/types'
+import type { ChatHubProviderView, ChatHubSessionView } from '@deepseek-ai/dsh-experimental-chathub-host/types'
 import { afterEach, expect, it, vi } from 'vitest'
 import { ChatHubPanel, type ChatHubPanelProps } from '../src/client/ChatHubPanel.tsx'
 import { ChatHubPanelIcon } from '../src/client/PanelIcon.tsx'
@@ -49,15 +49,12 @@ const PROVIDERS: ChatHubProviderView[] = [
   { id: 'deepseek-web', name: 'DeepSeek Web', kind: 'web', capabilities: CAPS, status: 'ready' },
   { id: 'gemini-web', name: 'Gemini Web', kind: 'web', capabilities: CAPS, status: 'needs-auth' },
 ]
-// A second ready provider: the only legal switch target beside the session's current model.
+// A second ready provider: the only model the open conversation can switch to.
 const READY_TARGET: ChatHubProviderView = {
   id: 'qwen-web', name: 'Qwen Web', kind: 'web', capabilities: CAPS, status: 'ready',
 }
 const SUMMARY = { id: 'sess_1', title: 'T', createdAt: 1, updatedAt: 2, currentProvider: 'deepseek-web', status: 'done' as const }
 const DETAIL: ChatHubSessionView = { ...SUMMARY, goal: 'G', providerHistory: ['deepseek-web'] }
-const SWITCHED: ChatHubSwitchResult = {
-  sessionId: 'sess_1', from: 'deepseek-web', to: 'gemini-web', checkpointId: 'cp_1', status: 'idle',
-}
 const MESSAGES: ChatMessage[] = [
   { role: 'user', content: 'hello', timestamp: 1 },
   { role: 'assistant', content: 'answer', timestamp: 2 },
@@ -75,7 +72,6 @@ function fixture(patch: (actions: Instance['actions']) => void = () => {}) {
     close: vi.fn<ChatHubPanelFace['close']>(),
     create: vi.fn<ChatHubPanelFace['create']>(async () => {}),
     send: vi.fn<ChatHubPanelFace['send']>(async () => {}),
-    switchTo: vi.fn<ChatHubPanelFace['switchTo']>(async () => undefined),
     login: vi.fn<ChatHubPanelFace['login']>(async () => {}),
     reauthenticate: vi.fn<ChatHubPanelFace['reauthenticate']>(async () => {}),
     remove: vi.fn<ChatHubPanelFace['remove']>(async () => {}),
@@ -219,6 +215,18 @@ it('renders the conversation with facts, history, messages, and a back button', 
   expect(face.remove).toHaveBeenCalledWith('sess_1')
 })
 
+it('renders an HTML answer as layout rather than literal markup', () => {
+  fixture((actions) => {
+    applyLists(actions)
+    actions.openSession(DETAIL, [
+      { role: 'assistant', content: '<table><tr><th>模型</th><th>延迟</th></tr><tr><td>豆包</td><td>1.2s</td></tr></table>' },
+    ])
+  })
+  const cell = screen.getByText('豆包')
+  expect(cell.tagName).toBe('TD')
+  expect(document.body.textContent).not.toContain('<table>')
+})
+
 it('sends the trimmed composer draft with Enter and keeps Shift+Enter for a newline', () => {
   const { face } = fixture((actions) => {
     applyLists(actions)
@@ -231,7 +239,7 @@ it('sends the trimmed composer draft with Enter and keeps Shift+Enter for a newl
   expect(face.send).not.toHaveBeenCalled()
   fireEvent.change(composer, { target: { value: ' hi ' } })
   fireEvent.keyDown(composer, { key: 'Enter' })
-  expect(face.send).toHaveBeenCalledWith('hi')
+  expect(face.send).toHaveBeenCalledWith('hi', 'deepseek-web')
   expect(composer.value).toBe('')
   fireEvent.change(composer, { target: { value: 'next' } })
   fireEvent.keyDown(composer, { key: 'Enter', shiftKey: true })
@@ -281,92 +289,91 @@ it('disables the composer and the actions while a turn is in flight', () => {
   expect(face.send).not.toHaveBeenCalled()
 })
 
-it('offers only ready providers as switch targets and switches after the confirmation', async () => {
+it('shows the conversation model in the select and sends the picked one with the turn', () => {
   const { face } = fixture((actions) => {
     applyLists(actions, [...PROVIDERS, READY_TARGET])
     actions.openSession(DETAIL, [])
   })
   const select = combobox()
-  // The current model and the needs-auth provider are never candidates.
-  expect([...select.options].map(option => option.value)).toEqual(['', 'qwen-web'])
-  // The placeholder option is a no-op and opens no confirmation.
-  fireEvent.change(select, { target: { value: '' } })
-  expect(face.switchTo).not.toHaveBeenCalled()
-  expect(screen.queryByText(zh['switch.confirm.title'])).toBeNull()
-  // Picking a candidate only opens the checkpoint summary.
+  // Every ready provider is a choice, the current model included: the select
+  // states which model answers instead of offering a separate command.
+  expect([...select.options].map(option => option.value)).toEqual(['deepseek-web', 'qwen-web'])
+  expect(select.value).toBe('deepseek-web')
+  const composer = screen.getByPlaceholderText(zh['message.placeholder']) as HTMLTextAreaElement
+  fireEvent.change(composer, { target: { value: 'hi' } })
+  // Picking a model switches nothing and asks nothing: it becomes the selection.
   fireEvent.change(select, { target: { value: 'qwen-web' } })
-  expect(face.switchTo).not.toHaveBeenCalled()
-  expect(screen.getByText(zh['switch.confirm.title'])).toBeTruthy()
-  expect(screen.getByText('从 DeepSeek Web 切换到 Qwen Web')).toBeTruthy()
-  expect(screen.getByText('本次会话的任务目标：G')).toBeTruthy()
-  expect(screen.getByText('会话状态：已完成；切换记录 0 条')).toBeTruthy()
-  expect(screen.getByText(zh['switch.confirm.note'])).toBeTruthy()
-  // Cancelling drops the confirmation and keeps the session where it is.
-  fireEvent.click(screen.getByRole('button', { name: zh['switch.confirm.cancel'] }))
-  expect(screen.queryByText(zh['switch.confirm.title'])).toBeNull()
-  expect(face.switchTo).not.toHaveBeenCalled()
-  // A confirmed switch resolving without a result leaves no note.
-  fireEvent.change(select, { target: { value: 'qwen-web' } })
-  fireEvent.click(screen.getByRole('button', { name: zh['switch.confirm.ok'] }))
-  expect(face.switchTo).toHaveBeenCalledTimes(1)
-  expect(face.switchTo).toHaveBeenCalledWith('qwen-web')
-  expect(screen.queryByText(zh['switch.confirm.title'])).toBeNull()
-  await act(async () => {})
-  expect(screen.queryByText(/已切换到/)).toBeNull()
-  // A completed switch reports the target provider and its checkpoint.
-  face.switchTo.mockResolvedValueOnce({ ...SWITCHED, to: 'qwen-web' })
-  fireEvent.change(select, { target: { value: 'qwen-web' } })
-  fireEvent.click(screen.getByRole('button', { name: zh['switch.confirm.ok'] }))
-  await act(async () => {})
-  expect(screen.getByText('已切换到 Qwen Web，检查点 cp_1')).toBeTruthy()
+  expect(select.value).toBe('qwen-web')
+  expect(face.send).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: zh['message.send'] }))
+  expect(face.send).toHaveBeenCalledWith('hi', 'qwen-web')
+  // Picking the model that already answers drops the change: the select states
+  // the conversation's own model again.
+  fireEvent.change(select, { target: { value: 'deepseek-web' } })
+  expect(select.value).toBe('deepseek-web')
+  fireEvent.change(composer, { target: { value: 'again' } })
+  fireEvent.click(screen.getByRole('button', { name: zh['message.send'] }))
+  expect(face.send).toHaveBeenLastCalledWith('again', 'deepseek-web')
 })
 
-it('disables the switch select when no ready provider can take the session over', () => {
-  fixture((actions) => {
+it('sends the current model while no other one is ready', () => {
+  const { face } = fixture((actions) => {
     applyLists(actions, [
-      { id: 'deepseek-web', name: 'DeepSeek Web', kind: 'web', capabilities: CAPS, status: 'needs-auth' },
+      { id: 'deepseek-web', name: 'DeepSeek Web', kind: 'web', capabilities: CAPS, status: 'ready' },
       { id: 'gemini-web', name: 'Gemini Web', kind: 'web', capabilities: CAPS, status: 'failed' },
     ])
     actions.openSession(DETAIL, [])
   })
   const select = combobox()
+  expect([...select.options].map(option => option.value)).toEqual(['deepseek-web'])
   expect(select.disabled).toBe(true)
-  expect([...select.options].map(option => option.value)).toEqual([''])
+  const composer = screen.getByPlaceholderText(zh['message.placeholder']) as HTMLTextAreaElement
+  fireEvent.change(composer, { target: { value: 'hi' } })
+  fireEvent.keyDown(composer, { key: 'Enter' })
+  expect(face.send).toHaveBeenCalledWith('hi', 'deepseek-web')
 })
 
-it('holds the confirmed switch while a turn is in flight', () => {
-  const { face, instance } = fixture((actions) => {
+it('holds the model select while a turn is in flight', () => {
+  const { instance } = fixture((actions) => {
     applyLists(actions, [...PROVIDERS, READY_TARGET])
     actions.openSession(DETAIL, [])
   })
-  fireEvent.change(combobox(), { target: { value: 'qwen-web' } })
-  const confirmButton = (): HTMLButtonElement =>
-    screen.getByRole('button', { name: zh['switch.confirm.ok'] }) as HTMLButtonElement
-  expect(confirmButton().disabled).toBe(false)
+  expect(combobox().disabled).toBe(false)
   act(() => { instance.actions.setBusy(true) })
-  expect(confirmButton().disabled).toBe(true)
+  expect(combobox().disabled).toBe(true)
   act(() => { instance.actions.setBusy(false) })
-  expect(confirmButton().disabled).toBe(false)
-  expect(face.switchTo).not.toHaveBeenCalled()
+  expect(combobox().disabled).toBe(false)
 })
 
-it('drops the pending switch when the open session is deleted', () => {
+it('clears the picked model and the switch report when the conversation closes', () => {
+  const { instance } = fixture((actions) => {
+    applyLists(actions, [...PROVIDERS, READY_TARGET])
+    actions.openSession(DETAIL, [])
+  })
+  fireEvent.change(combobox(), { target: { value: 'qwen-web' } })
+  act(() => { instance.actions.setSwitchNote('已切换到 Qwen Web，检查点 cp_1') })
+  expect(screen.getByText('已切换到 Qwen Web，检查点 cp_1')).toBeTruthy()
+  act(() => { instance.actions.closeSession() })
+  expect(instance.getSnapshot().pendingProvider).toBeUndefined()
+  expect(instance.getSnapshot().switchNote).toBeUndefined()
+  // Reopening the conversation starts from its stored model again.
+  act(() => { instance.actions.openSession(DETAIL, []) })
+  expect(combobox().value).toBe('deepseek-web')
+  expect(screen.queryByText(/已切换到/)).toBeNull()
+})
+
+it('drops the picked model when the open conversation is deleted', () => {
   const { face, instance } = fixture((actions) => {
     applyLists(actions, [...PROVIDERS, READY_TARGET])
     actions.openSession(DETAIL, [])
   })
   fireEvent.change(combobox(), { target: { value: 'qwen-web' } })
-  expect(screen.getByText(zh['switch.confirm.title'])).toBeTruthy()
   fireEvent.click(screen.getByRole('button', { name: zh['session.delete'] }))
   fireEvent.click(screen.getByRole('button', { name: zh['session.delete.confirm'] }))
   expect(face.remove).toHaveBeenCalledWith('sess_1')
-  // The confirmation is bound to the conversation it was opened on, so it goes with it.
-  expect(screen.queryByText(zh['switch.confirm.title'])).toBeNull()
-  // Opening another conversation afterwards does not resurrect the old target.
-  act(() => { instance.actions.forgetSession(DETAIL.id) })
-  act(() => { instance.actions.openSession(DETAIL, []) })
-  expect(screen.queryByText(zh['switch.confirm.title'])).toBeNull()
-  expect(face.switchTo).not.toHaveBeenCalled()
+  // The pick belonged to the conversation it was made on, so it goes with it.
+  act(() => { instance.actions.forgetSession('sess_1') })
+  expect(instance.getSnapshot().pendingProvider).toBeUndefined()
 })
 
 it('offers sign-in for needs-auth providers and re-authentication for failures', () => {

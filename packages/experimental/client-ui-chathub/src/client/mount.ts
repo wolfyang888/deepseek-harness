@@ -9,7 +9,7 @@ import type { RemoteResult, TypertRemoteContribution } from '@deepseek-ai/dsh-ty
 import type { BoundActions } from '@deepseek-ai/dsh-client-store'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
-import type { ChatHubCreateInput, ChatHubSwitchResult } from '@deepseek-ai/dsh-experimental-chathub-host/types'
+import type { ChatHubCreateInput } from '@deepseek-ai/dsh-experimental-chathub-host/types'
 import { ChatHubPanel } from './ChatHubPanel.tsx'
 import { ChatHubPanelIcon } from './PanelIcon.tsx'
 import { createPanelStore } from './panel-store.ts'
@@ -33,10 +33,14 @@ export interface ChatHubPanelFace {
   close: () => void
   /** Create a session and open it. */
   create: (input: ChatHubCreateInput) => Promise<void>
-  /** Send one turn in the open session. */
-  send: (content: string) => Promise<void>
-  /** Checkpoint and switch the open session to another provider; `undefined` when the switch failed. */
-  switchTo: (providerId: string) => Promise<ChatHubSwitchResult | undefined>
+  /**
+   * Send one turn in the open session.
+   * @param content - the user's message.
+   * @param providerId - model the conversation should answer with; the host
+   * checkpoints and switches the session first when it differs from the current
+   * one, so selecting a model applies at send time.
+   */
+  send: (content: string, providerId?: string) => Promise<void>
   /** Open the provider's interactive sign-in window. */
   login: (providerId: string) => Promise<void>
   /** Redo a provider's expired sign-in through the registry. */
@@ -101,36 +105,27 @@ function createFace(ctx: Context, instance: PanelInstance, t: ChatHubTranslate):
         actions.setBusy(false)
       }
     },
-    send: async (content) => {
+    send: async (content, providerId) => {
       const sessionId = selectedId()
       if (sessionId === undefined) return
       actions.setBusy(true)
       actions.setError(undefined)
-      actions.appendMessage({ role: 'user', content, timestamp: Date.now() })
       try {
+        // The selection applies here, not when it was picked: the host writes
+        // the checkpoint and hands the session over before the turn runs.
+        if (providerId !== undefined && providerId !== instance.getSnapshot().detail?.currentProvider) {
+          const switched = await expect(ctx.remote.chatHub.switch(sessionId, providerId, t('switch.reason')))
+          const name = instance.getSnapshot().providers?.find(provider => provider.id === switched.to)?.name ?? switched.to
+          await open(sessionId)
+          actions.setSwitchNote(t('switch.done', { provider: name, checkpoint: switched.checkpointId }))
+        }
+        actions.appendMessage({ role: 'user', content, timestamp: Date.now() })
         const turn = await expect(ctx.remote.chatHub.send(sessionId, content))
         if (turn.assistant !== undefined) actions.appendMessage(turn.assistant)
         if (turn.lastError !== undefined) actions.setError(turn.lastError)
         refreshQuietly()
       } catch (error) {
         fail(error, 'message.error')
-      } finally {
-        actions.setBusy(false)
-      }
-    },
-    switchTo: async (providerId) => {
-      const sessionId = selectedId()
-      if (sessionId === undefined) return
-      actions.setBusy(true)
-      actions.setError(undefined)
-      try {
-        const switched = await expect(ctx.remote.chatHub.switch(sessionId, providerId, t('switch.reason')))
-        await open(sessionId)
-        refreshQuietly()
-        return switched
-      } catch (error) {
-        fail(error)
-        return undefined
       } finally {
         actions.setBusy(false)
       }

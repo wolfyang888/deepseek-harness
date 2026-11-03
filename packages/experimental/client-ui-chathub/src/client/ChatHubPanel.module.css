@@ -173,31 +173,6 @@
   overflow-wrap: anywhere;
 }
 
-.confirm {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  box-sizing: border-box;
-  margin: 10px 0;
-  padding: 12px 14px;
-  max-width: 720px;
-  border: 1px solid var(--dsw-alias-border-l4);
-  border-radius: 12px;
-  background: var(--dsw-alias-bg-layer-2);
-}
-
-.confirmTitle {
-  margin: 0;
-  font: var(--dsw-font-s-14);
-  font-weight: 600;
-}
-
-.confirmNote {
-  margin: 0;
-  color: var(--dsw-alias-label-secondary);
-  overflow-wrap: anywhere;
-}
-
 .messages {
   display: flex;
   flex-direction: column;

@@ -13,6 +13,13 @@ export interface ChatHubState {
   detail: ChatHubSessionView | undefined
   /** Conversation of the open session, oldest first. */
   messages: readonly ChatMessage[]
+  /**
+   * Model the open conversation will use for its next turn; absent means its
+   * current provider. Selecting one switches nothing yet — the send applies it.
+   */
+  pendingProvider: string | undefined
+  /** Report of the checkpointed switch the last send applied. */
+  switchNote: string | undefined
   /** A create, send, switch, or delete is in flight. */
   busy: boolean
   /** Provider whose interactive sign-in window is open. */
@@ -27,6 +34,8 @@ export type ChatHubActions = {
   openSession: (draft: ChatHubState, detail: ChatHubSessionView, messages: readonly ChatMessage[]) => void
   closeSession: (draft: ChatHubState) => void
   appendMessage: (draft: ChatHubState, message: ChatMessage) => void
+  selectProvider: (draft: ChatHubState, providerId: string | undefined) => void
+  setSwitchNote: (draft: ChatHubState, note: string | undefined) => void
   setBusy: (draft: ChatHubState, busy: boolean) => void
   setPendingLogin: (draft: ChatHubState, providerId: string | undefined) => void
   setError: (draft: ChatHubState, error: string | undefined) => void
@@ -46,6 +55,8 @@ export function createPanelStore(): EngineStoreHandle<ChatHubState, ChatHubActio
       selectedId: undefined,
       detail: undefined,
       messages: [],
+      pendingProvider: undefined,
+      switchNote: undefined,
       busy: false,
       pendingLogin: undefined,
       error: undefined,
@@ -60,14 +71,26 @@ export function createPanelStore(): EngineStoreHandle<ChatHubState, ChatHubActio
         draft.detail = detail
         draft.messages = messages
         draft.error = undefined
+        // The stored provider is the selection from here on; an empty
+        // conversation carries no switch report.
+        draft.pendingProvider = undefined
+        draft.switchNote = undefined
       },
       closeSession: (draft) => {
         draft.selectedId = undefined
         draft.detail = undefined
         draft.messages = []
         draft.error = undefined
+        draft.pendingProvider = undefined
+        draft.switchNote = undefined
       },
       appendMessage: (draft, message) => { draft.messages = [...draft.messages, message] },
+      selectProvider: (draft, providerId) => {
+        draft.pendingProvider = providerId
+        // The report describes the switch the last send performed, not this pick.
+        draft.switchNote = undefined
+      },
+      setSwitchNote: (draft, note) => { draft.switchNote = note },
       setBusy: (draft, busy) => { draft.busy = busy },
       setPendingLogin: (draft, providerId) => { draft.pendingLogin = providerId },
       setError: (draft, error) => { draft.error = error },
@@ -77,6 +100,8 @@ export function createPanelStore(): EngineStoreHandle<ChatHubState, ChatHubActio
           draft.selectedId = undefined
           draft.detail = undefined
           draft.messages = []
+          draft.pendingProvider = undefined
+          draft.switchNote = undefined
         }
       },
     },

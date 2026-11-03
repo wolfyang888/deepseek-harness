@@ -1,14 +1,16 @@
 /**
  * The ChatHub panel: the provider selector with sign-in actions, the session
- * list with its create form, and the open conversation whose model switcher
- * summarizes the checkpoint handoff before switching. Every action goes
- * through the injected face; the component holds no Remote calls of its own.
+ * list with its create form, and the open conversation whose model selection
+ * applies at send time — the host checkpoints and switches before the turn.
+ * Every action goes through the injected face; the component holds no Remote
+ * calls of its own.
  */
 
 import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react'
-import { Button, Input, MarkdownText, StateDot, type MarkdownLabels, type StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, Input, StateDot, type MarkdownLabels, type StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsLocale, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ChatHubCreateInput, ChatHubProviderView, ProviderStatus, SessionStatus } from '@deepseek-ai/dsh-experimental-chathub-host/types'
+import { MessageBody } from './MessageBody.tsx'
 import type { ChatHubPanelFace } from './mount.ts'
 import type { createPanelStore } from './panel-store.ts'
 import type { ChatHubLocaleKey } from './locales.ts'
@@ -129,22 +131,19 @@ interface Draft {
  * @returns the panel element.
  */
 export function ChatHubPanel(props: ChatHubPanelProps): ReactNode {
-  const { t, refresh, open, close, create, send, switchTo, login, reauthenticate, remove } = props
+  const { t, refresh, open, close, create, send, login, reauthenticate, remove } = props
   const providers = props.useStore(state => state.providers)
   const sessions = props.useStore(state => state.sessions)
   const detail = props.useStore(state => state.detail)
   const messages = props.useStore(state => state.messages)
+  const pendingProvider = props.useStore(state => state.pendingProvider)
+  const switchNote = props.useStore(state => state.switchNote)
   const busy = props.useStore(state => state.busy)
   const pendingLogin = props.useStore(state => state.pendingLogin)
   const error = props.useStore(state => state.error)
   useEffect(() => { void refresh() }, [refresh])
   const [draft, setDraft] = useState<Draft>({ title: '', goal: '', provider: undefined })
   const [confirmDelete, setConfirmDelete] = useState<string | undefined>(undefined)
-  const [switchNote, setSwitchNote] = useState<string | undefined>(undefined)
-  // Target of the switch select, held until the user confirms the checkpoint.
-  // Invariant: a pending target only means something inside the open conversation,
-  // so every path that leaves it (back, delete) clears this state as well.
-  const [pendingSwitch, setPendingSwitch] = useState<string | undefined>(undefined)
   const [message, setMessage] = useState('')
   // Markdown chrome for assistant bubbles; stable across renders so the
   // streaming memo does not rebuild its parser on every state change.
@@ -158,10 +157,15 @@ export function ChatHubPanel(props: ChatHubPanelProps): ReactNode {
   const providerOptionText = (provider: ChatHubProviderView): string => provider.status === 'ready'
     ? provider.name
     : `${provider.name} · ${t(providerStatusLabel(provider.status))}`
-  // Only a ready provider can take a session over; the current one has nothing to switch to.
-  const switchTargets: readonly ChatHubProviderView[] = providers === undefined
+  // The model list offers every ready provider, the current one included: the
+  // select shows which model answers, and the turn switches only on a change.
+  const modelChoices: readonly ChatHubProviderView[] = providers === undefined
     ? []
-    : providers.filter(provider => provider.status === 'ready' && provider.id !== detail?.currentProvider)
+    : providers.filter(provider => provider.status === 'ready')
+  // Showing the conversation's model is the point of the select, so one ready
+  // provider leaves nothing to pick.
+  const canSwitchModel = modelChoices.length > 1
+  const selectedModel = pendingProvider ?? detail?.currentProvider
   const createInput = (): ChatHubCreateInput | undefined => {
     const provider = draft.provider ?? providers?.find(candidate => candidate.status === 'ready')?.id
     if (provider === undefined || draft.title.trim() === '' || draft.goal.trim() === '') return undefined
@@ -171,27 +175,13 @@ export function ChatHubPanel(props: ChatHubPanelProps): ReactNode {
     const content = message.trim()
     if (content === '' || busy) return
     setMessage('')
-    void send(content)
+    void send(content, selectedModel)
   }
   const onComposerKey = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
       submitMessage()
     }
-  }
-  const cancelSwitch = (): void => { setPendingSwitch(undefined) }
-  // The switch itself stays behind this confirmation: the host checkpoints the
-  // session before the target provider continues.
-  const confirmSwitch = (): void => {
-    const providerId = pendingSwitch
-    /* v8 ignore next -- the confirmation only renders while a target is pending */
-    if (providerId === undefined) return
-    setPendingSwitch(undefined)
-    void switchTo(providerId).then((switched) => {
-      if (switched !== undefined) {
-        setSwitchNote(t('switch.done', { provider: providerName(switched.to), checkpoint: switched.checkpointId }))
-      }
-    })
   }
 
   return (
@@ -289,7 +279,7 @@ export function ChatHubPanel(props: ChatHubPanelProps): ReactNode {
         ) : (
           <section className={css.section}>
             <div className={css.bannerRow}>
-              <Button size="sm" variant="ghost" onClick={() => { setSwitchNote(undefined); setPendingSwitch(undefined); close() }}>{t('session.back')}</Button>
+              <Button size="sm" variant="ghost" onClick={() => { close() }}>{t('session.back')}</Button>
               <StateDot state={sessionDot(detail.status)} />
               <span>{t(sessionStatusLabel(detail.status))}</span>
               <Button size="sm" variant="ghost" disabled={busy}
@@ -297,8 +287,6 @@ export function ChatHubPanel(props: ChatHubPanelProps): ReactNode {
                 onClick={() => {
                   if (confirmDelete === detail.id) {
                     setConfirmDelete(undefined)
-                    // The open conversation closes with it, so a pending switch must not outlive it.
-                    setPendingSwitch(undefined)
                     void remove(detail.id)
                   } else {
                     setConfirmDelete(detail.id)
@@ -316,34 +304,11 @@ export function ChatHubPanel(props: ChatHubPanelProps): ReactNode {
                 </span>
               )}
             </div>
-            {pendingSwitch !== undefined && (
-              <div className={css.confirm}>
-                <p className={css.confirmTitle}>{t('switch.confirm.title')}</p>
-                <span className={css.detailFact}>
-                  {t('switch.confirm.route', { from: providerName(detail.currentProvider), to: providerName(pendingSwitch) })}
-                </span>
-                <span className={css.detailFact}>{t('switch.confirm.goal', { goal: detail.goal })}</span>
-                <span className={css.detailFact}>
-                  {t('switch.confirm.state', {
-                    status: t(sessionStatusLabel(detail.status)),
-                    // The chain starts with the session's first provider, so only its tail are switches.
-                    history: String(Math.max(0, detail.providerHistory.length - 1)),
-                  })}
-                </span>
-                <p className={css.confirmNote}>{t('switch.confirm.note')}</p>
-                <div className={css.bannerRow}>
-                  <Button variant="primary" size="sm" disabled={busy} onClick={confirmSwitch}>
-                    {t('switch.confirm.ok')}
-                  </Button>
-                  <Button size="sm" onClick={cancelSwitch}>{t('switch.confirm.cancel')}</Button>
-                </div>
-              </div>
-            )}
             <div className={css.messages}>
               {messages.length === 0 ? <p className={css.messageEmpty}>{t('message.empty')}</p> : messages.map((entry, index) => (
                 <div key={index} className={`${css.message} ${entry.role === 'user' ? css.messageUser : css.messageAssistant}`}>
                   {entry.role === 'assistant'
-                    ? <MarkdownText text={entry.content} labels={markdownLabels} variant="compact" />
+                    ? <MessageBody text={entry.content} labels={markdownLabels} />
                     : entry.content}
                   {messageTime(entry.timestamp) !== '' && (
                     <span className={entry.role === 'user' ? css.messageTimeUser : css.messageTimeAssistant}>
@@ -359,18 +324,14 @@ export function ChatHubPanel(props: ChatHubPanelProps): ReactNode {
                 onChange={(event) => { setMessage(event.target.value) }}
                 onKeyDown={onComposerKey} />
               <div className={css.composerBar}>
-                <select className={css.composerSwitch} value="" aria-label={t('switch.label')}
-                  disabled={busy || switchTargets.length === 0}
+                <select className={css.composerSwitch} value={pendingProvider ?? detail.currentProvider} aria-label={t('switch.label')}
+                  disabled={busy || !canSwitchModel}
                   onChange={(event) => {
                     const providerId = event.target.value
-                    event.target.value = ''
-                    if (providerId === '') return
-                    setSwitchNote(undefined)
-                    setPendingSwitch(providerId)
+                    props.actions.selectProvider(providerId === detail.currentProvider ? undefined : providerId)
                   }}>
-                  <option value="" disabled>{t('switch.label')}</option>
-                  {switchTargets.map(provider => (
-                    <option key={provider.id} value={provider.id}>{providerOptionText(provider)}</option>
+                  {modelChoices.map(provider => (
+                    <option key={provider.id} value={provider.id}>{provider.name}</option>
                   ))}
                 </select>
                 {switchNote !== undefined && <span className={css.composerNote}>{switchNote}</span>}

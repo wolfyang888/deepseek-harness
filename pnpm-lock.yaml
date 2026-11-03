@@ -9046,6 +9046,9 @@ importers:
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
+      dompurify:
+        specifier: ^3.4.16
+        version: 3.4.16
       react:
         specifier: ^18.2.0
         version: 18.3.1

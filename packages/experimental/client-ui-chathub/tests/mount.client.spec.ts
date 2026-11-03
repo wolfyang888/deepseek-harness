@@ -229,19 +229,46 @@ it('sends turns optimistically and lands assistant answers, failures, and Remote
   }
 })
 
-it('switches the open session and leaves the error line clean, or reports the failure', async () => {
+it('switches the open session when the turn names another model, then sends', async () => {
   const b = fixture()
   try {
     const { dispose, face, instance } = await mounted(b)
-    expect(await face.switchTo('gemini-web')).toBeUndefined()
+    await face.send('alone', 'gemini-web')
     expect(b.chatHub.switch).not.toHaveBeenCalled()
     await face.open('sess_1')
-    expect(await face.switchTo('gemini-web')).toEqual(SWITCHED)
+    // The stored model answers as-is: no checkpoint, no second read.
+    await face.send('hello', 'deepseek-web')
+    expect(b.chatHub.switch).not.toHaveBeenCalled()
+    expect(b.chatHub.send).toHaveBeenCalledWith('sess_1', 'hello')
+    // A different model checkpoints and hands the session over before the turn.
+    await face.send('hello', 'gemini-web')
     expect(b.chatHub.switch).toHaveBeenCalledWith('sess_1', 'gemini-web', expect.any(String))
-    expect(instance.getSnapshot().error).toBeUndefined()
+    expect(b.chatHub.send).toHaveBeenLastCalledWith('sess_1', 'hello')
+    expect(instance.getSnapshot().switchNote).toBe('Switched to Gemini Web; checkpoint cp_1')
+    // The panel names the target from the provider list, and falls back to its
+    // id when the refreshed list no longer carries it.
+    b.chatHub.state.mockResolvedValueOnce({ ok: true, value: { providers: [], sessions: [SUMMARY] } })
+    await face.refresh()
+    await face.send('hello', 'gemini-web')
+    expect(instance.getSnapshot().switchNote).toBe('Switched to gemini-web; checkpoint cp_1')
+    await face.send('hello')
+    expect(b.chatHub.switch).toHaveBeenCalledTimes(2)
+    await dispose()
+    expect(b.unmount).toHaveBeenCalledOnce()
+  } finally {
+    await b.ctx.fiber.dispose()
+  }
+})
+
+it('reports a failed switch instead of sending the turn', async () => {
+  const b = fixture()
+  try {
+    const { dispose, face, instance } = await mounted(b)
+    await face.open('sess_1')
     b.chatHub.switch.mockResolvedValueOnce(failure('not ready'))
-    expect(await face.switchTo('gemini-web')).toBeUndefined()
-    expect(instance.getSnapshot().error).toBe('not ready')
+    await face.send('hello', 'gemini-web')
+    expect(b.chatHub.send).not.toHaveBeenCalled()
+    expect(instance.getSnapshot().error).toBe('Send failed: not ready')
     expect(instance.getSnapshot().busy).toBe(false)
     await dispose()
     expect(b.unmount).toHaveBeenCalledOnce()
