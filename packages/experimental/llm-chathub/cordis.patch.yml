@@ -18,7 +18,8 @@
 #   DSH_CHATHUB_LLM_ROOT     absolute workspace root path arguments must stay
 #                            under (default: the host process's cwd)
 #   DSH_CHATHUB_LLM_TOOLS    comma-separated tool whitelist
-#                            (default `read,grep,glob,edit,write`)
+#                            (default `read,grep,glob,edit,write`; add `bash` to
+#                            let the model run the verify command itself)
 #   DSH_CHATHUB_LLM_VERIFY   comma-separated verification commands stated in the
 #                            prompt's project block (default `pnpm run typecheck`)
 #   DSH_CHATHUB_LLM_AUXILIARY  `refuse` (default) or `allow`: whether auxiliary

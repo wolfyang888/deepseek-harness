@@ -88,6 +88,20 @@ describe('renderRequest', () => {
     expect(prompt).toContain('verify: none configured')
   })
 
+  it('marks a verify command unrun without a shell tool', () => {
+    const { prompt } = renderRequest(request(user('go')), POLICY)
+    expect(prompt).toContain('verify: pnpm run typecheck (report it; no shell tool is available here)')
+  })
+
+  it('states a verify command plainly when the shell tool is whitelisted', () => {
+    const { prompt } = renderRequest(request(user('go')), {
+      ...POLICY,
+      tools: [...POLICY.tools, { name: 'bash', description: 'Run a command', parameters: { type: 'object' } }],
+    })
+    expect(prompt).toContain('verify: pnpm run typecheck\n')
+    expect(prompt).not.toContain('no shell tool is available')
+  })
+
   it('renders a tool result under the name of the call it answers', () => {
     const callId = ToolCallId('call-1')
     const { prompt } = renderRequest(request(
