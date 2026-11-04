@@ -111,9 +111,10 @@ export class PlaywrightChatSession implements WebChatTransportSession {
   async send(payload: WebChatPayload): Promise<WebChatRawResponse> {
     const release = await this.gate.acquireTurn(this.key, this.config.maxQueuedTurns)
     try {
+      const baseline = await this.answerNow(payload.prompt)
       await this.page.submit(payload.prompt, this.driver, this.config.typeDelayMs)
       const collected: TurnContent = { content: '' }
-      await drain(this.streamUntilComplete(payload.prompt, collected))
+      await drain(this.streamUntilComplete(payload.prompt, collected, baseline))
       return { content: collected.content, finishReason: 'stop' }
     } finally {
       release()
@@ -128,8 +129,9 @@ export class PlaywrightChatSession implements WebChatTransportSession {
   async *stream(payload: WebChatPayload): AsyncIterable<string> {
     const release = await this.gate.acquireTurn(this.key, this.config.maxQueuedTurns)
     try {
+      const baseline = await this.answerNow(payload.prompt)
       await this.page.submit(payload.prompt, this.driver, this.config.typeDelayMs)
-      yield* this.streamUntilComplete(payload.prompt, { content: '' })
+      yield* this.streamUntilComplete(payload.prompt, { content: '' }, baseline)
     } finally {
       release()
     }
@@ -142,15 +144,26 @@ export class PlaywrightChatSession implements WebChatTransportSession {
 
   /**
    * Poll the answer container until its text stabilizes, yielding deltas.
+   *
+   * A site's answer selector is a class name, not a promise: a landing page,
+   * a recommendation card, or the previous turn can occupy the same node, and
+   * reading it as this turn's answer ends the loop on text the model never
+   * wrote. Whatever the container held before the prompt was submitted is
+   * therefore not an answer, and the turn waits until it changes.
    * @param prompt - rendered prompt whose echo is not an answer.
    * @param collected - receives the final stable text when the turn completes.
+   * @param baseline - container text read just before submission.
    * @returns Text deltas as the answer grows.
    */
-  private async *streamUntilComplete(prompt: string, collected: TurnContent): AsyncIterable<string> {
+  private async *streamUntilComplete(
+    prompt: string,
+    collected: TurnContent,
+    baseline: string,
+  ): AsyncIterable<string> {
     const pollMs = this.driver.pollMs ?? this.config.pollMs
     const stablePolls = this.driver.stablePolls ?? this.config.stablePolls
     const deadline = Date.now() + this.config.turnTimeoutMs
-    let lastText = ''
+    let lastText = baseline
     let stable = 0
     let emitted = ''
     while (true) {
@@ -167,6 +180,11 @@ export class PlaywrightChatSession implements WebChatTransportSession {
         await this.page.answerHtml(this.driver.answer, this.driver.answerBody),
         prompt,
       )
+      // Unchanged means the site has not started this turn's answer yet.
+      if (current === baseline) {
+        stable = 0
+        continue
+      }
       if (current.length > 0 && current === lastText) stable += 1
       else stable = 0
       lastText = current
@@ -184,6 +202,15 @@ export class PlaywrightChatSession implements WebChatTransportSession {
         yield current
       }
     }
+  }
+
+  /**
+   * Read the answer container as it stands right now.
+   * @param prompt - rendered prompt whose echo is not an answer.
+   * @returns The container's current text, or an empty string when unreadable.
+   */
+  private async answerNow(prompt: string): Promise<string> {
+    return this.answerFrom(await this.page.answerHtml(this.driver.answer, this.driver.answerBody), prompt)
   }
 
   /**

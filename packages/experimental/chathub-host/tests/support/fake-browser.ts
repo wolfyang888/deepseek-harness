@@ -95,6 +95,8 @@ export class FakePage implements BrowserPageLike {
   typed: string[] = []
   keys: string[] = []
   clicks: { x: number; y: number }[] = []
+  /** Submit presses after which the composer empties, as a real site does; 0 keeps the text. */
+  clearAfterPresses = 0
   closeCount = 0
   errors: Partial<Record<FakePageOperation, unknown>> = {}
   mouse = {
@@ -115,6 +117,7 @@ export class FakePage implements BrowserPageLike {
     press: async (key: string): Promise<void> => {
       this.raise('press')
       this.keys.push(key)
+      if (this.clearAfterPresses > 0 && this.keys.length >= this.clearAfterPresses) this.texts = {}
     },
   }
 
