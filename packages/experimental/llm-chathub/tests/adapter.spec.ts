@@ -12,6 +12,13 @@ import type {
   ChatHubTurnObservation,
 } from '../src/types.ts'
 
+declare module '@deepseek-ai/dsh-llm/types' {
+  interface LlmRequestPurposeMap {
+    'session-title': true
+    'compaction': true
+  }
+}
+
 /** One scripted page: records what it was asked and what it answered. */
 class FakeSession implements ChatHubTransportSession {
   closed = false
@@ -102,6 +109,7 @@ const BASE: ChatHubLlmConfig = {
   workspaceRoot: '/work/repo',
   maxToolCallsPerTurn: 1,
   repairAttempts: 1,
+  auxiliary: 'refuse',
 }
 
 /**
@@ -385,6 +393,33 @@ describe('ChatHubLlmAdapter refusals', () => {
       .rejects.toMatchObject({ code: 'ABORTED' })
     // The page is still released on the way out.
     expect(source.released).toEqual(['deepseek-web:1'])
+  })
+})
+
+describe('ChatHubLlmAdapter auxiliary requests', () => {
+  it('refuses a session title before a page is opened', async () => {
+    const source = new FakeSource()
+    await expect(collect(adapter(source).stream({ ...request(), purpose: 'session-title' })))
+      .rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    // No page, no prompt: the refusal costs nothing on the user's account.
+    expect(source.keys).toEqual([])
+    expect(source.prompts).toEqual([])
+  })
+
+  it('refuses a compaction summary the same way', async () => {
+    const source = new FakeSource()
+    await expect(collect(adapter(source).stream({ ...request(), purpose: 'compaction' })))
+      .rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    expect(source.keys).toEqual([])
+  })
+
+  it('serves an auxiliary request when the mount allows it', async () => {
+    const source = new FakeSource()
+    source.answers = ['Fix the build']
+    const chunks = await collect(adapter(source, { auxiliary: 'allow' })
+      .stream({ ...request(), purpose: 'session-title' }))
+    expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'stop' } })
+    expect(source.keys).toEqual(['deepseek-web:1'])
   })
 })
 

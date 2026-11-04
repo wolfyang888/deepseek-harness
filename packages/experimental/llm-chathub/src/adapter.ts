@@ -110,6 +110,7 @@ export class ChatHubLlmAdapter extends LlmAdapter {
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     const started = Date.now()
     const site = this.siteOf(options.provider)
+    this.assertConversational(options, site)
     const rendered = this.render(options)
     const parsed = await this.askUntilLegal(rendered.prompt, site, options.signal)
     const call = parsed.call
@@ -135,6 +136,28 @@ export class ChatHubLlmAdapter extends LlmAdapter {
       return
     }
     yield* this.toolCallChunks(call)
+  }
+
+  /**
+   * Refuse an auxiliary request before a browser turn is spent on it.
+   *
+   * A titled request is not conversation: it arrives with no tools and a
+   * prompt written for a fast text model, so answering it burns a page and
+   * returns text the caller cannot use — and, on a site that reads the newest
+   * message as the task, it is what made a coding session look like it was
+   * summarising titles. The caller fails over to its configured API route.
+   * @param options - the assembled request.
+   * @param site - site provider the route selected.
+   * @throws LlmError with `INVALID_REQUEST` for a refused auxiliary purpose.
+   */
+  private assertConversational(options: GenerateOptions, site: string): void {
+    const purpose = options.purpose
+    if (purpose === undefined || this.config.auxiliary === 'allow') return
+    throw new LlmError(
+      `chathub-llm: ${site} does not serve auxiliary "${purpose}" requests; `
+      + "point that caller at an API route, or mount with auxiliary: 'allow'",
+      'INVALID_REQUEST',
+    )
   }
 
   /**

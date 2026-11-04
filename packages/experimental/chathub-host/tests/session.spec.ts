@@ -33,6 +33,8 @@ class ScriptedPage implements TurnPage {
   urlValue = 'https://fake.test/chat'
   submitted: string[] = []
   reads = 0
+  /** Selectors each poll asked for, so a driver's body scope is observable. */
+  readonly asked: { selector: string; body: string | undefined }[] = []
   submitError: unknown
   /** Answers returned by successive reads; the last answer repeats once exhausted. */
   answers: string[] = []
@@ -47,8 +49,13 @@ class ScriptedPage implements TurnPage {
     return this.urlValue
   }
 
-  /** @returns The next scripted answer markup. */
-  async answerHtml(): Promise<string> {
+  /**
+   * @param selector - answer container selector.
+   * @param body - reply-body selector the driver declared.
+   * @returns The next scripted answer markup.
+   */
+  async answerHtml(selector: string, body?: string): Promise<string> {
+    this.asked.push({ selector, body })
     const index = Math.min(this.reads, this.answers.length - 1)
     this.reads += 1
     return this.answers[index] ?? ''
@@ -110,6 +117,14 @@ it('does not treat the prompt echo or an empty container as an answer', async ()
   const { session: chat, page } = session()
   page.answers = ['', '<p>hello</p>', '<p>hello answer</p>', '<p>hello answer</p>', '<p>hello answer</p>']
   await expect(chat.send(payload())).resolves.toMatchObject({ content: '<p>hello answer</p>' })
+})
+
+it('reads the answer through the driver body scope', async () => {
+  const driver: SiteDriverConfig = { ...DRIVER, answerBody: '.qk-markdown' }
+  const { session: chat, page } = session(new ScriptedPage(), new FakeGate(), driver)
+  page.answers = ['<p>答案</p>', '<p>答案</p>']
+  await chat.send(payload())
+  expect(page.asked[0]).toEqual({ selector: '.answer', body: '.qk-markdown' })
 })
 
 it('filters an echo whose whitespace the site rendered differently', async () => {

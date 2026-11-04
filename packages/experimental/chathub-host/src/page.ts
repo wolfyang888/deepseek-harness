@@ -2,7 +2,7 @@
 
 import { setTimeout as sleep } from 'node:timers/promises'
 import { BrowserTransportError, classifyPageError, isOperationTimeout } from './errors.ts'
-import type { BrowserPageLike, ChatPageHandle, SiteDriverConfig } from './types.ts'
+import type { BrowserInputLike, BrowserPageLike, ChatPageHandle, SiteDriverConfig } from './types.ts'
 
 /**
  * One browser page bound to a key and its operation timeout.
@@ -90,18 +90,35 @@ export class PlaywrightPage implements ChatPageHandle {
    * `innerText` flattens all of them into plain lines. The panel sanitizes and
    * lays the markup out itself.
    * @param selector - answer container selector.
+   * @param body - optional reply-body selector; when it matches inside the last
+   *   container, its last match is read instead of the container, which keeps
+   *   the site's thinking and tool cards out of the answer.
    * @returns Trimmed answer markup, or an empty string when the container does not exist yet.
    */
-  async answerHtml(selector: string): Promise<string> {
+  async answerHtml(selector: string, body?: string): Promise<string> {
     try {
       const locator = this.page.locator(selector)
       const count = await locator.count()
       if (count === 0) return ''
-      return (await locator.nth(count - 1).innerHTML({ timeout: this.actionTimeoutMs })).trim()
+      const container = locator.nth(count - 1)
+      const target = body === undefined ? container : await this.bodyOf(container, body)
+      return (await target.innerHTML({ timeout: this.actionTimeoutMs })).trim()
     } catch (error) {
       if (isOperationTimeout(error)) return ''
       throw classifyPageError(error, `${this.key}: reading answer "${selector}"`)
     }
+  }
+
+  /**
+   * Resolve the reply body inside one answer container.
+   * @param container - the newest answer container.
+   * @param body - reply-body selector.
+   * @returns The last matching descendant, or the container when none matches.
+   */
+  private async bodyOf(container: BrowserInputLike, body: string): Promise<BrowserInputLike> {
+    const inner = container.locator(body)
+    const count = await inner.count()
+    return count === 0 ? container : inner.nth(count - 1)
   }
 
   /**

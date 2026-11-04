@@ -53,6 +53,14 @@ class FakeLocator implements BrowserInputLike {
     return this
   }
 
+  /**
+   * @param selector - selector resolved inside this element.
+   * @returns A locator keyed by the `parent >> child` pair the fake maps use.
+   */
+  locator(selector: string): BrowserInputLike {
+    return new FakeLocator(this.page, `${this.selector} >> ${selector}`)
+  }
+
   /** @returns Whether the selector is in the visible set. */
   async isVisible(): Promise<boolean> {
     this.page.raise('isVisible')

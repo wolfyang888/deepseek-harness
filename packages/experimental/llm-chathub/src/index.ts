@@ -8,12 +8,14 @@
  * @module @deepseek-ai/dsh-experimental-llm-chathub
  */
 
+import { isAbsolute } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-experimental-chathub-host'
 import z from '@deepseek-ai/schemastery'
 import { ChatHubLlmAdapter } from './adapter.ts'
 import {
   DEFAULT_CHATHUB_LLM_CONFIG,
+  type ChatHubAuxiliaryPolicy,
   type ChatHubLlmConfig,
   type ChatHubTurnObservation,
 } from './types.ts'
@@ -36,13 +38,15 @@ declare module '@deepseek-ai/cordis' {
 }
 
 /** Configuration as the mounting profile writes it; defaults fill the rest. */
-export type Config = Omit<ChatHubLlmConfig, 'onTurn' | 'route' | 'routes' | 'sites' | 'workspaceRoot'> & {
+export type Config = Omit<ChatHubLlmConfig, 'onTurn' | 'route' | 'routes' | 'sites' | 'workspaceRoot' | 'auxiliary'> & {
   /** Provider route to register; defaults to `<site>-chathub` and forces one site. */
   route?: string
   /** Every site to mount; defaults to `[site]`. Ignored when `route` is set. */
   sites?: readonly string[]
   /** Absolute workspace root path arguments must stay under. */
   workspaceRoot?: string
+  /** Whether auxiliary calls may spend a site turn; defaults to `refuse`. */
+  auxiliary?: ChatHubAuxiliaryPolicy
 }
 
 /** Schema of the mounting row; every field is optional except the site. */
@@ -62,6 +66,7 @@ export const Config = z.object({
   workspaceRoot: z.string(),
   maxToolCallsPerTurn: z.natural().min(1).default(DEFAULT_CHATHUB_LLM_CONFIG.maxToolCallsPerTurn),
   repairAttempts: z.natural().default(DEFAULT_CHATHUB_LLM_CONFIG.repairAttempts),
+  auxiliary: z.union([z.const('refuse'), z.const('allow')]).default(DEFAULT_CHATHUB_LLM_CONFIG.auxiliary),
 })
 
 export const name = 'llm-chathub'
@@ -99,11 +104,32 @@ export function resolveConfig(
     verifyCommands: config.verifyCommands,
     // The host process runs inside the workspace, so its cwd is the root the
     // path guard compares against unless the row states another one.
-    workspaceRoot: config.workspaceRoot ?? process.cwd(),
+    workspaceRoot: workspaceRootOf(config.workspaceRoot),
     maxToolCallsPerTurn: config.maxToolCallsPerTurn,
     repairAttempts: config.repairAttempts,
+    auxiliary: config.auxiliary ?? DEFAULT_CHATHUB_LLM_CONFIG.auxiliary,
     onTurn: emit,
   }
+}
+
+/**
+ * Resolve the root the path guard compares against.
+ *
+ * A relative root would make the guard silently accept nothing (or everything,
+ * depending on how the call site joins it), so a stated root must be absolute;
+ * the trailing separator is dropped so `/repo/` and `/repo` compare equal.
+ * @param root - root the mounting row states, if any.
+ * @returns An absolute path without a trailing separator.
+ * @throws Error when the stated root is not absolute.
+ */
+function workspaceRootOf(root: string | undefined): string {
+  const stated = root?.trim()
+  const absolute = stated === undefined || stated.length === 0 ? process.cwd() : stated
+  if (!isAbsolute(absolute)) {
+    throw new Error(`llm-chathub: workspaceRoot "${absolute}" must be an absolute path`)
+  }
+  const trimmed = absolute.replace(/[\\/]+$/u, '')
+  return trimmed.length === 0 ? absolute : trimmed
 }
 
 /**

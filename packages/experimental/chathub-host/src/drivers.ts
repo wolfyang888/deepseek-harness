@@ -40,6 +40,8 @@ export const DEFAULT_SITE_DRIVERS: Readonly<SiteDrivers> = {
     // `receive_message` markers are kept only as legacy fallbacks, so the
     // answer probe unions every receive-side candidate.
     answer: '[data-testid="receive_message"], [class*="bg-g-receive-msg-bubble"], .flow-markdown-body, .md-box-root',
+    // A receive bubble also holds the thinking strip; the body is the reply.
+    answerBody: '.flow-markdown-body, .md-box-root',
     pending: '思考中|正在思考|正在生成|生成中',
     signedOutPath: SIGNED_OUT_PATH,
     submitKey: 'Enter',
@@ -51,6 +53,11 @@ export const DEFAULT_SITE_DRIVERS: Readonly<SiteDrivers> = {
     // new qianwen.com UI; the hashed answerItem classes are kept as the
     // legacy tongyi.aliyun.com fallback.
     answer: '[class*="chat-answers-card-wrap"], [class*="answerItem"]',
+    // That wrap is a whole card column: the thinking card ("问题分析中" with its
+    // own reasoning text) and the workflow/tool card sit inside it next to the
+    // reply, so reading the wrap returned all three glued together. The reply
+    // itself is the markdown body, and it is the last one in the card.
+    answerBody: '.qk-markdown, .markdown-body',
     // The answer card shows "问题分析中" while the model works, then swaps in
     // the reply; accepts both the bare status and its timed variants.
     pending: '问题分析中|正在分析|分析中|思考中|正在思考|生成中|正在生成|\\d+\\s*(?:s|秒)',
@@ -65,6 +72,8 @@ export const DEFAULT_SITE_DRIVERS: Readonly<SiteDrivers> = {
     // Answers render in a markdown body inside the answer block; the hashed
     // answer-item containers are the fallback when the class names churn.
     answer: '.markdown-body, [class*="answer-content"], [class*="answerItem"]',
+    // The card wraps a "思考中" strip and the reply; only the body is the answer.
+    answerBody: '.markdown-body',
     pending: '思考中|正在思考|生成中|正在生成|输出中|停止生成',
     signedOutPath: SIGNED_OUT_PATH,
     submitKey: 'Enter',
@@ -109,6 +118,9 @@ export function validateSiteDriver(providerId: string, driver: SiteDriverConfig)
     if (driver[field].trim().length === 0) {
       throw new Error(`WebChatTransport: driver "${providerId}" has an empty ${field}`)
     }
+  }
+  if (driver.answerBody !== undefined && driver.answerBody.trim().length === 0) {
+    throw new Error(`WebChatTransport: driver "${providerId}" has an empty answerBody`)
   }
   if (driver.pollMs !== undefined && driver.pollMs < 1) {
     throw new Error(`WebChatTransport: driver "${providerId}" has a pollMs below 1`)

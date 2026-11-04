@@ -87,6 +87,21 @@ it('treats a missing answer container as no answer', async () => {
   await expect(wrapper.answerHtml(DRIVER.answer)).resolves.toBe('')
 })
 
+it('reads the reply body inside the last answer container', async () => {
+  const { wrapper, fake } = page()
+  fake.counts[DRIVER.answer] = 1
+  fake.counts[`${DRIVER.answer} >> .body`] = 2
+  fake.texts[`${DRIVER.answer} >> .body`] = '  <p>reply</p>  '
+  await expect(wrapper.answerHtml(DRIVER.answer, '.body')).resolves.toBe('<p>reply</p>')
+})
+
+it('falls back to the container when the body selector matches nothing', async () => {
+  const { wrapper, fake } = page()
+  fake.counts[DRIVER.answer] = 1
+  fake.texts[DRIVER.answer] = '<p>whole card</p>'
+  await expect(wrapper.answerHtml(DRIVER.answer, '.body')).resolves.toBe('<p>whole card</p>')
+})
+
 it('treats an answer read timeout as no answer yet', async () => {
   const { wrapper, fake } = page()
   fake.counts[DRIVER.answer] = 1

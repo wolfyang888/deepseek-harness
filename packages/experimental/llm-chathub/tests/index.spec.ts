@@ -105,6 +105,21 @@ describe('resolveConfig', () => {
     expect(resolved.routes).toEqual(['deepseek-web-chathub'])
     expect(resolved.workspaceRoot).toBe('/work/repo')
   })
+
+  it('refuses auxiliary calls unless the row allows them', () => {
+    expect(resolveConfig(ROW, () => {}).auxiliary).toBe('refuse')
+    expect(resolveConfig({ ...ROW, auxiliary: 'allow' }, () => {}).auxiliary).toBe('allow')
+  })
+
+  it('drops a trailing separator from the stated root', () => {
+    const resolved = resolveConfig({ ...ROW, workspaceRoot: '/work/repo/' }, () => {})
+    expect(resolved.workspaceRoot).toBe('/work/repo')
+  })
+
+  it('rejects a relative root instead of guessing one', () => {
+    expect(() => resolveConfig({ ...ROW, workspaceRoot: 'repo' }, () => {}))
+      .toThrow(/workspaceRoot "repo" must be an absolute path/u)
+  })
 })
 
 describe('apply', () => {
