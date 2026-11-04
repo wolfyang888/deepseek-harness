@@ -32,6 +32,9 @@ export interface RenderedPrompt {
   readonly droppedEntries: number
 }
 
+/** Tool name that stands for "run a command"; only it can execute `verify`. */
+const SHELL_TOOL = 'bash'
+
 /** Fixed role text; the protocol is short so a site never rewrites it. */
 const ROLE_TEXT = [
   'You operate a coding task one step at a time through tools.',
@@ -170,14 +173,21 @@ function toolSection(policy: ChatHubRenderPolicy): string {
 
 /**
  * Render the project block: root and the commands that decide completion.
+ *
+ * A verification command is only stated as the completion check when the model
+ * can actually run it: the prompt must not ask for a shell round the whitelist
+ * has already closed, or the model answers "done" without ever checking.
  * @param policy - render policy.
  * @returns Project lines.
  */
 function projectSection(policy: ChatHubRenderPolicy): string {
+  const canRunCommands = policy.tools.some(tool => tool.name === SHELL_TOOL)
   return [
     `root: ${policy.workspaceRoot ?? '(unknown; use relative paths)'}`,
     policy.verifyCommands.length === 0
       ? 'verify: none configured'
-      : `verify: ${policy.verifyCommands.join(' && ')}`,
+      : canRunCommands
+        ? `verify: ${policy.verifyCommands.join(' && ')}`
+        : `verify: ${policy.verifyCommands.join(' && ')} (report it; no shell tool is available here)`,
   ].join('\n')
 }
