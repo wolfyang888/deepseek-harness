@@ -78,6 +78,8 @@ describe('resolveConfig', () => {
     const records: ChatHubTurnObservation[] = []
     const resolved = resolveConfig(ROW, record => records.push(record))
     expect(resolved.route).toBe('deepseek-web-chathub')
+    expect(resolved.sites).toEqual(['deepseek-web'])
+    expect(resolved.routes).toEqual(['deepseek-web-chathub'])
     expect(resolved.workspaceRoot).toBe(process.cwd())
     expect(resolved.site).toBe('deepseek-web')
     expect(resolved.maxToolCallsPerTurn).toBe(1)
@@ -85,9 +87,22 @@ describe('resolveConfig', () => {
     expect(records).toHaveLength(1)
   })
 
+  it('mounts one route per listed site', () => {
+    const resolved = resolveConfig(
+      { ...ROW, sites: ['deepseek-web', 'qianwen-web'] },
+      () => {},
+    )
+    expect(resolved.sites).toEqual(['deepseek-web', 'qianwen-web'])
+    expect(resolved.routes).toEqual(['deepseek-web-chathub', 'qianwen-web-chathub'])
+    expect(resolved.route).toBe('deepseek-web-chathub')
+  })
+
   it('keeps an explicit route and root', () => {
     const resolved = resolveConfig({ ...ROW, route: 'web-gpt', workspaceRoot: '/work/repo' }, () => {})
     expect(resolved.route).toBe('web-gpt')
+    // An explicit route pins the mount to the default site.
+    expect(resolved.sites).toEqual(['deepseek-web'])
+    expect(resolved.routes).toEqual(['deepseek-web-chathub'])
     expect(resolved.workspaceRoot).toBe('/work/repo')
   })
 })
@@ -96,6 +111,25 @@ describe('apply', () => {
   it('registers one route on the site default', () => {
     const mounted = mount(() => Promise.resolve(undefined))
     expect(mounted.providers).toEqual(['deepseek-web-chathub'])
+  })
+
+  it('registers one route per listed site', () => {
+    const ctx = new Context()
+    const registered: string[][] = []
+    ctx.provide('llm', {
+      registerAdapter: (providers: string[]) => {
+        registered.push(providers)
+        const handle = (() => {}) as (() => void) & { replace: () => void }
+        handle.replace = () => {}
+        return handle
+      },
+    } as never)
+    ctx.provide('webChatTransport', {
+      transportForAdapter: () => ({ open: () => Promise.resolve(undefined) }),
+      providers: () => Promise.resolve([]),
+    } as never)
+    apply(ctx, { ...ROW, sites: ['deepseek-web', 'qianwen-web'] })
+    expect(registered[0]).toEqual(['deepseek-web-chathub', 'qianwen-web-chathub'])
   })
 
   it('drives the transport the host lent it and reports the turn', async () => {

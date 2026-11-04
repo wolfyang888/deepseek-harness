@@ -36,9 +36,11 @@ declare module '@deepseek-ai/cordis' {
 }
 
 /** Configuration as the mounting profile writes it; defaults fill the rest. */
-export type Config = Omit<ChatHubLlmConfig, 'onTurn' | 'route' | 'workspaceRoot'> & {
-  /** Provider route to register; defaults to `<site>-chathub`. */
+export type Config = Omit<ChatHubLlmConfig, 'onTurn' | 'route' | 'routes' | 'sites' | 'workspaceRoot'> & {
+  /** Provider route to register; defaults to `<site>-chathub` and forces one site. */
   route?: string
+  /** Every site to mount; defaults to `[site]`. Ignored when `route` is set. */
+  sites?: readonly string[]
   /** Absolute workspace root path arguments must stay under. */
   workspaceRoot?: string
 }
@@ -47,6 +49,7 @@ export type Config = Omit<ChatHubLlmConfig, 'onTurn' | 'route' | 'workspaceRoot'
 export const Config = z.object({
   site: z.string().min(1).default('deepseek-web'),
   route: z.string(),
+  sites: z.array(z.string().min(1)).default([]),
   model: z.string().min(1).default(DEFAULT_CHATHUB_LLM_CONFIG.model),
   contextWindow: z.natural().min(1).default(DEFAULT_CHATHUB_LLM_CONFIG.contextWindow),
   maxPromptChars: z.natural().min(1).default(DEFAULT_CHATHUB_LLM_CONFIG.maxPromptChars),
@@ -69,15 +72,22 @@ export const inject = ['llm', 'webChatTransport']
  * Resolve a mounting row into the adapter's runtime configuration.
  * @param config - row values, with defaults already applied by the schema.
  * @param emit - sink for one record per completed turn.
- * @returns Complete configuration; the route defaults to `<site>-chathub`.
+ * @returns Complete configuration; one route per site, `<site>-chathub` unless
+ * the row names a single explicit route.
  */
 export function resolveConfig(
   config: Config,
   emit: (record: ChatHubTurnObservation) => void,
 ): ChatHubLlmConfig {
+  // An explicit route pins the mount to one site: two names for one route
+  // would make "which site answered" ambiguous.
+  const listed = config.sites ?? []
+  const sites = config.route !== undefined ? [config.site] : (listed.length === 0 ? [config.site] : listed)
   return {
     site: config.site,
-    route: config.route ?? `${config.site}-chathub`,
+    sites,
+    route: config.route ?? `${sites[0]}-chathub`,
+    routes: sites.map(site => `${site}-chathub`),
     model: config.model,
     contextWindow: config.contextWindow,
     maxPromptChars: config.maxPromptChars,
@@ -107,6 +117,6 @@ export function apply(ctx: Context, config: Config): void {
     transportForAdapter: () => ctx.webChatTransport.transportForAdapter(),
     providers: () => ctx.webChatTransport.providers(),
   }, resolved)
-  const registration = ctx.llm.registerAdapter([resolved.route], adapter)
+  const registration = ctx.llm.registerAdapter([...resolved.routes], adapter)
   ctx.effect(() => () => { registration() })
 }

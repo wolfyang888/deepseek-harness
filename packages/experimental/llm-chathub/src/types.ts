@@ -29,14 +29,19 @@ export const DEFAULT_MAX_TOOL_DESCRIPTION_CHARS = 240
 /**
  * Runtime configuration of one adapter instance.
  *
- * One instance drives exactly one site route: two sites mean two mounts, which
- * also keeps their page keys and browser profiles separable.
+ * One instance drives one route per configured site: the registry calls the
+ * adapter with the route id, and the adapter derives the site from it, so two
+ * sites stay two routes over one transport and one browser profile.
  */
 export interface ChatHubLlmConfig {
   /** Site provider id the host transport and drivers know, e.g. `deepseek-web`. */
   readonly site: string
+  /** Every site this instance serves; `site` is the default and first member. */
+  readonly sites: readonly string[]
   /** LLM provider route registered for this adapter, e.g. `deepseek-web-chathub`. */
   readonly route: string
+  /** One route per site, in `sites` order; a single-site mount has exactly one. */
+  readonly routes: readonly string[]
   /** Model id advertised on that route; the site selects the model itself. */
   readonly model: string
   /** Declared context capacity in tokens, used by harness budget planning. */
