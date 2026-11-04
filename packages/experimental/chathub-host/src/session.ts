@@ -41,6 +41,36 @@ export function answerTextOf(html: string): string {
     .trim()
 }
 
+/** Block-level tags whose boundary is a real line break in the answer. */
+const BLOCK_TAGS = /<\/?(?:p|div|pre|li|ul|ol|tr|table|blockquote|h[1-6]|section|article)\b[^>]*>/giu
+
+/**
+ * Visible text of one answer markup, with its line structure kept.
+ *
+ * A tool call's arguments are JSON, and JSON carries meaning in its whitespace:
+ * an `old_string` copied out of an answer must keep its indentation, or an edit
+ * that replaces one line misses the file. {@link answerTextOf} is the panel's
+ * and the completeness check's conversion — it collapses all whitespace — so
+ * the protocol path uses this one instead.
+ * @param html - answer container markup.
+ * @returns Text with block boundaries as newlines and inner spacing intact.
+ */
+export function answerMarkupText(html: string): string {
+  const withBreaks = html
+    .replace(/<(?:script|style)\b[^>]*>[\s\S]*?<\/(?:script|style)>/giu, '')
+    .replace(/<br\s*\/?>/giu, '\n')
+    .replace(BLOCK_TAGS, '\n')
+  return withBreaks
+    .replace(/<[^>]*>/gu, '')
+    .replace(/&([#0-9a-z]+);/giu, (_match: string, name: string) => ANSWER_ENTITIES[name.toLowerCase()] ?? ' ')
+    // Trailing spaces are the site's layout, never the model's intent.
+    .replace(/\r\n?/gu, '\n')
+    .replace(/[ \t]+$/gmu, '')
+    // A block boundary is one line break, not one per open and close tag.
+    .replace(/\n{2,}/gu, '\n')
+    .replace(/^\n+|\n+$/gu, '')
+}
+
 /**
  * Consume an answer stream without exposing its deltas.
  * @param stream - deltas produced while an answer stabilizes.

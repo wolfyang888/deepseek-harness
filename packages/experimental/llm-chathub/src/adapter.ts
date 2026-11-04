@@ -20,7 +20,7 @@ import {
   type LlmResolvedModelInfo,
   type StreamChunk,
 } from '@deepseek-ai/dsh-llm'
-import { answerTextOf } from '@deepseek-ai/dsh-experimental-chathub-host'
+import { answerMarkupText } from '@deepseek-ai/dsh-experimental-chathub-host'
 import { parseAnswer } from './protocol.ts'
 import { renderRequest } from './render.ts'
 import {
@@ -122,6 +122,7 @@ export class ChatHubLlmAdapter extends LlmAdapter {
       answerChars: parsed.answerChars,
       ...call === undefined ? {} : { toolName: call.name },
       ...parsed.invalid === undefined ? {} : { invalid: parsed.invalid },
+      ...parsed.warnings.length === 0 ? {} : { warnings: parsed.warnings },
       ms: Date.now() - started,
       droppedEntries: rendered.droppedEntries,
     })
@@ -151,7 +152,9 @@ export class ChatHubLlmAdapter extends LlmAdapter {
    * @throws LlmError with `INVALID_REQUEST` for a refused auxiliary purpose.
    */
   private assertConversational(options: GenerateOptions, site: string): void {
-    const purpose = options.purpose
+    // A forwarding adapter sees whatever purpose string a caller declares; this
+    // package declares none of its own, so the field types as `never` here.
+    const purpose = options.purpose as string | undefined
     if (purpose === undefined || this.config.auxiliary === 'allow') return
     throw new LlmError(
       `chathub-llm: ${site} does not serve auxiliary "${purpose}" requests; `
@@ -180,6 +183,7 @@ export class ChatHubLlmAdapter extends LlmAdapter {
     text: string
     call?: ChatHubToolCall
     invalid?: string
+    warnings: readonly string[]
     attempt: number
     answerChars: number
   }> {
@@ -227,8 +231,10 @@ export class ChatHubLlmAdapter extends LlmAdapter {
       this.assertNotAborted(site, signal)
       // The transport carries answers as markup for the panel; the protocol
       // here parses plain text, and the conversion also unescapes the
-      // `&lt;&lt;&lt;TOOL_CALL` delimiters a site's DOM serializes.
-      return answerTextOf(answer.content)
+      // `&lt;&lt;&lt;TOOL_CALL` delimiters a site's DOM serializes. It must
+      // keep line structure: a JSON argument's indentation is part of the text
+      // an `edit` will search for.
+      return answerMarkupText(answer.content)
     } catch (error) {
       throw transportFailure(error, site)
     } finally {

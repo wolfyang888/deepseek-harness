@@ -588,6 +588,8 @@ assistant: <上一轮说明>
 - **答案容器是「卡片」不是「正文」**：通义（qianwen）一张 `chat-answers-card-wrap` 里同时装思考卡、工作流卡和正文，直接读卡片会把三段文字粘在一起（实测返回 `<div>…message-card…thinking-content…qk-markdown…` 全量 HTML）。driver 因此多一个 `answerBody`：先定位最后一张卡片，再在卡片内取最后一个正文节点（`.qk-markdown`）。卡片内没有正文字节点时回退成整卡读取，旧版 `answerItem` 也还能用。
 - 辅助调用（`session-title`、`compaction`）默认被拒（§3.8）；网页路由不承担它们，标题与压缩要另配 API 路由。
 - `verify` 只是 prompt 里的一句话：白名单里没有 `bash` 时，它会被渲染成 `verify: <cmd> (report it; no shell tool is available here)`，模型无法自己跑校验；要闭环就把 `bash` 加进 `DSH_CHATHUB_LLM_TOOLS`。
+- **答案要按「保留换行」的方式转文本**（`answerMarkupText`），不能用面板那份压平空白的 `answerTextOf`：`edit` 的 `old_string` 依赖逐字符一致，压平缩进会让每次编辑都匹配不上（实测：模型把 `    slow_ms = 200,` 发成 ` slow_ms = 200,`）。
+- **站点的 Markdown 渲染会把 `--` 变成 `–`**：`edit`/`write` 的字符串参数会被折回 ASCII（`–`/`—` → `--`、NBSP → 空格），并在 `chathub-llm/turn` 事件里记一条 `warnings`，不做静默修改。
 
 ## 16. 参数默认表（可直接抄进 schema）
 

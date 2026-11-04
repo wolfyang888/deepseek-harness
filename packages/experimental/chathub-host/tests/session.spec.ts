@@ -1,7 +1,7 @@
 /** Session submission, completion polling, deltas, timeout, and page invalidation. */
 
 import { expect, it } from 'vitest'
-import { PlaywrightChatSession } from '../src/session.ts'
+import { PlaywrightChatSession, answerMarkupText, answerTextOf } from '../src/session.ts'
 import type { SiteDriverConfig, TransportConfig, TurnGate, TurnPage } from '../src/types.ts'
 import type { WebChatPayload } from '@deepseek-ai/dsh-experimental-chathub'
 
@@ -255,4 +255,19 @@ it('reads entities, scripts, and styling out of the answer text', async () => {
   page.answers = [answer, answer, answer]
   // The markup comes back whole; the status check saw "结论 如下 …" and let it pass.
   await expect(chat.send(payload())).resolves.toMatchObject({ content: answer })
+})
+
+it('collapses an answer to one line for the completeness check', () => {
+  expect(answerTextOf('<p>a   b</p><p>c</p>')).toBe('a b c')
+})
+
+it('keeps line structure and inner spacing for the protocol text', () => {
+  // JSON carries meaning in its whitespace: an edit's old_string is copied whole.
+  expect(answerMarkupText('<pre><code>    slow_ms = 200,       -- 慢<br>next</code></pre>'))
+    .toBe('    slow_ms = 200,       -- 慢\nnext')
+})
+
+it('unescapes the tool-call delimiters a DOM serializes', () => {
+  expect(answerMarkupText('<p>&lt;&lt;&lt;TOOL_CALL</p><p>{"a":1}</p><p>TOOL_CALL&gt;&gt;&gt;</p>'))
+    .toBe('<<<TOOL_CALL\n{"a":1}\nTOOL_CALL>>>')
 })

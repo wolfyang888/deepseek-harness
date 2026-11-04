@@ -231,6 +231,8 @@ export interface ChatHubTurnObservation {
   readonly toolName?: string
   /** Rejection reason of the last reply, when it was rejected. */
   readonly invalid?: string
+  /** Non-fatal findings about the reply, such as a repaired argument. */
+  readonly warnings?: readonly string[]
   /** Wall-clock duration of the whole turn. */
   readonly ms: number
   /** Conversation entries dropped to fit the prompt budget. */

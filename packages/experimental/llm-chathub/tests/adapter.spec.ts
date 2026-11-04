@@ -457,3 +457,22 @@ describe('ChatHubLlmAdapter transport failures', () => {
     await expect(collect(adapter(source).stream(request()))).rejects.toBe('boom')
   })
 })
+
+describe('ChatHubLlmAdapter answer text', () => {
+  it('keeps the indentation a call argument carries', async () => {
+    const source = new FakeSource()
+    const body = JSON.stringify({
+      name: 'edit',
+      arguments: { file_path: 'a.lua', old_string: '    x = 1,   -- 慢', new_string: '    x = 2,   -- 慢' },
+    })
+    // A site renders the block inside markup and escapes the delimiters.
+    source.answers = [`<pre><code>${TOOL_CALL_OPEN}\n${body}\n${TOOL_CALL_CLOSE}</code></pre>`]
+    const chunks = await collect(adapter(source, { allowTools: ['edit'] }).stream(request()))
+    const delta = chunks.find(chunk => chunk.type === 'tool-call-delta')
+    expect(delta?.type).toBe('tool-call-delta')
+    if (delta?.type !== 'tool-call-delta') return
+    const args = JSON.parse(delta.argumentsDelta) as { old_string: string }
+    // The site's markup is stripped; the argument's own whitespace is not.
+    expect(args.old_string).toBe('    x = 1,   -- 慢')
+  })
+})
