@@ -49,6 +49,8 @@ const PROTOCOL_TEXT = [
   '{"name":"<tool>","arguments":{...}}',
   'TOOL_CALL>>>',
   'Put any explanation outside the block. Never invent tool output: you only see what the tools returned.',
+  'Copy file text byte for byte: inside "arguments", indentation, spaces, and ASCII punctuation',
+  '(--, ", \', ...) must match the tool result exactly; a retyped line will not match the file.',
   'When the task is complete, or when you need the user to decide, reply without a block.',
 ].join('\n')
 

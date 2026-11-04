@@ -188,3 +188,36 @@ describe('formatToolCall', () => {
     expect(parsed.text).toBe('')
   })
 })
+
+describe('parseAnswer typographic repair', () => {
+  const policy = {
+    allowTools: ['edit', 'write', 'read'],
+    denyPaths: ['.git'],
+    maxTextChars: 2_000,
+    maxToolCallsPerTurn: 1,
+  }
+
+  it('folds a rendered en dash back to the double dash a file holds', () => {
+    const parsed = parseAnswer(
+      formatToolCall({ name: 'edit', arguments: { file_path: 'a.lua', old_string: 'x = 1 – c', new_string: 'x = 2 – c' } }),
+      policy,
+    )
+    expect(parsed.call?.arguments['old_string']).toBe('x = 1 -- c')
+    expect(parsed.warnings).toHaveLength(1)
+    expect(parsed.warnings[0]).toMatch(/folded 2 typographic/u)
+  })
+
+  it('leaves a non-text tool argument alone', () => {
+    const parsed = parseAnswer(formatToolCall({ name: 'read', arguments: { file_path: 'a – b.lua' } }), policy)
+    expect(parsed.call?.arguments['file_path']).toBe('a – b.lua')
+    expect(parsed.warnings).toEqual([])
+  })
+
+  it('leaves ASCII text untouched', () => {
+    const parsed = parseAnswer(
+      formatToolCall({ name: 'edit', arguments: { file_path: 'a.lua', old_string: 'x = 1 -- c', new_string: 'x = 2 -- c' } }),
+      policy,
+    )
+    expect(parsed.warnings).toEqual([])
+  })
+})

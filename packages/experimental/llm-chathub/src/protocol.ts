@@ -61,7 +61,51 @@ export function parseAnswer(raw: string, policy: ChatHubParsePolicy): ChatHubPar
     }
   }
   const call = readCall(decoded.parsed, policy)
-  return typeof call === 'string' ? { text, invalid: call, warnings } : { text, call, warnings }
+  if (typeof call === 'string') return { text, invalid: call, warnings }
+  return { text, call: repairArguments(call, warnings), warnings }
+}
+
+/** Tools whose string arguments are file text, where ASCII spelling matters. */
+const TEXT_TOOLS: ReadonlySet<string> = new Set(['edit', 'write'])
+
+/** Typographic characters a site's Markdown pass substitutes, and their ASCII source. */
+const TYPOGRAPHY_FOLDS: Readonly<Record<string, string>> = {
+  '\u00a0': ' ', // no-break space pasted from rendered prose
+  '\u2013': '--', // en dash: Markdown renders `--` this way
+  '\u2014': '--', // em dash: the same pass, for a longer run of dashes
+}
+const TYPOGRAPHY_FOLD = /[\u00a0\u2013\u2014]/gu
+
+/**
+ * Fold typographic substitutions back to the ASCII the file really holds.
+ *
+ * Answers are read out of the site's rendered DOM, and a Markdown renderer
+ * turns `--` (a Lua comment, a CLI flag, a SQL comment) into an en dash. A
+ * model that copies the line it was shown therefore sends an `old_string` that
+ * no file contains. Only file-text tools are repaired, only these characters
+ * are folded, and every fold is reported, so a repair is never silent.
+ * @param call - the accepted call.
+ * @param warnings - sink for the non-fatal finding.
+ * @returns The call with its string arguments folded.
+ */
+function repairArguments(call: ChatHubToolCall, warnings: string[]): ChatHubToolCall {
+  if (!TEXT_TOOLS.has(call.name)) return call
+  let folds = 0
+  const fold = (value: string): string => value.replace(TYPOGRAPHY_FOLD, (char) => {
+    folds += 1
+    return TYPOGRAPHY_FOLDS[char] ?? char
+  })
+  const walk = (value: unknown): unknown => {
+    if (typeof value === 'string') return fold(value)
+    if (Array.isArray(value)) return value.map(item => walk(item))
+    if (isRecord(value)) return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, walk(item)]))
+    return value
+  }
+  const arguments_ = walk(call.arguments) as Readonly<Record<string, unknown>>
+  if (folds > 0) {
+    warnings.push(`folded ${String(folds)} typographic character(s) in "${call.name}" arguments back to ASCII`)
+  }
+  return { name: call.name, arguments: arguments_ }
 }
 
 /**
