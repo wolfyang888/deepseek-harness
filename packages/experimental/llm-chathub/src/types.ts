@@ -21,6 +21,17 @@ export const CHATHUB_LLM_OVERFLOW_CODE = 'CONTEXT_WINDOW_EXCEEDED'
 /** The site answered with a status the transport classifies as transport/UI failure. */
 export const CHATHUB_LLM_TRANSPORT_CODE = 'TRANSPORT'
 
+/**
+ * What this route does with a request that declares an auxiliary purpose.
+ *
+ * A browser turn costs one whole site conversation and one model round trip on
+ * the user's own account, and an auxiliary prompt carries neither the tool
+ * schemas nor the conversation, so sending one here spends a page and returns
+ * an answer the caller cannot use. Refusing keeps the route for the work it was
+ * mounted for and lets the auxiliary caller fail over to a configured API route.
+ */
+export type ChatHubAuxiliaryPolicy = 'refuse' | 'allow'
+
 /** Default text head so a prompt always names the task even when budgets bite. */
 export const DEFAULT_MAX_TEXT_CHARS = 2_000
 /** Description budget of one tool schema inside the rendered prompt. */
@@ -70,6 +81,13 @@ export interface ChatHubLlmConfig {
   readonly maxToolCallsPerTurn: number
   /** Extra rounds granted to a reply whose call block was rejected as illegal. */
   readonly repairAttempts: number
+  /**
+   * Whether a request carrying a declared auxiliary purpose — a session title,
+   * a compaction summary — may spend a site turn here. `refuse` is the
+   * default: those callers expect a fast, cheap classification call, and a
+   * page turn is neither.
+   */
+  readonly auxiliary: ChatHubAuxiliaryPolicy
   /** Receives one record per completed turn; never carries prompt or answer text. */
   readonly onTurn?: (record: ChatHubTurnObservation) => void
 }
@@ -253,4 +271,5 @@ export const DEFAULT_CHATHUB_LLM_CONFIG = {
   verifyCommands: ['pnpm run typecheck'] as const,
   maxToolCallsPerTurn: 1,
   repairAttempts: 1,
+  auxiliary: 'refuse',
 } as const

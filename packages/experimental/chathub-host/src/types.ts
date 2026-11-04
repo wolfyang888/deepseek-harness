@@ -17,6 +17,17 @@ export interface SiteDriverConfig {
   input: string
   /** Assistant answer containers; the last one is the current answer. */
   answer: string
+  /**
+   * Optional element inside the last answer container that carries the reply
+   * text itself.
+   *
+   * A card container is as wide as the site's layout needs: on Qianwen the same
+   * wrap holds the thinking card, the tool/workflow card, and the reply, so
+   * reading the wrap returns all three run together. The last match of this
+   * selector inside the last container is the answer body; when it matches
+   * nothing, the container itself is read.
+   */
+  answerBody?: string
   /** Element that only appears on a signed-out wall. */
   loginWall?: string
   /** Path pattern identifying a login or logout redirect; matched case-insensitively. */
@@ -140,6 +151,11 @@ export interface BrowserInputLike extends BrowserLocatorLike {
    * @returns The locator for that element.
    */
   nth(index: number): BrowserInputLike
+  /**
+   * @param selector - CSS selector resolved inside this element.
+   * @returns A locator over matching descendants.
+   */
+  locator(selector: string): BrowserInputLike
 }
 
 /** One browser page or tab. */
@@ -249,9 +265,10 @@ export interface TurnPage {
   url(): string
   /**
    * @param selector - answer container selector.
+   * @param body - optional reply-body selector read inside the last container.
    * @returns The last answer's markup, or an empty string when none exists.
    */
-  answerHtml(selector: string): Promise<string>
+  answerHtml(selector: string, body?: string): Promise<string>
   /**
    * @param prompt - rendered prompt to type.
    * @param driver - site facts for input and submission.

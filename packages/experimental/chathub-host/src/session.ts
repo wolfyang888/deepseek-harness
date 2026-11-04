@@ -133,7 +133,10 @@ export class PlaywrightChatSession implements WebChatTransportSession {
       }
       await sleep(Math.min(pollMs, remaining))
       this.assertNotSignedOut()
-      const current = this.answerFrom(await this.page.answerHtml(this.driver.answer), prompt)
+      const current = this.answerFrom(
+        await this.page.answerHtml(this.driver.answer, this.driver.answerBody),
+        prompt,
+      )
       if (current.length > 0 && current === lastText) stable += 1
       else stable = 0
       lastText = current

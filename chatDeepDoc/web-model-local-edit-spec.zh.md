@@ -287,6 +287,34 @@ sequenceDiagram
 - adapter 链路（§3.6）只借用同一个 `WebChatTransport` 与同一套站点 driver，**不经过** `ChatHubController`、`SessionManager`、`ContextCompiler`（那是给人工会话做检查点交接的），上下文由 harness 的 `GenerateOptions` 直接提供。
 - 两条链路共享同一个 Chrome profile 与 `maxQueuedTurns` 队列，因此同一 provider 上「面板里正在聊天」与「adapter 正在跑编码」会串行排队；需要并行时给 adapter 单独的 profile 目录。
 
+### 3.8 辅助调用必须让开（实测踩坑后的强制约束）
+
+站点只有「一个会话框」这一个入口，任何 `GenerateOptions` 到达 adapter 都会被 `renderRequest` 渲染成整段 prompt 发出去。而 harness 里有一类**不是对话**的请求也走同一份路由：
+
+| 调用方 | `purpose` | 它带的输入 | 站点看到的后果 |
+|---|---|---|---|
+| `session-title-llm` | `session-title` | 一段 JSON（前几条消息）+ 一句「Generate the session title」 | 站点把它当成本轮任务，回答「理解需求……项目 plugin 实现原理分析」，编码请求根本没被读到 |
+| 上下文压缩 | `compaction` | 要压缩的历史 | 浪费一次页面轮次，返回的摘要还被当成对话内容 |
+
+现象就是「发过去的是标题请求，回来的是需求理解」。修法是把辅助请求挡在 adapter 门口，而不是在 prompt 里补救：
+
+```ts
+private assertConversational(options: GenerateOptions, site: string): void {
+  const purpose = options.purpose
+  if (purpose === undefined || this.config.auxiliary === 'allow') return
+  throw new LlmError(
+    `chathub-llm: ${site} does not serve auxiliary "${purpose}" requests; `
+    + "point that caller at an API route, or mount with auxiliary: 'allow'",
+    'INVALID_REQUEST',
+  )
+}
+```
+
+- 抛错发生在 `transport.open()` 之前：**不打开页面、不消耗轮次**，站点上不会留下一条莫名其妙的会话。
+- `session-title` 的失败是良性的：`session-title` 服务在 `defer` 里 `catch` 后只 `logger.warn`，会话保留首条消息生成的兜底标题（`session-title/src/index.ts:534`、`585`）。
+- 想恢复自动标题，就把标题 provider 指到真 API 路由（`session-title-llm` 的 `provider` + `model` 成对配置），而不是给 `auxiliary: 'allow'`。
+- 同一约束适用于 `compaction`：网页路由不承担压缩，长会话靠 `maxPromptChars` + `historyTurns` 收敛。
+
 ## 4. 代码落点
 
 新增包 `packages/experimental/llm-chathub/`（与 `chathub`、`chathub-host` 同组，因为它的 transport 契约来自这一组）：
@@ -519,6 +547,7 @@ assistant: <上一轮说明>
 | `chathub-network`、无法识别的传输失败 | `TRANSPORT` | 重试 |
 | 回答非法且自纠预算用尽 | `MALFORMED_RESPONSE` | 终止，原因里点出出错块 |
 | 无历史可丢仍超预算 | `CONTEXT_WINDOW_EXCEEDED` | 走压缩，不重试同一段文本 |
+| 带 `purpose` 的辅助请求（标题、压缩） | `INVALID_REQUEST` | 不打开页面；标题服务降级为兜底标题 |
 | 调用方取消 | `ABORTED` | 立即结束 |
 
 `llm-retry` 按 `retryableCodes` 判定（`llm-retry/src/index.ts:212`）：`TRANSPORT`、`RATE_LIMIT`、`TIMEOUT` 可重试，`AUTH`、`SERVER`、`MALFORMED_RESPONSE`、`CONTEXT_WINDOW_EXCEEDED` 不可重试。
@@ -556,6 +585,8 @@ assistant: <上一轮说明>
 - 豆包站点不可用（反爬）；deepseek / chatgpt / gemini / qianwen 四个站点已发货，但 gemini、chatgpt 需要代理（`DSH_CHATHUB_PROXY`）。
 - 站点不返回 token 用量，`token-meter` 只能估算。
 - 站点改版会打断链路，失败码 `chathub-ui-drift` 需要人工更新 driver。
+- **答案容器是「卡片」不是「正文」**：通义（qianwen）一张 `chat-answers-card-wrap` 里同时装思考卡、工作流卡和正文，直接读卡片会把三段文字粘在一起（实测返回 `<div>…message-card…thinking-content…qk-markdown…` 全量 HTML）。driver 因此多一个 `answerBody`：先定位最后一张卡片，再在卡片内取最后一个正文节点（`.qk-markdown`）。卡片内没有正文字节点时回退成整卡读取，旧版 `answerItem` 也还能用。
+- 辅助调用（`session-title`、`compaction`）默认被拒（§3.8）；网页路由不承担它们，标题与压缩要另配 API 路由。
 
 ## 16. 参数默认表（可直接抄进 schema）
 
@@ -572,6 +603,7 @@ export const DEFAULT_CHATHUB_LLM_CONFIG = {
   verifyCommands: ['pnpm run typecheck'] as const,
   maxToolCallsPerTurn: 1,
   repairAttempts: 1,
+  auxiliary: 'refuse',
 } as const
 ```
 

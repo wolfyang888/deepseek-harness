@@ -21,6 +21,11 @@
 #                            (default `read,grep,glob,edit,write`)
 #   DSH_CHATHUB_LLM_VERIFY   comma-separated verification commands stated in the
 #                            prompt's project block (default `pnpm run typecheck`)
+#   DSH_CHATHUB_LLM_AUXILIARY  `refuse` (default) or `allow`: whether auxiliary
+#                            calls (session titles, compaction) may spend a site
+#                            turn. Refusing keeps the title request from being
+#                            read by the site as the task; point those callers at
+#                            an API route instead.
 - insert:
     - id: llm-chathub
       name: '@deepseek-ai/dsh-experimental-llm-chathub'
@@ -31,3 +36,4 @@
         workspaceRoot: !!js process.env.DSH_CHATHUB_LLM_ROOT ?? process.cwd()
         allowTools: !!js (process.env.DSH_CHATHUB_LLM_TOOLS ?? 'read,grep,glob,edit,write').split(',')
         verifyCommands: !!js (process.env.DSH_CHATHUB_LLM_VERIFY ?? 'pnpm run typecheck').split(',')
+        auxiliary: !!js process.env.DSH_CHATHUB_LLM_AUXILIARY ?? 'refuse'
