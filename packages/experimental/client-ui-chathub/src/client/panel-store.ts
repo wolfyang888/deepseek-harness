@@ -89,6 +89,9 @@ export function createPanelStore(): EngineStoreHandle<ChatHubState, ChatHubActio
         draft.pendingProvider = providerId
         // The report describes the switch the last send performed, not this pick.
         draft.switchNote = undefined
+        // A failure banner describes the previous model's turn; picking another
+        // model means the next send answers on it, so the stale banner leaves.
+        draft.error = undefined
       },
       setSwitchNote: (draft, note) => { draft.switchNote = note },
       setBusy: (draft, busy) => { draft.busy = busy },

@@ -157,11 +157,19 @@ export function ChatHubPanel(props: ChatHubPanelProps): ReactNode {
   const providerOptionText = (provider: ChatHubProviderView): string => provider.status === 'ready'
     ? provider.name
     : `${provider.name} · ${t(providerStatusLabel(provider.status))}`
-  // The model list offers every ready provider, the current one included: the
-  // select shows which model answers, and the turn switches only on a change.
-  const modelChoices: readonly ChatHubProviderView[] = providers === undefined
+  // The model list offers every ready provider plus the conversation's own
+  // model even when it cannot answer yet: the select must state which model
+  // would run — a signed-out one labeled with its state — instead of hiding
+  // it, and the turn switches only on a change.
+  const readyChoices = providers === undefined
     ? []
     : providers.filter(provider => provider.status === 'ready')
+  const currentChoice = detail === undefined
+    ? undefined
+    : providers?.find(provider => provider.id === detail.currentProvider)
+  const modelChoices: readonly ChatHubProviderView[] = currentChoice !== undefined && currentChoice.status !== 'ready'
+    ? [currentChoice, ...readyChoices]
+    : readyChoices
   // Showing the conversation's model is the point of the select, so one ready
   // provider leaves nothing to pick.
   const canSwitchModel = modelChoices.length > 1
@@ -332,7 +340,7 @@ export function ChatHubPanel(props: ChatHubPanelProps): ReactNode {
                     props.actions.selectProvider(providerId === detail.currentProvider ? undefined : providerId)
                   }}>
                   {modelChoices.map(provider => (
-                    <option key={provider.id} value={provider.id}>{provider.name}</option>
+                    <option key={provider.id} value={provider.id}>{providerOptionText(provider)}</option>
                   ))}
                 </select>
                 {switchNote !== undefined && <span className={css.composerNote}>{switchNote}</span>}

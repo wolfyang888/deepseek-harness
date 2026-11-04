@@ -217,8 +217,24 @@ it('sends turns optimistically and lands assistant answers, failures, and Remote
     })
     await face.send('again')
     expect(instance.getSnapshot().messages).toHaveLength(4)
-    expect(instance.getSnapshot().error).toBe('deepseek-web: rate-limited')
+    expect(instance.getSnapshot().error).toBe('Send failed: deepseek-web: rate-limited')
     expect(instance.getSnapshot().busy).toBe(false)
+    // A signed-out provider names the model and says what to do instead of
+    // surfacing the bare `provider: code` pair.
+    await face.refresh()
+    b.chatHub.send.mockResolvedValueOnce({
+      ok: true,
+      value: { sessionId: 'sess_1', status: 'failed', lastError: 'gemini-web: auth-required' },
+    })
+    await face.send('again')
+    expect(instance.getSnapshot().error).toBe('Gemini Web is signed out and nothing was sent: sign it in from the provider list below, or pick another model and send again.')
+    // A code-less failure keeps the send-failed framing.
+    b.chatHub.send.mockResolvedValueOnce({
+      ok: true,
+      value: { sessionId: 'sess_1', status: 'failed', lastError: 'boom' },
+    })
+    await face.send('again')
+    expect(instance.getSnapshot().error).toBe('Send failed: boom')
     b.chatHub.send.mockRejectedValueOnce('raw rejection')
     await face.send('third')
     expect(instance.getSnapshot().error).toContain('raw rejection')

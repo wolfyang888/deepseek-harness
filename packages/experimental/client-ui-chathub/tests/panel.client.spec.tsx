@@ -335,6 +335,29 @@ it('sends the current model while no other one is ready', () => {
   expect(face.send).toHaveBeenCalledWith('hi', 'deepseek-web')
 })
 
+it('lists the signed-out conversation model so the select states what would run', () => {
+  const { face, instance } = fixture((actions) => {
+    applyLists(actions)
+    actions.setError('gemini-web: auth-required')
+    actions.openSession({ ...DETAIL, currentProvider: 'gemini-web', providerHistory: ['gemini-web'] }, [])
+  })
+  const select = combobox()
+  // The conversation's own model is listed even when it cannot answer: the
+  // select states which model would run, and the label explains why it cannot.
+  expect([...select.options].map(option => option.value)).toEqual(['gemini-web', 'deepseek-web'])
+  expect(select.value).toBe('gemini-web')
+  expect(optionOf(select, 'gemini-web').textContent).toBe('Gemini Web · 需要登录')
+  expect(select.disabled).toBe(false)
+  // Picking a ready model also drops the stale failure banner of the old turn.
+  fireEvent.change(select, { target: { value: 'deepseek-web' } })
+  expect(instance.getSnapshot().pendingProvider).toBe('deepseek-web')
+  expect(instance.getSnapshot().error).toBeUndefined()
+  const composer = screen.getByPlaceholderText(zh['message.placeholder']) as HTMLTextAreaElement
+  fireEvent.change(composer, { target: { value: 'hi' } })
+  fireEvent.click(screen.getByRole('button', { name: zh['message.send'] }))
+  expect(face.send).toHaveBeenCalledWith('hi', 'deepseek-web')
+})
+
 it('holds the model select while a turn is in flight', () => {
   const { instance } = fixture((actions) => {
     applyLists(actions, [...PROVIDERS, READY_TARGET])

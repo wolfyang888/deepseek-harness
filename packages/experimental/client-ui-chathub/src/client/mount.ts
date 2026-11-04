@@ -77,6 +77,22 @@ function createFace(ctx: Context, instance: PanelInstance, t: ChatHubTranslate):
   const fail = (error: unknown, key?: 'message.error'): void => {
     actions.setError(key === undefined ? messageOf(error) : t(key, { error: messageOf(error) }))
   }
+  /** Display name of one provider id, falling back to the id itself. */
+  const providerLabel = (id: string): string =>
+    instance.getSnapshot().providers?.find(provider => provider.id === id)?.name ?? id
+  /**
+   * Human text of one failed turn: the host's `provider: code` stays for most
+   * codes, but a signed-out provider gets the hint that says what to do.
+   * @param lastError - the failed turn's `provider: code` string.
+   * @returns The localized banner text.
+   */
+  const turnFailure = (lastError: string): string => {
+    const at = lastError.indexOf(': ')
+    if (at > 0 && lastError.slice(at + 2) === 'auth-required') {
+      return t('turn.authHint', { provider: providerLabel(lastError.slice(0, at)) })
+    }
+    return t('message.error', { error: lastError })
+  }
   const refresh = async (): Promise<void> => {
     actions.applyState(await expect(ctx.remote.chatHub.state()))
   }
@@ -115,14 +131,13 @@ function createFace(ctx: Context, instance: PanelInstance, t: ChatHubTranslate):
         // the checkpoint and hands the session over before the turn runs.
         if (providerId !== undefined && providerId !== instance.getSnapshot().detail?.currentProvider) {
           const switched = await expect(ctx.remote.chatHub.switch(sessionId, providerId, t('switch.reason')))
-          const name = instance.getSnapshot().providers?.find(provider => provider.id === switched.to)?.name ?? switched.to
           await open(sessionId)
-          actions.setSwitchNote(t('switch.done', { provider: name, checkpoint: switched.checkpointId }))
+          actions.setSwitchNote(t('switch.done', { provider: providerLabel(switched.to), checkpoint: switched.checkpointId }))
         }
         actions.appendMessage({ role: 'user', content, timestamp: Date.now() })
         const turn = await expect(ctx.remote.chatHub.send(sessionId, content))
         if (turn.assistant !== undefined) actions.appendMessage(turn.assistant)
-        if (turn.lastError !== undefined) actions.setError(turn.lastError)
+        if (turn.lastError !== undefined) actions.setError(turnFailure(turn.lastError))
         refreshQuietly()
       } catch (error) {
         fail(error, 'message.error')
