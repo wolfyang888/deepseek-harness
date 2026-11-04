@@ -20,6 +20,7 @@ import {
   type LlmResolvedModelInfo,
   type StreamChunk,
 } from '@deepseek-ai/dsh-llm'
+import { answerTextOf } from '@deepseek-ai/dsh-experimental-chathub-host'
 import { parseAnswer } from './protocol.ts'
 import { renderRequest } from './render.ts'
 import {
@@ -180,7 +181,7 @@ export class ChatHubLlmAdapter extends LlmAdapter {
    * @param prompt - self-contained prompt.
    * @param site - site provider the route selected.
    * @param signal - caller cancellation.
-   * @returns The site's answer markup.
+   * @returns The site's answer as visible text.
    */
   private async ask(prompt: string, site: string, signal?: AbortSignal): Promise<string> {
     await this.assertHealthy(site)
@@ -201,7 +202,10 @@ export class ChatHubLlmAdapter extends LlmAdapter {
         meta: { origin: 'raw-messages' },
       })
       this.assertNotAborted(site, signal)
-      return answer.content
+      // The transport carries answers as markup for the panel; the protocol
+      // here parses plain text, and the conversion also unescapes the
+      // `&lt;&lt;&lt;TOOL_CALL` delimiters a site's DOM serializes.
+      return answerTextOf(answer.content)
     } catch (error) {
       throw transportFailure(error, site)
     } finally {

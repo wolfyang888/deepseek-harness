@@ -26,11 +26,13 @@ const ANSWER_ENTITIES: Readonly<Record<string, string>> = {
  *
  * Answers are carried as markup so the panel can render their emphasis, lists,
  * tables, code, and images; the turn itself still needs the plain text to tell a
- * prompt echo or a site status line from a real answer.
+ * prompt echo or a site status line from a real answer. Text-only consumers of
+ * a raw response — the LLM adapter route — need the same conversion, so this is
+ * exported.
  * @param html - answer container markup.
  * @returns Whitespace-collapsed text without tags.
  */
-function answerTextOf(html: string): string {
+export function answerTextOf(html: string): string {
   return html
     .replace(/<(?:script|style)\b[^>]*>[\s\S]*?<\/(?:script|style)>/giu, ' ')
     .replace(/<[^>]*>/gu, ' ')

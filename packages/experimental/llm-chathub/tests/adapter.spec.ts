@@ -34,7 +34,14 @@ class FakeSession implements ChatHubTransportSession {
     const failure = this.source.sendError
     if (failure !== undefined) throw failure
     this.source.onSend?.()
-    return { content: this.source.answers.shift() ?? '' }
+    // A site serializes its answer DOM: markup-carrying content escapes `<`,
+    // `>`, and `&` into entities, which is the shape the transport really
+    // delivers and the adapter's text conversion unescapes.
+    const answer = (this.source.answers.shift() ?? '')
+      .replace(/&/gu, '&amp;')
+      .replace(/</gu, '&lt;')
+      .replace(/>/gu, '&gt;')
+    return { content: answer }
   }
 
   /** @returns Resolves once the page is released. */
