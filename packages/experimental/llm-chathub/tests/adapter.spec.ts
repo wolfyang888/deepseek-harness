@@ -56,9 +56,12 @@ class FakeSource implements ChatHubTransportSource {
   readonly released: string[] = []
   readonly sites: string[] = []
 
-  /** @returns One health row for the configured site. */
+  /** @returns One health row per health-known site. */
   providers(): Promise<readonly { id: string; health: { status: string } }[]> {
-    return Promise.resolve([{ id: 'deepseek-web', health: { status: this.health } }])
+    return Promise.resolve([
+      { id: 'deepseek-web', health: { status: this.health } },
+      { id: 'qianwen-web', health: { status: this.health } },
+    ])
   }
 
   /** @returns The transport the adapter drives. */
@@ -77,7 +80,9 @@ class FakeSource implements ChatHubTransportSource {
 
 const BASE: ChatHubLlmConfig = {
   site: 'deepseek-web',
+  sites: ['deepseek-web'],
   route: 'deepseek-web-chathub',
+  routes: ['deepseek-web-chathub'],
   model: 'web-model',
   contextWindow: 32_000,
   maxPromptChars: 48_000,
@@ -146,6 +151,31 @@ describe('ChatHubLlmAdapter metadata', () => {
       context: { contextWindow: 32_000 },
     })
   })
+
+  it('names each mounted site behind its own route', () => {
+    const subject = adapter(new FakeSource(), {
+      sites: ['deepseek-web', 'qianwen-web'],
+      routes: ['deepseek-web-chathub', 'qianwen-web-chathub'],
+    })
+    expect(subject.providerInfo('deepseek-web-chathub').name).toBe('ChatHub deepseek-web')
+    expect(subject.providerInfo('qianwen-web-chathub').name).toBe('ChatHub qianwen-web')
+  })
+
+  it('refuses a route outside the configured sites', async () => {
+    await expect(collect(adapter(new FakeSource()).stream({
+      ...request(),
+      provider: 'gemini-web-chathub',
+    }))).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+  })
+
+  it('accepts a custom route id equal to a configured site', async () => {
+    const source = new FakeSource()
+    source.answers = ['nothing to change']
+    const subject = adapter(source, { site: 'qianwen-web', sites: ['qianwen-web'], routes: ['qianwen-web'] })
+    await collect(subject.stream({ ...request(), provider: 'qianwen-web' }))
+    expect(source.sites).toEqual(['qianwen-web'])
+    expect(source.released).toEqual(['qianwen-web:1'])
+  })
 })
 
 describe('ChatHubLlmAdapter turns', () => {
@@ -163,6 +193,18 @@ describe('ChatHubLlmAdapter turns', () => {
     expect(source.prompts[0]).toContain('# NOW\nuser: fix the build')
     expect(source.sites).toEqual(['deepseek-web'])
     expect(source.released).toEqual(['deepseek-web:1'])
+  })
+
+  it('drives the site its route names, not the mount default', async () => {
+    const source = new FakeSource()
+    source.answers = ['nothing to change']
+    const subject = adapter(source, {
+      sites: ['deepseek-web', 'qianwen-web'],
+      routes: ['deepseek-web-chathub', 'qianwen-web-chathub'],
+    })
+    await collect(subject.stream({ ...request(), provider: 'qianwen-web-chathub' }))
+    expect(source.sites).toEqual(['qianwen-web'])
+    expect(source.released).toEqual(['qianwen-web:1'])
   })
 
   it('emits one tool-call block and finishes with tool-calls', async () => {
@@ -292,8 +334,10 @@ describe('ChatHubLlmAdapter refusals', () => {
 
   it('refuses a site that is not shipped by the host', async () => {
     const source = new FakeSource()
-    await expect(collect(adapter(source, { site: 'ghost-web' }).stream(request())))
-      .rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    await expect(collect(adapter(source, { site: 'ghost-web', sites: ['ghost-web'] }).stream({
+      ...request(),
+      provider: 'ghost-web',
+    }))).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
   })
 
   it('refuses while sign-in is still pending', async () => {

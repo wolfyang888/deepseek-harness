@@ -46,8 +46,11 @@ const TRANSPORT_CODES: Readonly<Record<string, string>> = {
   'chathub-network': CHATHUB_LLM_TRANSPORT_CODE,
 }
 
+/** Route ids are `<site>` plus this suffix; stripping it recovers the site. */
+const ROUTE_SUFFIX = '-chathub'
+
 /**
- * Drives one site provider as an LLM route.
+ * Drives one route per configured site as LLM routes.
  *
  * The adapter owns no browser: it borrows the host transport, so login,
  * profile, and per-page serialization stay where the panel already needs them.
@@ -72,7 +75,7 @@ export class ChatHubLlmAdapter extends LlmAdapter {
    * @returns Display metadata naming the site behind the route.
    */
   override providerInfo(provider: string): LlmProviderInfo {
-    return { id: provider, name: `ChatHub ${this.config.site}` }
+    return { id: provider, name: `ChatHub ${this.siteOf(provider)}` }
   }
 
   /**
@@ -105,12 +108,13 @@ export class ChatHubLlmAdapter extends LlmAdapter {
    */
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     const started = Date.now()
+    const site = this.siteOf(options.provider)
     const rendered = this.render(options)
-    const parsed = await this.askUntilLegal(rendered.prompt, options.signal)
+    const parsed = await this.askUntilLegal(rendered.prompt, site, options.signal)
     const call = parsed.call
     this.report({
       ...options.sessionId === undefined ? {} : { sessionId: String(options.sessionId) },
-      pageKey: this.pageKeyOf(),
+      pageKey: this.pageKeyOf(site),
       attempt: parsed.attempt,
       promptChars: rendered.prompt.length,
       answerChars: parsed.answerChars,
@@ -120,7 +124,7 @@ export class ChatHubLlmAdapter extends LlmAdapter {
       droppedEntries: rendered.droppedEntries,
     })
     if (parsed.invalid !== undefined) {
-      throw new LlmError(`chathub-llm: ${this.config.site} answered illegally: ${parsed.invalid}`, CHATHUB_LLM_MALFORMED_CODE)
+      throw new LlmError(`chathub-llm: ${site} answered illegally: ${parsed.invalid}`, CHATHUB_LLM_MALFORMED_CODE)
     }
     yield { type: 'block-start', index: 0, blockType: 'text' }
     if (parsed.text.length > 0) yield { type: 'text-delta', index: 0, text: parsed.text }
@@ -144,10 +148,11 @@ export class ChatHubLlmAdapter extends LlmAdapter {
   /**
    * Ask the site until the reply is legal, or the repair budget runs out.
    * @param prompt - the rendered prompt.
+   * @param site - site provider the route selected.
    * @param signal - caller cancellation.
    * @returns The last reply with its attempt count and answer length.
    */
-  private async askUntilLegal(prompt: string, signal?: AbortSignal): Promise<{
+  private async askUntilLegal(prompt: string, site: string, signal?: AbortSignal): Promise<{
     text: string
     call?: ChatHubToolCall
     invalid?: string
@@ -158,8 +163,8 @@ export class ChatHubLlmAdapter extends LlmAdapter {
     let attempt = 0
     for (;;) {
       attempt += 1
-      this.assertNotAborted(signal)
-      const answer = await this.ask(question, signal)
+      this.assertNotAborted(site, signal)
+      const answer = await this.ask(question, site, signal)
       const parsed = parseAnswer(answer, this.parsePolicy())
       if (parsed.invalid === undefined || attempt > this.config.repairAttempts) {
         return { ...parsed, attempt, answerChars: answer.length }
@@ -173,31 +178,32 @@ export class ChatHubLlmAdapter extends LlmAdapter {
   /**
    * Send one prompt and read the whole answer.
    * @param prompt - self-contained prompt.
+   * @param site - site provider the route selected.
    * @param signal - caller cancellation.
    * @returns The site's answer markup.
    */
-  private async ask(prompt: string, signal?: AbortSignal): Promise<string> {
-    await this.assertHealthy()
-    const opened = await this.source.transportForAdapter().open(this.config.site, this.nextPageKey())
+  private async ask(prompt: string, site: string, signal?: AbortSignal): Promise<string> {
+    await this.assertHealthy(site)
+    const opened = await this.source.transportForAdapter().open(site, this.nextPageKey(site))
     if (opened === undefined) {
-      throw new LlmError(`chathub-llm: ${this.config.site} is waiting for sign-in`, CHATHUB_LLM_AUTH_CODE)
+      throw new LlmError(`chathub-llm: ${site} is waiting for sign-in`, CHATHUB_LLM_AUTH_CODE)
     }
     if (!('send' in opened)) {
-      throw new LlmError(`chathub-llm: ${this.config.site} refused the session (${opened.reason})`, CHATHUB_LLM_AUTH_CODE)
+      throw new LlmError(`chathub-llm: ${site} refused the session (${opened.reason})`, CHATHUB_LLM_AUTH_CODE)
     }
     const session: ChatHubTransportSession = opened
     try {
       const answer = await session.send({
-        providerId: this.config.site,
+        providerId: site,
         system: '',
         messages: [],
         prompt,
         meta: { origin: 'raw-messages' },
       })
-      this.assertNotAborted(signal)
+      this.assertNotAborted(site, signal)
       return answer.content
     } catch (error) {
-      throw transportFailure(error, this.config.site)
+      throw transportFailure(error, site)
     } finally {
       await session.close()
     }
@@ -205,29 +211,31 @@ export class ChatHubLlmAdapter extends LlmAdapter {
 
   /**
    * Refuse a signed-out or failed provider before a browser is launched.
+   * @param site - site provider the route selected.
    * @throws LlmError with `AUTH` for a provider that needs sign-in.
    */
-  private async assertHealthy(): Promise<void> {
+  private async assertHealthy(site: string): Promise<void> {
     const views = await this.source.providers()
-    const view = views.find(candidate => candidate.id === this.config.site)
+    const view = views.find(candidate => candidate.id === site)
     if (view === undefined) {
-      throw new LlmError(`chathub-llm: no site provider "${this.config.site}" is registered`, 'INVALID_REQUEST')
+      throw new LlmError(`chathub-llm: no site provider "${site}" is registered`, 'INVALID_REQUEST')
     }
     if (view.health.status === 'needs-auth' || view.health.status === 'failed') {
       throw new LlmError(
-        `chathub-llm: ${this.config.site} is ${view.health.status}; sign in from the ChatHub panel first`,
+        `chathub-llm: ${site} is ${view.health.status}; sign in from the ChatHub panel first`,
         CHATHUB_LLM_AUTH_CODE,
       )
     }
   }
 
   /**
+   * @param site - site provider the route selected.
    * @param signal - caller cancellation.
    * @throws LlmError with `ABORTED` once the caller cancelled.
    */
-  private assertNotAborted(signal?: AbortSignal): void {
+  private assertNotAborted(site: string, signal?: AbortSignal): void {
     if (signal?.aborted !== true) return
-    throw new LlmError(`chathub-llm: ${this.config.site} turn cancelled`, 'ABORTED')
+    throw new LlmError(`chathub-llm: ${site} turn cancelled`, 'ABORTED')
   }
 
   /**
@@ -245,20 +253,36 @@ export class ChatHubLlmAdapter extends LlmAdapter {
   }
 
   /**
+   * @param site - site provider the route selected.
    * @returns The page key of the attempt in flight.
    */
-  private pageKeyOf(): string {
-    return `${this.config.site}:${String(this.sequence)}`
+  private pageKeyOf(site: string): string {
+    return `${site}:${String(this.sequence)}`
   }
 
   /**
    * Allocate the page key of the next attempt: a new key is a new site
    * conversation, which is what makes a retry safe.
+   * @param site - site provider the route selected.
    * @returns The page key for one attempt.
    */
-  private nextPageKey(): string {
+  private nextPageKey(site: string): string {
     this.sequence += 1
-    return this.pageKeyOf()
+    return this.pageKeyOf(site)
+  }
+
+  /**
+   * Resolve the site behind a registered route.
+   * @param route - provider route the registry called with, e.g. `qianwen-web-chathub`.
+   * @returns The site provider id the transport and drivers know.
+   * @throws LlmError for a route this mount does not serve.
+   */
+  private siteOf(route: string): string {
+    const site = route.endsWith(ROUTE_SUFFIX) ? route.slice(0, route.length - ROUTE_SUFFIX.length) : route
+    if (!this.config.sites.includes(site)) {
+      throw new LlmError(`chathub-llm: route "${route}" is not one of ${this.config.sites.join(', ')}`, 'INVALID_REQUEST')
+    }
+    return site
   }
 
   /**
