@@ -133,6 +133,35 @@ it('reports an input without a layout box as UI drift', async () => {
   await expect(wrapper.submit('hello', DRIVER, 5)).rejects.toMatchObject({ token: 'chathub-ui-drift' })
 })
 
+it('presses submit again while the composer still holds the prompt', async () => {
+  const { wrapper, fake } = page()
+  fake.boxes[DRIVER.input] = { x: 0, y: 0, width: 10, height: 10 }
+  // The composer mounts before its handler does: the first Enter is dropped.
+  fake.texts[DRIVER.input] = '<p>hello world</p>'
+  fake.clearAfterPresses = 2
+  await wrapper.submit('hello world', DRIVER, 1)
+  expect(fake.keys).toEqual(['Enter', 'Enter'])
+  expect(fake.typed).toEqual(['hello world'])
+})
+
+it('reports a composer that keeps the prompt as UI drift', async () => {
+  const { wrapper, fake } = page()
+  fake.boxes[DRIVER.input] = { x: 0, y: 0, width: 10, height: 10 }
+  fake.texts[DRIVER.input] = '<p>hello world</p>'
+  await expect(wrapper.submit('hello world', DRIVER, 1)).rejects.toMatchObject({ token: 'chathub-ui-drift' })
+  // One submit plus the one retry, never an unbounded loop.
+  expect(fake.keys).toEqual(['Enter', 'Enter'])
+})
+
+it('retypes when the composer never took the prompt', async () => {
+  const { wrapper, fake } = page()
+  fake.boxes[DRIVER.input] = { x: 0, y: 0, width: 10, height: 10 }
+  fake.texts[DRIVER.input] = '<p>something else</p>'
+  await expect(wrapper.submit('hello world', DRIVER, 1)).rejects.toMatchObject({ token: 'chathub-ui-drift' })
+  expect(fake.typed).toEqual(['hello world', 'hello world', 'hello world'])
+  expect(fake.keys).toEqual([])
+})
+
 it('classifies submission failures', async () => {
   const { wrapper, fake } = page()
   fake.boxes[DRIVER.input] = { x: 0, y: 0, width: 10, height: 10 }

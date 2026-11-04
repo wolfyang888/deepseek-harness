@@ -127,6 +127,11 @@ export class PlaywrightPage implements ChatPageHandle {
    * The prompt is inserted in one text insertion rather than typed keystroke
    * by keystroke: typing presses Enter for every newline, and sites that
    * submit on Enter would send each prompt line as its own message.
+   *
+   * Two failures are silent without the checks below, and both end the turn
+   * as an empty answer long after the fact: a selector whose first match is a
+   * hidden composer takes the text nowhere, and a composer whose handlers are
+   * not attached yet accepts the text and drops the key press.
    * @param prompt - rendered prompt.
    * @param driver - site facts for input and submission.
    * @param typeDelayMs - settle delay between insertion and the submit key.
@@ -134,17 +139,79 @@ export class PlaywrightPage implements ChatPageHandle {
    */
   async submit(prompt: string, driver: SiteDriverConfig, typeDelayMs: number): Promise<void> {
     try {
-      const box = await this.page.locator(driver.input).first().boundingBox({ timeout: this.actionTimeoutMs })
+      const composer = await this.visibleInput(driver.input)
+      const box = await composer.boundingBox({ timeout: this.actionTimeoutMs })
       if (box === null) {
         throw new BrowserTransportError('chathub-ui-drift', `${this.key}: input "${driver.input}" has no layout box`)
       }
-      await this.page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
-      await this.page.keyboard.insertText(prompt)
-      await sleep(typeDelayMs)
+      const marker = composerMarker(prompt)
+      let typed: string | undefined
+      let readable = false
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        await this.page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
+        await this.page.keyboard.insertText(prompt)
+        await sleep(Math.max(typeDelayMs, 120))
+        const text = await this.readComposer(composer)
+        // `undefined` means the composer is unreadable (a textarea keeps its
+        // text in `value`, not markup); its behaviour stays as before.
+        if (text === undefined) break
+        readable = true
+        if (text.includes(marker)) {
+          typed = text
+          break
+        }
+      }
+      if (readable && typed === undefined) {
+        throw new BrowserTransportError('chathub-ui-drift', `${this.key}: the input never took the prompt`)
+      }
       await this.page.keyboard.press(driver.submitKey)
+      await sleep(Math.max(typeDelayMs, 600))
+      if (typed === undefined) return
+      const after = await this.readComposer(composer)
+      // Empty means the site took it; any change means the site reacted (a
+      // kept draft with a newline, a rendered message). Only a composer that
+      // is identical to what was typed shows the key press was dropped.
+      if (after === undefined || after !== typed) return
+      await this.page.keyboard.press(driver.submitKey)
+      await sleep(Math.max(typeDelayMs, 600))
+      if (await this.readComposer(composer) === typed) {
+        throw new BrowserTransportError('chathub-ui-drift', `${this.key}: the input kept the prompt; the message was not sent`)
+      }
     } catch (error) {
       throw classifyPageError(error, `${this.key}: submitting the prompt`)
     }
+  }
+
+  /**
+   * Resolve the chat input the user would type into.
+   *
+   * A site can ship several matching nodes (a hidden legacy textarea, an
+   * off-screen editor) and only one of them is the composer.
+   * @param selector - chat input selector.
+   * @returns The first visible match, or the first match when none reports as visible.
+   */
+  private async visibleInput(selector: string): Promise<BrowserInputLike> {
+    const locator = this.page.locator(selector)
+    const count = await locator.count()
+    for (let index = 0; index < count; index += 1) {
+      const candidate = locator.nth(index)
+      if (await candidate.isVisible()) return candidate
+    }
+    // Nothing reported as visible: the caller's bounding-box check owns the
+    // failure, which keeps the diagnosis in one place.
+    return locator.first()
+  }
+
+  /**
+   * Read one composer's text back.
+   * @param composer - the input element the prompt was typed into.
+   * @returns Its visible text, or `undefined` when it cannot be read.
+   */
+  private async readComposer(composer: BrowserInputLike): Promise<string | undefined> {
+    const html = await composer.innerHTML({ timeout: this.actionTimeoutMs })
+    // A textarea renders no children, so an empty read says nothing about it.
+    if (html.trim().length === 0) return undefined
+    return plainText(html)
   }
 
   /** @returns Resolves when the page is closed. */
@@ -168,4 +235,31 @@ export class PlaywrightPage implements ChatPageHandle {
       throw classifyPageError(error, `${this.key}: inspecting "${selector}"`)
     }
   }
+}
+
+/**
+ * Opening text of a prompt, used to recognise it inside a composer.
+ * @param prompt - rendered prompt.
+ * @returns Its first characters with whitespace collapsed.
+ */
+function composerMarker(prompt: string): string {
+  return prompt.replace(/\s+/gu, ' ').trim().slice(0, 24)
+}
+
+/**
+ * Visible text of a composer's markup.
+ * @param html - composer `innerHTML`.
+ * @returns Text with entities decoded and whitespace collapsed.
+ */
+function plainText(html: string): string {
+  return html
+    .replace(/<[^>]*>/gu, ' ')
+    .replace(/&lt;/gu, '<')
+    .replace(/&gt;/gu, '>')
+    .replace(/&quot;/gu, '"')
+    .replace(/&#(?:39|x27);/gu, "'")
+    .replace(/&nbsp;/gu, ' ')
+    .replace(/&amp;/gu, '&')
+    .replace(/\s+/gu, ' ')
+    .trim()
 }

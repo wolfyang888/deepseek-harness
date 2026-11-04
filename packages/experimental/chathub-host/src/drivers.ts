@@ -71,7 +71,12 @@ export const DEFAULT_SITE_DRIVERS: Readonly<SiteDrivers> = {
     input: 'div[contenteditable="true"], textarea',
     // Answers render in a markdown body inside the answer block; the hashed
     // answer-item containers are the fallback when the class names churn.
-    answer: '.markdown-body, [class*="answer-content"], [class*="answerItem"]',
+    // The reply sits in an `answer-content-wrap`; the thinking card reuses that
+    // wrap with an extra `text-advance-thinking-content` class, and the landing
+    // page's promo blocks carry their own markdown. Naming the reply's wrapper
+    // and excluding the thinking variant keeps every other markdown block on
+    // the page out of the answer.
+    answer: '.answer-content-wrap:not([class*="thinking"])',
     // The card wraps a "思考中" strip and the reply; only the body is the answer.
     answerBody: '.markdown-body',
     pending: '思考中|正在思考|生成中|正在生成|输出中|停止生成',

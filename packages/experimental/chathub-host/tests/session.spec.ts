@@ -38,6 +38,8 @@ class ScriptedPage implements TurnPage {
   submitError: unknown
   /** Answers returned by successive reads; the last answer repeats once exhausted. */
   answers: string[] = []
+  /** Text the container already holds before the prompt is submitted. */
+  before = ''
 
   /** @returns Whether the page is closed. */
   isClosed(): boolean {
@@ -56,6 +58,8 @@ class ScriptedPage implements TurnPage {
    */
   async answerHtml(selector: string, body?: string): Promise<string> {
     this.asked.push({ selector, body })
+    // Before submission the container is whatever the page already displayed.
+    if (this.submitted.length === 0) return this.before
     const index = Math.min(this.reads, this.answers.length - 1)
     this.reads += 1
     return this.answers[index] ?? ''
@@ -117,6 +121,24 @@ it('does not treat the prompt echo or an empty container as an answer', async ()
   const { session: chat, page } = session()
   page.answers = ['', '<p>hello</p>', '<p>hello answer</p>', '<p>hello answer</p>', '<p>hello answer</p>']
   await expect(chat.send(payload())).resolves.toMatchObject({ content: '<p>hello answer</p>' })
+})
+
+it('never reads text the page already showed as the answer', async () => {
+  const { page } = session()
+  // A landing page's recommendation card sits in the same node the driver
+  // calls an answer; reading it would end the turn on words nobody asked for.
+  page.before = '<p>ChatGLM voice</p>'
+  page.answers = ['<p>ChatGLM voice</p>']
+  const slow: TransportConfig = { ...CONFIG, turnTimeoutMs: 30 }
+  const timed = new PlaywrightChatSession('deepseek-web', page, DRIVER, slow, new FakeGate())
+  await expect(timed.send(payload())).rejects.toMatchObject({ token: 'chathub-turn-timeout' })
+})
+
+it('accepts the answer that replaces a leftover block', async () => {
+  const { session: chat, page } = session()
+  page.before = '<p>leftover</p>'
+  page.answers = ['<p>leftover</p>', '<p>real</p>', '<p>real</p>', '<p>real</p>']
+  await expect(chat.send(payload())).resolves.toMatchObject({ content: '<p>real</p>' })
 })
 
 it('reads the answer through the driver body scope', async () => {
