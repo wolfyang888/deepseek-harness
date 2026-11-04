@@ -10,12 +10,17 @@
  * "the model said done" is never the evidence.
  *
  * What it does:
- *   1. launches a throwaway Chrome profile and opens the site once,
+ *   1. opens the host's own Chrome profile (so a site signed in through the
+ *      panel is signed in here) and opens the site once,
  *   2. runs up to `DEMO_ROUNDS` steps of the loop, each a fresh site
  *      conversation carrying the whole history in its prompt,
  *   3. executes `read` / `edit` / `write` under `DEMO_ROOT`, refusing any path
  *      that escapes it,
  *   4. prints the diff and runs `DEMO_VERIFY`, so the outcome is measured.
+ *
+ * Every site measured so far answers an instruction-shaped prompt only for a
+ * signed-in session; a visitor session shows the user message and then a
+ * sign-in or promo card. Sign in through the panel once, close it, then run.
  *
  * Run from a source checkout, against a site the machine can reach:
  *   DEMO_ROOT=D:/work/code/gitee/lua_device \
@@ -23,6 +28,9 @@
  *
  * Environment:
  *   DEMO_SITE             site driver id (default `glm-web`)
+ *   DEMO_PROFILE          Chrome profile to open (default: the host's own
+ *                         `$DSH_HOME/chathub-profile` when it exists, so a site
+ *                         signed in through the panel is already signed in here)
  *   DEMO_ROOT             workspace the tools may touch (default cwd)
  *   DEMO_TASK             task text (default: a one-line change in the demo plugin)
  *   DEMO_VERIFY           completion command, run after the loop (default: the
@@ -33,9 +41,9 @@
  *                         (default `DEMO_ROOT`; set it when the checkout has no browser)
  */
 
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import type { GenerateOptions, RequestMessage, StreamChunk, ToolSchema } from '@deepseek-ai/dsh-llm'
@@ -104,6 +112,24 @@ interface Outcome {
 function chromiumOf(): ChromiumLike {
   const require = createRequire(join(PLAYWRIGHT_ROOT, 'package.json'))
   return (require('playwright-core') as { chromium: ChromiumLike }).chromium
+}
+
+/**
+ * The Chrome profile the demo opens.
+ *
+ * A guest profile can read a site but not ask it to work: chatglm.cn answers a
+ * signed-out visitor's instruction-shaped prompt with a promo card and no
+ * reply, which is indistinguishable from a broken transport. The host's own
+ * profile is used when it exists, so a site signed in through the panel is
+ * already signed in here; `DEMO_PROFILE` overrides, and a machine with no
+ * profile yet gets a throwaway one.
+ * @returns The profile directory and whether it is the host's.
+ */
+function profileDir(): { path: string; shared: boolean } {
+  const dshHome = process.env.DSH_HOME ?? join(homedir(), '.dsh')
+  const host = process.env.DEMO_PROFILE ?? join(dshHome, 'chathub-profile')
+  if (existsSync(host)) return { path: host, shared: true }
+  return { path: mkdtempSync(join(tmpdir(), 'dsh-chathub-loop-')), shared: false }
 }
 
 /** One lease per key: the demo runs a single turn at a time. */
@@ -265,8 +291,7 @@ async function openBrowser(driver: SiteDriverConfig): Promise<{
   bodyText: () => Promise<string>
   close: () => Promise<void>
 }> {
-  const profile = mkdtempSync(join(tmpdir(), 'dsh-chathub-loop-'))
-  const context = await chromiumOf().launchPersistentContext(profile, {
+  const context = await chromiumOf().launchPersistentContext(PROFILE.path, {
     headless: HEADLESS,
     viewport: null,
     args: ['--no-first-run', '--no-default-browser-check'],
@@ -322,6 +347,9 @@ function request(messages: readonly RequestMessage[]): GenerateOptions {
   }
 }
 
+/** Resolved once: creating the throwaway profile twice would open two directories. */
+const PROFILE = profileDir()
+
 const driver = DEFAULT_SITE_DRIVERS[SITE]
 if (driver === undefined) throw new Error(`unknown site "${SITE}"`)
 
@@ -353,6 +381,7 @@ const messages: RequestMessage[] = [
 ]
 
 console.log(`site=${SITE} root=${ROOT} headless=${HEADLESS} rounds=${String(ROUNDS)}`)
+console.log(`profile=${PROFILE.path}${PROFILE.shared ? ' (host profile: close the panel first, it holds a lock)' : ' (throwaway: sign-in sites will refuse)'}`)
 let finished = false
 try {
   for (let round = 1; round <= ROUNDS; round += 1) {
@@ -384,8 +413,21 @@ try {
     } as unknown as RequestMessage)
   }
 } catch (error) {
+  const page = await browser.bodyText()
   console.log(`\n  failed at: ${browser.url()}`)
-  console.log(`  page: ${await browser.bodyText()}`)
+  console.log(`  page: ${page}`)
+  // Measured against chatglm.cn, doubao.com, and qianwen.com: a visitor session
+  // accepts the text, shows the user message, and then answers nothing — the
+  // page shows a sign-in or a promo card instead. The transport reports that as
+  // a timeout, which reads like a harness bug until the site's own state is said
+  // out loud.
+  if (/登录|sign in|扫码|扫描二维码|下载电脑版/u.test(page)) {
+    console.log('  hint: the site is asking for a sign-in. A guest session will not answer an')
+    console.log('        instruction-shaped prompt no matter how long the timeout is. Run')
+    console.log('        `pnpm dsh web --patch packages/experimental/chathub-host/cordis.patch.yml \\`')
+    console.log('        `  --patch packages/experimental/llm-chathub/cordis.patch.yml`, sign the site in')
+    console.log('        once in providers, then close the panel and run this again.')
+  }
   throw error
 } finally {
   await browser.close()
