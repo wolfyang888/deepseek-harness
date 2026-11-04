@@ -34,7 +34,7 @@ export { BrowserTransportError, type BrowserTransportErrorCode } from './errors.
 export { DEFAULT_SITE_DRIVERS, assertEveryAdapterHasDriver, resolveSiteDrivers } from './drivers.ts'
 export { PlaywrightPage } from './page.ts'
 export { PlaywrightBrowserRuntime } from './runtime.ts'
-export { PlaywrightChatSession } from './session.ts'
+export { PlaywrightChatSession, answerTextOf } from './session.ts'
 export { PlaywrightWebChatTransport, WEB_TRANSPORT_FAILURE_RULES } from './transport.ts'
 export { ChatHubController, type ChatHubControllerOptions } from './controller.ts'
 export {
