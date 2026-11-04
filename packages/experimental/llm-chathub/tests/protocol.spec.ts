@@ -53,6 +53,18 @@ describe('parseAnswer', () => {
     expect(parseAnswer(reply('{"name": }'), POLICY).invalid).toBe('the tool call block is not valid JSON')
   })
 
+  it('accepts a block typed with curly quotes by an IME', () => {
+    // A real subject (chatglm.cn) answered exactly this way.
+    const parsed = parseAnswer(reply('{“name”:“read”,“arguments”:{“file_path”:“src/main.ts”}}'), POLICY)
+    expect(parsed.invalid).toBeUndefined()
+    expect(parsed.call).toEqual({ name: 'read', arguments: { file_path: 'src/main.ts' } })
+  })
+
+  it('keeps rejecting text that only looks like a quoted object', () => {
+    expect(parseAnswer(reply('“name”:“read”'), POLICY).invalid)
+      .toBe('the tool call block carries no JSON object')
+  })
+
   it('rejects a block whose only JSON is an array of values', () => {
     expect(parseAnswer(reply('["read"]'), POLICY).invalid).toBe('the tool call block carries no JSON object')
   })

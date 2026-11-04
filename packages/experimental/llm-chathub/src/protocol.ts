@@ -50,17 +50,17 @@ export function parseAnswer(raw: string, policy: ChatHubParsePolicy): ChatHubPar
     warnings.push(`kept 1 of ${String(blocks)} call blocks: one reply runs at most ${String(policy.maxToolCallsPerTurn)} call`)
   }
   const body = raw.slice(open + TOOL_CALL_OPEN.length, close)
-  const json = jsonObjectAt(body)
-  if (json === undefined) {
-    return { text, invalid: 'the tool call block carries no JSON object', warnings }
+  const decoded = decodeBlock(body)
+  if (decoded.parsed === undefined) {
+    return {
+      text,
+      invalid: decoded.found
+        ? 'the tool call block is not valid JSON'
+        : 'the tool call block carries no JSON object',
+      warnings,
+    }
   }
-  let parsed: Record<string, unknown>
-  try {
-    parsed = JSON.parse(json) as Record<string, unknown>
-  } catch {
-    return { text, invalid: 'the tool call block is not valid JSON', warnings }
-  }
-  const call = readCall(parsed, policy)
+  const call = readCall(decoded.parsed, policy)
   return typeof call === 'string' ? { text, invalid: call, warnings } : { text, call, warnings }
 }
 
@@ -86,6 +86,60 @@ function countBlocks(raw: string): number {
     at = raw.indexOf(TOOL_CALL_OPEN, at + TOOL_CALL_OPEN.length)
   }
   return count
+}
+
+/**
+ * Quote characters an IME or a site's rich-text pass substitutes for ASCII
+ * quotes, mapped back to the character JSON requires.
+ */
+const QUOTE_FOLD = /[\u201c\u201d\u201e\u201f\u2018\u2019\u201a\u201b]/gu
+const QUOTE_FOLDS: Readonly<Record<string, string>> = {
+  '\u201c': '"',
+  '\u201d': '"',
+  '\u201e': '"',
+  '\u201f': '"',
+  '\u2018': "'",
+  '\u2019': "'",
+  '\u201a': "'",
+  '\u201b': "'",
+}
+
+/**
+ * Decode the JSON object a block body carries.
+ *
+ * A reply typed through a Chinese IME arrives with curly quotes — a real
+ * subject wrote `{“name”:“grep”}` — which JSON rejects. The literal text is
+ * tried first so a well-formed block is never rewritten, and only a failed
+ * attempt falls back to folding quote characters back to ASCII.
+ * @param body - text between the block delimiters.
+ * @returns Whether an object was found, and its value when it parsed.
+ */
+function decodeBlock(body: string): { found: boolean; parsed?: Record<string, unknown> } {
+  let found = false
+  for (const source of [body, body.replace(QUOTE_FOLD, char => QUOTE_FOLDS[char] ?? char)]) {
+    const json = jsonObjectAt(source)
+    if (json === undefined) continue
+    found = true
+    const parsed = parseObject(json)
+    if (parsed !== undefined) return { found: true, parsed }
+  }
+  return { found }
+}
+
+/**
+ * @param json - balanced object source.
+ * @returns The decoded object, or `undefined` when it is not a JSON object.
+ */
+function parseObject(json: string): Record<string, unknown> | undefined {
+  let value: unknown
+  try {
+    value = JSON.parse(json)
+  } catch {
+    return undefined
+  }
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined
 }
 
 /**
