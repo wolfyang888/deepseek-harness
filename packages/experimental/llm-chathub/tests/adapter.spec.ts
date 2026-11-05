@@ -406,11 +406,21 @@ describe('ChatHubLlmAdapter auxiliary requests', () => {
     expect(source.prompts).toEqual([])
   })
 
-  it('refuses a compaction summary the same way', async () => {
+  it('serves a compaction summary: its output is the caller\'s result', async () => {
     const source = new FakeSource()
-    await expect(collect(adapter(source).stream({ ...request(), purpose: 'compaction' })))
-      .rejects.toMatchObject({ code: 'INVALID_REQUEST' })
-    expect(source.keys).toEqual([])
+    const checkpoint = '## Primary Request and Intent\n- fix the build'.repeat(150)
+    source.answers = [checkpoint]
+    const chunks = await collect(adapter(source).stream({ ...request(), purpose: 'compaction' }))
+    expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'stop' } })
+    expect(source.keys).toEqual(['deepseek-web:1'])
+    // A checkpoint outgrows the conversational text budget, so the compaction
+    // turn reads its answer under the raised bound instead of truncating it.
+    const text = chunks
+      .filter((chunk): chunk is Extract<typeof chunk, { type: 'text-delta' }> => chunk.type === 'text-delta')
+      .map(chunk => chunk.text)
+      .join('')
+    expect(text).toHaveLength(checkpoint.trim().length)
+    expect(text.length).toBeGreaterThan(2_000)
   })
 
   it('serves an auxiliary request when the mount allows it', async () => {

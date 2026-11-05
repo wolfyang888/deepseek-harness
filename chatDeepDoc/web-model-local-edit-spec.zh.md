@@ -294,14 +294,15 @@ sequenceDiagram
 | 调用方 | `purpose` | 它带的输入 | 站点看到的后果 |
 |---|---|---|---|
 | `session-title-llm` | `session-title` | 一段 JSON（前几条消息）+ 一句「Generate the session title」 | 站点把它当成本轮任务，回答「理解需求……项目 plugin 实现原理分析」，编码请求根本没被读到 |
-| 上下文压缩 | `compaction` | 要压缩的历史 | 浪费一次页面轮次，返回的摘要还被当成对话内容 |
+| 上下文压缩 | `compaction` | 要压缩的历史 | （2026-11 修订：改为**必须服务**，见下） |
 
 现象就是「发过去的是标题请求，回来的是需求理解」。修法是把辅助请求挡在 adapter 门口，而不是在 prompt 里补救：
 
 ```ts
 private assertConversational(options: GenerateOptions, site: string): void {
   const purpose = options.purpose
-  if (purpose === undefined || this.config.auxiliary === 'allow') return
+  if (purpose === undefined || purpose === 'compaction') return // 压缩自服务，见下
+  if (this.config.auxiliary === 'allow') return
   throw new LlmError(
     `chathub-llm: ${site} does not serve auxiliary "${purpose}" requests; `
     + "point that caller at an API route, or mount with auxiliary: 'allow'",
@@ -313,7 +314,7 @@ private assertConversational(options: GenerateOptions, site: string): void {
 - 抛错发生在 `transport.open()` 之前：**不打开页面、不消耗轮次**，站点上不会留下一条莫名其妙的会话。
 - `session-title` 的失败是良性的：`session-title` 服务在 `defer` 里 `catch` 后只 `logger.warn`，会话保留首条消息生成的兜底标题（`session-title/src/index.ts:534`、`585`）。
 - 想恢复自动标题，就把标题 provider 指到真 API 路由（`session-title-llm` 的 `provider` + `model` 成对配置），而不是给 `auxiliary: 'allow'`。
-- 同一约束适用于 `compaction`：网页路由不承担压缩，长会话靠 `maxPromptChars` + `historyTurns` 收敛。
+- **`compaction` 是例外（2026-11 修订）**：实测发现拒绝压缩会让纯 web 挂载下的每次模型切换都失败——切换前必须压缩历史，而压缩摘要的默认目标就是当前路由的模型；web-only 环境没有 API 路由可指。压缩请求的输出（检查点）正是调用方要的结果，属于「真对话」，所以 adapter 无条件服务 `compaction`，并把这类回答的文本预算从 2k 提到 16k 字符。配套地，`llm-chathub/cordis.patch.yml` 额外带一条针对 `compaction-basic` 的顶层补丁：为每个挂载站点生成 `headroomTokens: 8192` 的 modelPolicies——否则 32k 声明窗口装不下默认 64k 压缩余量，预算检查在切换路径上直接抛 `MODEL_SWITCH_COMPACTION_FAILED`。
 
 ## 4. 代码落点
 
@@ -547,7 +548,7 @@ assistant: <上一轮说明>
 | `chathub-network`、无法识别的传输失败 | `TRANSPORT` | 重试 |
 | 回答非法且自纠预算用尽 | `MALFORMED_RESPONSE` | 终止，原因里点出出错块 |
 | 无历史可丢仍超预算 | `CONTEXT_WINDOW_EXCEEDED` | 走压缩，不重试同一段文本 |
-| 带 `purpose` 的辅助请求（标题、压缩） | `INVALID_REQUEST` | 不打开页面；标题服务降级为兜底标题 |
+| 带 `purpose` 的辅助请求（标题等；`compaction` 例外，始终服务） | `INVALID_REQUEST` | 不打开页面；标题服务降级为兜底标题 |
 | 调用方取消 | `ABORTED` | 立即结束 |
 
 `llm-retry` 按 `retryableCodes` 判定（`llm-retry/src/index.ts:212`）：`TRANSPORT`、`RATE_LIMIT`、`TIMEOUT` 可重试，`AUTH`、`SERVER`、`MALFORMED_RESPONSE`、`CONTEXT_WINDOW_EXCEEDED` 不可重试。

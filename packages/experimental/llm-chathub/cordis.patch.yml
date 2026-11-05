@@ -23,10 +23,13 @@
 #   DSH_CHATHUB_LLM_VERIFY   comma-separated verification commands stated in the
 #                            prompt's project block (default `pnpm run typecheck`)
 #   DSH_CHATHUB_LLM_AUXILIARY  `refuse` (default) or `allow`: whether auxiliary
-#                            calls (session titles, compaction) may spend a site
-#                            turn. Refusing keeps the title request from being
-#                            read by the site as the task; point those callers at
-#                            an API route instead.
+#                            calls other than compaction (session titles, …) may
+#                            spend a site turn. Refusing keeps the title request
+#                            from being read by the site as the task; point those
+#                            callers at an API route instead. Compaction is
+#                            always served: its checkpoint output IS the
+#                            caller's result, and without it every model switch
+#                            fails on a web-only mount.
 - insert:
     - id: llm-chathub
       name: '@deepseek-ai/dsh-experimental-llm-chathub'
@@ -36,5 +39,26 @@
         model: !!js process.env.DSH_CHATHUB_LLM_MODEL ?? 'web-model'
         workspaceRoot: !!js process.env.DSH_CHATHUB_LLM_ROOT ?? process.cwd()
         allowTools: !!js (process.env.DSH_CHATHUB_LLM_TOOLS ?? 'read,grep,glob,edit,write').split(',')
-        verifyCommands: !!js (process.env.DSH_CHATHUB_LLM_VERIFY ?? 'pnpm run typecheck').split(',')
+        verifyCommands: !!js process.env.DSH_CHATHUB_LLM_VERIFY ?? 'pnpm run typecheck'
         auxiliary: !!js process.env.DSH_CHATHUB_LLM_AUXILIARY ?? 'refuse'
+
+# The compaction engine prices every routed model against its declared context
+# window. These routes declare 32k — below the 64k default compaction headroom —
+# so without a per-route policy every model switch fails with
+# MODEL_SWITCH_COMPACTION_FAILED. Pin a small-headroom policy per mounted site;
+# the engine ignores policies for routes that do not exist, and this override
+# replaces any earlier `compaction-basic` config (patch overrides replace the
+# whole config object). A separate top-level patch entry so it targets the
+# bundle's mounted row instead of inserting a new one.
+- id: compaction-basic
+  config:
+    modelPolicies: !!js |
+      (process.env.DSH_CHATHUB_LLM_SITES ?? process.env.DSH_CHATHUB_LLM_SITE ?? 'deepseek-web')
+        .split(',')
+        .filter(Boolean)
+        .map((site) => ({
+          provider: `${site.trim()}-chathub`,
+          model: process.env.DSH_CHATHUB_LLM_MODEL ?? 'web-model',
+          headroomTokens: 8192,
+          maxTokens: 8192,
+        }))

@@ -50,6 +50,12 @@ const TRANSPORT_CODES: Readonly<Record<string, string>> = {
 /** Route ids are `<site>` plus this suffix; stripping it recovers the site. */
 const ROUTE_SUFFIX = '-chathub'
 
+/** Answer-text budget for a compaction turn: a checkpoint outgrows a reply. */
+const COMPACTION_ANSWER_CHARS = 16_000
+
+/** Answer-text budget for a conversational turn. */
+const ANSWER_CHARS = 2_000
+
 /**
  * Drives one route per configured site as LLM routes.
  *
@@ -112,7 +118,10 @@ export class ChatHubLlmAdapter extends LlmAdapter {
     const site = this.siteOf(options.provider)
     this.assertConversational(options, site)
     const rendered = this.render(options)
-    const parsed = await this.askUntilLegal(rendered.prompt, site, options.signal)
+    const answerBudget = (options.purpose as string | undefined) === 'compaction'
+      ? COMPACTION_ANSWER_CHARS
+      : ANSWER_CHARS
+    const parsed = await this.askUntilLegal(rendered.prompt, site, options.signal, answerBudget)
     const call = parsed.call
     this.report({
       ...options.sessionId === undefined ? {} : { sessionId: String(options.sessionId) },
@@ -147,6 +156,12 @@ export class ChatHubLlmAdapter extends LlmAdapter {
    * returns text the caller cannot use — and, on a site that reads the newest
    * message as the task, it is what made a coding session look like it was
    * summarising titles. The caller fails over to its configured API route.
+   *
+   * The `compaction` purpose is served regardless: its output IS the caller's
+   * result, and refusing it makes every model switch fail on a web-only mount,
+   * where no API route exists to summarize the history instead. The site sees
+   * the replayed conversation plus the checkpoint instruction, which is exactly
+   * the self-compaction turn a web model can run.
    * @param options - the assembled request.
    * @param site - site provider the route selected.
    * @throws LlmError with `INVALID_REQUEST` for a refused auxiliary purpose.
@@ -155,7 +170,8 @@ export class ChatHubLlmAdapter extends LlmAdapter {
     // A forwarding adapter sees whatever purpose string a caller declares; this
     // package declares none of its own, so the field types as `never` here.
     const purpose = options.purpose as string | undefined
-    if (purpose === undefined || this.config.auxiliary === 'allow') return
+    if (purpose === undefined || purpose === 'compaction') return
+    if (this.config.auxiliary === 'allow') return
     throw new LlmError(
       `chathub-llm: ${site} does not serve auxiliary "${purpose}" requests; `
       + "point that caller at an API route, or mount with auxiliary: 'allow'",
@@ -177,9 +193,10 @@ export class ChatHubLlmAdapter extends LlmAdapter {
    * @param prompt - the rendered prompt.
    * @param site - site provider the route selected.
    * @param signal - caller cancellation.
+   * @param maxTextChars - answer-text budget; compaction turns raise it.
    * @returns The last reply with its attempt count and answer length.
    */
-  private async askUntilLegal(prompt: string, site: string, signal?: AbortSignal): Promise<{
+  private async askUntilLegal(prompt: string, site: string, signal?: AbortSignal, maxTextChars = ANSWER_CHARS): Promise<{
     text: string
     call?: ChatHubToolCall
     invalid?: string
@@ -193,7 +210,7 @@ export class ChatHubLlmAdapter extends LlmAdapter {
       attempt += 1
       this.assertNotAborted(site, signal)
       const answer = await this.ask(question, site, signal)
-      const parsed = parseAnswer(answer, this.parsePolicy())
+      const parsed = parseAnswer(answer, { ...this.parsePolicy(), maxTextChars })
       if (parsed.invalid === undefined || attempt > this.config.repairAttempts) {
         return { ...parsed, attempt, answerChars: answer.length }
       }

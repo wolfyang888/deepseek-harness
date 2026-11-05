@@ -78,6 +78,7 @@ The layer mounts one `llm-chathub` row with environment-driven defaults: `DSH_CH
 | `workspaceRoot` | the host process's cwd | Absolute root every absolute path argument must stay under |
 | `maxToolCallsPerTurn` | `1` | Accepted calls per reply; extra blocks are dropped with a warning |
 | `repairAttempts` | `1` | Extra rounds granted to a rejected reply |
+| `auxiliary` | `refuse` | Whether auxiliary calls other than compaction (session titles, …) may spend a site turn; compaction is always served, because its checkpoint output is the caller's result and refusing it fails every model switch on a web-only mount |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-experimental-llm-chathub) is the exhaustive source for every accepted field.
 

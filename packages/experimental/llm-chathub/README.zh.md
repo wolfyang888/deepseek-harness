@@ -78,6 +78,7 @@ pnpm dsh web --patch packages/experimental/chathub-host/cordis.patch.yml --patch
 | `workspaceRoot` | 宿主进程工作目录 | 绝对路径参数必须落在此根目录内 |
 | `maxToolCallsPerTurn` | `1` | 每次回答接受的调用数，多余的块丢弃并告警 |
 | `repairAttempts` | `1` | 被拒回答额外获得的轮数 |
+| `auxiliary` | `refuse` | 除压缩以外的辅助调用（会话标题等）是否可以消耗一次站点轮次；压缩始终服务——它的检查点输出就是调用方的结果，拒绝它会让纯 web 挂载下的每次模型切换都失败 |
 
 自动生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-experimental-llm-chathub)是全部可接受字段的完整来源。
 
