@@ -39,7 +39,7 @@
         model: !!js process.env.DSH_CHATHUB_LLM_MODEL ?? 'web-model'
         workspaceRoot: !!js process.env.DSH_CHATHUB_LLM_ROOT ?? process.cwd()
         allowTools: !!js (process.env.DSH_CHATHUB_LLM_TOOLS ?? 'read,grep,glob,edit,write').split(',')
-        verifyCommands: !!js process.env.DSH_CHATHUB_LLM_VERIFY ?? 'pnpm run typecheck'
+        verifyCommands: !!js (process.env.DSH_CHATHUB_LLM_VERIFY ?? 'pnpm run typecheck').split(',')
         auxiliary: !!js process.env.DSH_CHATHUB_LLM_AUXILIARY ?? 'refuse'
 
 # The compaction engine prices every routed model against its declared context
