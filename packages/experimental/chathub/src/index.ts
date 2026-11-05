@@ -65,6 +65,7 @@ export { QianwenWebProvider } from './providers/qianwen-web.ts'
 export { GlmWebProvider } from './providers/glm-web.ts'
 export { webProviderAdapters } from './providers/adapters.ts'
 export type { WebProviderAdapterOptions } from './providers/adapters.ts'
+export { answerMarkdownOf } from './providers/answer-markdown.ts'
 export { SessionManager } from './session-manager.ts'
 export type {
   BuildRequestInput,

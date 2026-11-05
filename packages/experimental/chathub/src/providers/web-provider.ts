@@ -1,6 +1,7 @@
 /** Browser-backed provider base class plus the transport seam it drives. */
 
 import { ChatHubError, errorMessage, type ChatHubErrorCode } from '../errors.ts'
+import { answerMarkdownOf } from './answer-markdown.ts'
 import type {
   ChatFinishReason,
   ChatMessage,
@@ -354,7 +355,7 @@ export abstract class WebModelProvider implements IModelProvider {
         this.markContextSent()
         yield {
           index: 0,
-          content: raw.content,
+          content: answerMarkdownOf(raw.content),
           finishReason: raw.finishReason ?? 'stop',
           metadata: raw.usage === undefined ? {} : { usage: raw.usage },
         }
@@ -430,6 +431,12 @@ export abstract class WebModelProvider implements IModelProvider {
 
   /**
    * Shape a raw site answer into the provider-agnostic response.
+   *
+   * The site's answer is read out of its rendered DOM, and the panel renders
+   * model output through the same Markdown pipeline the DeepSeek chat box
+   * uses — the site's layout nodes became blank stretches and its `<video>`
+   * sources can never play inside the panel. Storing Markdown keeps the
+   * reader's typography the only one that applies.
    * @param raw - Answer returned by the browser session.
    * @param sessionId - Session that issued the turn.
    * @param providerId - Provider that answered.
@@ -439,7 +446,7 @@ export abstract class WebModelProvider implements IModelProvider {
     return {
       providerId,
       sessionId,
-      content: raw.content,
+      content: answerMarkdownOf(raw.content),
       ...raw.usage === undefined ? {} : { usage: raw.usage },
       finishReason: raw.finishReason ?? 'stop',
       ...raw.metadata === undefined ? {} : { metadata: raw.metadata },
