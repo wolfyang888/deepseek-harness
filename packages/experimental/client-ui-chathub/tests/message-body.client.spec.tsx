@@ -32,6 +32,18 @@ it('drops scripting, styling, and page-level elements with their content', () =>
   expect(clean).not.toContain('id=')
 })
 
+it('drops media the panel cannot play and layout blocks that hold nothing', () => {
+  const clean = sanitizeAnswer(
+    '<div></div><p>   </p><video src="blob:https://x/1"></video><audio src="/a.mp3"></audio>'
+    + '<p><br></p><p>正文</p>',
+  )
+  expect(clean).toContain('正文')
+  expect(clean).not.toContain('video')
+  expect(clean).not.toContain('audio')
+  expect(clean).not.toContain('<div')
+  expect(clean).not.toContain('<br')
+})
+
 it('renders Markdown answers through the Markdown renderer', () => {
   render(<MessageBody text={'**bold**'} labels={LABELS} />)
   expect(screen.getByText('bold').tagName).toBe('STRONG')

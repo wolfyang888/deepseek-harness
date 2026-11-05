@@ -8755,10 +8755,20 @@ importers:
         version: 4.23.13
 
   packages/experimental/chathub:
+    dependencies:
+      '@joplin/turndown-plugin-gfm':
+        specifier: ^1.0.67
+        version: 1.0.67
+      turndown:
+        specifier: ^7.2.4
+        version: 7.2.4
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: workspace:~
         version: link:../../../vendor/cordis
+      '@types/turndown':
+        specifier: ^5.0.6
+        version: 5.0.6
 
   packages/experimental/chathub-host:
     dependencies:

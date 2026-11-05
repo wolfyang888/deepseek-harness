@@ -28,12 +28,15 @@ const HTML_MARKUP = new RegExp(`<(?:${BLOCK_TAGS.join('|')})\\b`, 'iu')
 
 /**
  * Elements dropped before rendering: styling and scripting reach past the
- * bubble, and forms or frames have no meaning inside a conversation.
+ * bubble, forms or frames have no meaning inside a conversation, and media
+ * cannot play — a `<video>` carries a `blob:` source that dies with its page
+ * or a site-relative one that resolves against the panel's origin, so it
+ * rendered as a dead box no click could start.
  */
 const FORBIDDEN_TAGS = [
   'style', 'script', 'link', 'meta', 'base', 'iframe', 'frame', 'frameset',
   'object', 'embed', 'form', 'input', 'button', 'select', 'option', 'textarea',
-  'noscript', 'template', 'dialog',
+  'noscript', 'template', 'dialog', 'video', 'audio', 'source', 'track', 'svg',
 ]
 
 /**
@@ -48,12 +51,21 @@ export function looksLikeHtml(text: string): boolean {
 /**
  * Sanitize one HTML answer for inline rendering.
  * @param html - untrusted provider answer.
- * @returns markup with scripts, styling, page-level elements, and inline
- * style/class/id attributes removed, so the panel's typography is the only one
- * that applies and no answer can reposition the shell around its bubble.
+ * @returns markup with scripts, styling, page-level elements, dead media, and
+ * inline style/class/id attributes removed; empty block elements the site used
+ * as layout spacers are removed too, because with every class and style gone
+ * they are the blank stretch a legacy answer opened with.
  */
 export function sanitizeAnswer(html: string): string {
-  return DOMPurify.sanitize(html, { FORBID_TAGS: FORBIDDEN_TAGS, FORBID_ATTR: ['style', 'class', 'id'] })
+  const clean = new DOMParser().parseFromString(
+    DOMPurify.sanitize(html, { FORBID_TAGS: FORBIDDEN_TAGS, FORBID_ATTR: ['style', 'class', 'id'] }),
+    'text/html',
+  )
+  for (const element of clean.body.querySelectorAll('p, div, section, span, figure')) {
+    const keeps = element.querySelector('img, table, a[href], ul, ol, pre, blockquote') !== null
+    if (!keeps && element.textContent.trim().length === 0) element.remove()
+  }
+  return clean.body.innerHTML
 }
 
 /**
