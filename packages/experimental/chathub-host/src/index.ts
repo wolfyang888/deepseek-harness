@@ -20,6 +20,7 @@ import { assertEveryAdapterHasDriver, resolveSiteDrivers } from './drivers.ts'
 import { PlaywrightBrowserRuntime } from './runtime.ts'
 import { PlaywrightWebChatTransport, WEB_TRANSPORT_FAILURE_RULES } from './transport.ts'
 import { ChatHubController } from './controller.ts'
+import { resolvePacing } from './pacing.ts'
 import type {
   BrowserContextLike,
   ChromiumLauncher,
@@ -32,6 +33,7 @@ import type {
 
 export { BrowserTransportError, type BrowserTransportErrorCode } from './errors.ts'
 export { DEFAULT_SITE_DRIVERS, assertEveryAdapterHasDriver, resolveSiteDrivers } from './drivers.ts'
+export { PACING_PRESETS, PacingGovernor, resolvePacing } from './pacing.ts'
 export { PlaywrightPage } from './page.ts'
 export { PlaywrightBrowserRuntime } from './runtime.ts'
 export { PlaywrightChatSession, answerTextOf, answerMarkupText } from './session.ts'
@@ -128,6 +130,14 @@ export class WebChatTransportService extends TypertRemoteService {
     stablePolls: z.natural().min(1).required(),
     maxQueuedTurns: z.natural().min(1).required(),
     typeDelayMs: z.natural().required(),
+    // The anti-abuse envelope is on by default: a web model is not an API, and
+    // an unpaced agent loop is the pattern that gets an account flagged.
+    pacing: z.object({
+      profile: z.union(['conservative', 'balanced', 'responsive', 'off'] as const).default('conservative'),
+      minTurnGapMs: z.natural(),
+      maxTurnsPerHour: z.natural(),
+      maxWaitMs: z.natural(),
+    }).default({}),
     drivers: z.dict(z.object({
       url: z.string().min(1),
       input: z.string().min(1),
@@ -137,6 +147,7 @@ export class WebChatTransportService extends TypertRemoteService {
       submitKey: z.string().min(1),
       stablePolls: z.natural().min(1),
       pollMs: z.natural().min(1),
+      maxPromptChars: z.natural().min(1),
     })).default({}),
   })
 
@@ -156,7 +167,11 @@ export class WebChatTransportService extends TypertRemoteService {
     super(ctx, 'webChatTransport', { namespace: 'webChat' })
     const drivers = resolveSiteDrivers(config.drivers)
     assertEveryAdapterHasDriver(drivers)
-    const resolved: ResolvedConfig = { ...config, drivers: config.drivers ?? {} }
+    const resolved: ResolvedConfig = {
+      ...config,
+      drivers: config.drivers ?? {},
+      pacing: resolvePacing(config.pacing),
+    }
     this.runtime = new PlaywrightBrowserRuntime(
       config.browser,
       { actionTimeoutMs: config.actionTimeoutMs, pollMs: config.pollMs },

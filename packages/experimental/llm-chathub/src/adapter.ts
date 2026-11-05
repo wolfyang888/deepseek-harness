@@ -20,6 +20,7 @@ import {
   type LlmResolvedModelInfo,
   type StreamChunk,
 } from '@deepseek-ai/dsh-llm'
+import { appendFile } from 'node:fs/promises'
 import { answerMarkupText } from '@deepseek-ai/dsh-experimental-chathub-host'
 import { parseAnswer } from './protocol.ts'
 import { renderRequest } from './render.ts'
@@ -41,6 +42,7 @@ import {
 const TRANSPORT_CODES: Readonly<Record<string, string>> = {
   'chathub-signed-out': CHATHUB_LLM_AUTH_CODE,
   'chathub-busy': 'RATE_LIMIT',
+  'chathub-paced': 'RATE_LIMIT',
   'chathub-turn-timeout': 'TIMEOUT',
   'chathub-ui-drift': 'SERVER',
   'chathub-browser-unavailable': 'SERVER',
@@ -129,6 +131,7 @@ export class ChatHubLlmAdapter extends LlmAdapter {
     const site = this.siteOf(options.provider)
     this.assertConversational(options, site)
     const rendered = this.render(options, site)
+    await this.recordPrompt(site, rendered.prompt)
     const answerBudget = (options.purpose as string | undefined) === 'compaction'
       ? COMPACTION_ANSWER_CHARS
       : ANSWER_CHARS
@@ -344,6 +347,33 @@ export class ChatHubLlmAdapter extends LlmAdapter {
       throw new LlmError(`chathub-llm: route "${route}" is not one of ${this.config.sites.join(', ')}`, 'INVALID_REQUEST')
     }
     return site
+  }
+
+  /**
+   * Append the exact prompt the site will read to an opt-in tape.
+   *
+   * The rendered prompt is the only artifact that shows what the model was
+   * actually asked, and the two most expensive bugs on this channel — a task
+   * replaced by a runtime-context blurb, a prompt truncated by a composer
+   * cap — were invisible from the panel and obvious from this text.
+   * `DSH_CHATHUB_LLM_PROMPT_LOG=<file>` turns the tape on; logging never
+   * fails a turn.
+   * @param site - site provider the route selected.
+   * @param prompt - the rendered prompt.
+   */
+  private async recordPrompt(site: string, prompt: string): Promise<void> {
+    const path = process.env.DSH_CHATHUB_LLM_PROMPT_LOG
+    if (path === undefined || path === '') return
+    try {
+      await appendFile(path, `${JSON.stringify({
+        at: new Date().toISOString(),
+        site,
+        chars: prompt.length,
+        prompt,
+      })}\n`, 'utf8')
+    } catch {
+      // A tape that cannot be written must not cost the turn it records.
+    }
   }
 
   /**

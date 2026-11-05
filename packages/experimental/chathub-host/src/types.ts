@@ -110,17 +110,45 @@ export interface TransportConfig {
   typeDelayMs: number
 }
 
+/** Named anti-abuse envelopes; see {@linkcode PACING_PRESETS}. */
+export type PacingProfile = 'conservative' | 'balanced' | 'responsive' | 'off'
+
+/** A composer-independent pacing envelope for one site's turns. */
+export interface PacingPolicy {
+  /** Minimum milliseconds between two turn starts on the same site. */
+  minTurnGapMs: number
+  /** Turn starts allowed inside one rolling hour; 0 removes the cap. */
+  maxTurnsPerHour: number
+  /** Longest wait the governor performs before refusing the turn. */
+  maxWaitMs: number
+}
+
+/** Configured pacing: a profile, per-field overrides, or both. */
+export interface PacingConfig {
+  /** Shipped envelope to start from; defaults to `conservative`. */
+  profile?: PacingProfile
+  /** Overrides the profile's minimum gap. */
+  minTurnGapMs?: number
+  /** Overrides the profile's hourly budget. */
+  maxTurnsPerHour?: number
+  /** Overrides the profile's longest tolerated wait. */
+  maxWaitMs?: number
+}
+
 /** Service configuration after schema defaults have been applied. */
 export interface Config extends TransportConfig {
   /** Browser ownership mode and launch inputs. */
   browser: BrowserRuntimeConfig
   /** Provider-id keyed partial overrides of the shipped site drivers. */
   drivers?: Record<string, Partial<SiteDriverConfig>>
+  /** Anti-abuse envelope applied to every site turn; omitted keeps the default profile. */
+  pacing?: PacingConfig
 }
 
-/** Service configuration with the driver-override map present. */
-export interface ResolvedConfig extends Config {
+/** Service configuration with the driver-override map and pacing policy resolved. */
+export interface ResolvedConfig extends Omit<Config, 'pacing'> {
   drivers: Record<string, Partial<SiteDriverConfig>>
+  pacing: PacingPolicy
 }
 
 /** One registered provider's identity and current health. */

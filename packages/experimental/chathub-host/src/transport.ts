@@ -2,6 +2,7 @@
 
 import { PlaywrightChatSession } from './session.ts'
 import { BrowserTransportError } from './errors.ts'
+import { PacingGovernor, resolvePacing } from './pacing.ts'
 import type {
   ProviderFailureRule,
   WebChatTransport,
@@ -17,6 +18,7 @@ export const WEB_TRANSPORT_FAILURE_RULES: readonly ProviderFailureRule[] = [
   { pattern: /chathub-ui-drift/, code: 'provider-unavailable' },
   { pattern: /chathub-turn-timeout/, code: 'stream-interrupted' },
   { pattern: /chathub-busy/, code: 'rate-limited' },
+  { pattern: /chathub-paced/, code: 'rate-limited' },
   { pattern: /chathub-network/, code: 'network-error' },
   { pattern: /chathub-profile-locked/, code: 'provider-unavailable' },
   { pattern: /chathub-browser-unavailable/, code: 'provider-unavailable' },
@@ -30,16 +32,21 @@ export const WEB_TRANSPORT_FAILURE_RULES: readonly ProviderFailureRule[] = [
  * `needs-auth` instead of a failure.
  */
 export class PlaywrightWebChatTransport implements WebChatTransport {
+  /** Anti-abuse envelope; every turn passes through it before a page is opened. */
+  private readonly pacing: PacingGovernor
+
   /**
    * @param runtime - browser ownership and per-key turn serialization.
-   * @param config - resolved timing, queue, and driver-override configuration.
+   * @param config - resolved timing, queue, pacing, and driver-override configuration.
    * @param drivers - validated site drivers for every shipped provider.
    */
   constructor(
     private readonly runtime: TransportRuntime,
     private readonly config: ResolvedConfig,
     private readonly drivers: SiteDrivers,
-  ) {}
+  ) {
+    this.pacing = new PacingGovernor(config.pacing ?? resolvePacing(undefined))
+  }
 
   /**
    * Open or reuse a signed-in session for one provider.
@@ -56,6 +63,9 @@ export class PlaywrightWebChatTransport implements WebChatTransport {
     if (driver === undefined) {
       throw new BrowserTransportError('chathub-driver-missing', `no site driver for "${providerId}"`)
     }
+    // One open is one site turn: pace it before a page exists, so a refused
+    // turn costs no browser work and no site request.
+    await this.pacing.admit(providerId)
     const key = sessionKey ?? providerId
     const page = await this.runtime.acquire(key, driver)
     const signedIn = await page.waitForInput(

@@ -30,6 +30,9 @@
 #                            always served: its checkpoint output IS the
 #                            caller's result, and without it every model switch
 #                            fails on a web-only mount.
+#   DSH_CHATHUB_LLM_PROMPT_LOG  path of a JSONL tape recording every rendered
+#                            prompt (what the site actually read); unset keeps
+#                            the tape off
 - insert:
     - id: llm-chathub
       name: '@deepseek-ai/dsh-experimental-llm-chathub'

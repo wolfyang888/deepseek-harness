@@ -9,6 +9,7 @@ export type BrowserTransportErrorCode =
   | 'chathub-ui-drift'
   | 'chathub-turn-timeout'
   | 'chathub-busy'
+  | 'chathub-paced'
   | 'chathub-network'
   | 'chathub-profile-locked'
   | 'chathub-browser-unavailable'

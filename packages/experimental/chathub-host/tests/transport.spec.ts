@@ -5,9 +5,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import { resolveSiteDrivers } from '../src/drivers.ts'
+import { resolvePacing } from '../src/pacing.ts'
 import { PlaywrightBrowserRuntime } from '../src/runtime.ts'
 import { PlaywrightWebChatTransport } from '../src/transport.ts'
-import type { Config, ResolvedConfig, TransportRuntime } from '../src/types.ts'
+import type { Config, PacingPolicy, ResolvedConfig, TransportRuntime } from '../src/types.ts'
 import { FakeContext, FakeLauncher, FakePage } from './support/fake-browser.ts'
 
 const profiles: string[] = []
@@ -16,7 +17,7 @@ afterEach(async () => {
   await Promise.all(profiles.splice(0).map(path => rm(path, { recursive: true, force: true })))
 })
 
-function config(dir: string): ResolvedConfig {
+function config(dir: string, pacing: PacingPolicy = resolvePacing({ profile: 'off' })): ResolvedConfig {
   const base: Config = {
     browser: { mode: 'managed', profileDir: dir, headless: true },
     loginTimeoutMs: 5,
@@ -27,10 +28,11 @@ function config(dir: string): ResolvedConfig {
     maxQueuedTurns: 2,
     typeDelayMs: 1,
   }
-  return { ...base, drivers: {} }
+  // Tests drive many turns back to back; pacing defaults to off unless a case opts in.
+  return { ...base, drivers: {}, pacing }
 }
 
-async function fixture(visibleInput: boolean): Promise<{
+async function fixture(visibleInput: boolean, pacing?: PacingPolicy): Promise<{
   transport: PlaywrightWebChatTransport
   runtime: TransportRuntime
   context: FakeContext
@@ -45,7 +47,7 @@ async function fixture(visibleInput: boolean): Promise<{
     return page
   }
   launcher.contextFactory = () => context
-  const resolved = config(dir)
+  const resolved = config(dir, pacing)
   const runtime = new PlaywrightBrowserRuntime(
     resolved.browser,
     { actionTimeoutMs: resolved.actionTimeoutMs, pollMs: resolved.pollMs },
@@ -69,6 +71,18 @@ it('reports a signed-out site without throwing', async () => {
   const { transport, context } = await fixture(false)
   await expect(transport.open('deepseek-web')).resolves.toEqual({ closed: true, reason: 'not-signed-in' })
   expect(context.pagesList[0]?.closed).toBe(true)
+  await transport.dispose()
+})
+
+it('holds a second turn until the site envelope allows it', async () => {
+  const policy: PacingPolicy = { minTurnGapMs: 40, maxTurnsPerHour: 0, maxWaitMs: 1_000 }
+  const { transport } = await fixture(true, policy)
+  const started = Date.now()
+  const first = await transport.open('deepseek-web')
+  const second = await transport.open('deepseek-web')
+  expect(Date.now() - started).toBeGreaterThanOrEqual(40)
+  if (first !== undefined && 'send' in first) await first.close()
+  if (second !== undefined && 'send' in second) await second.close()
   await transport.dispose()
 })
 
