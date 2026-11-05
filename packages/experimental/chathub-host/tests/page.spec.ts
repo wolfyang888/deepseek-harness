@@ -169,6 +169,42 @@ it('classifies submission failures', async () => {
   await expect(wrapper.submit('hello', DRIVER, 5)).rejects.toMatchObject({ token: 'chathub-network' })
 })
 
+const BUTTON = 'button[aria-label="发送消息"]'
+const BUTTON_DRIVER = { ...DRIVER, submitButton: BUTTON }
+
+it('clicks the send button instead of pressing the key when the driver names one', async () => {
+  const { wrapper, fake } = page()
+  fake.boxes[DRIVER.input] = { x: 0, y: 0, width: 10, height: 10 }
+  fake.visible.add(BUTTON)
+  fake.texts[DRIVER.input] = '<p>hello world</p>'
+  fake.clearAfterClicks = 1
+  await wrapper.submit('hello world', BUTTON_DRIVER, 1)
+  expect(fake.locatorClicks).toEqual([BUTTON])
+  expect(fake.keys).toEqual([])
+})
+
+it('falls back to the submit key when the send button is absent', async () => {
+  const { wrapper, fake } = page()
+  fake.boxes[DRIVER.input] = { x: 0, y: 0, width: 10, height: 10 }
+  fake.texts[DRIVER.input] = '<p>hello world</p>'
+  fake.clearAfterPresses = 1
+  await wrapper.submit('hello world', BUTTON_DRIVER, 1)
+  expect(fake.locatorClicks).toEqual([])
+  expect(fake.keys).toEqual(['Enter'])
+})
+
+it('falls back to the submit key when the send button is disabled', async () => {
+  const { wrapper, fake } = page()
+  fake.boxes[DRIVER.input] = { x: 0, y: 0, width: 10, height: 10 }
+  fake.visible.add(BUTTON)
+  fake.disabledButtons.add(BUTTON)
+  fake.texts[DRIVER.input] = '<p>hello world</p>'
+  fake.clearAfterPresses = 1
+  await wrapper.submit('hello world', BUTTON_DRIVER, 1)
+  expect(fake.locatorClicks).toEqual([])
+  expect(fake.keys).toEqual(['Enter'])
+})
+
 it('closes an open page once and ignores a closed one', async () => {
   const { wrapper, fake } = page()
   await wrapper.close()

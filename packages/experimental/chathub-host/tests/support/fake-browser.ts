@@ -79,6 +79,18 @@ class FakeLocator implements BrowserInputLike {
     this.page.raise('innerHTML')
     return this.page.texts[this.selector] ?? ''
   }
+
+  /** @returns Whether the selector is in the disabled set. */
+  async isDisabled(): Promise<boolean> {
+    return this.page.disabledButtons.has(this.selector)
+  }
+
+  /** Records one click on this selector. */
+  async click(): Promise<void> {
+    this.page.raise('click')
+    this.page.locatorClicks.push(this.selector)
+    if (this.page.clearAfterClicks > 0 && this.page.locatorClicks.length >= this.page.clearAfterClicks) this.page.texts = {}
+  }
 }
 
 /** Page double recording every interaction the wrapper performs. */
@@ -89,6 +101,10 @@ export class FakePage implements BrowserPageLike {
   texts: Record<string, string> = {}
   boxes: Record<string, { x: number; y: number; width: number; height: number } | null> = {}
   visible = new Set<string>()
+  /** Selectors the fake reports as disabled; empty means everything enabled. */
+  disabledButtons = new Set<string>()
+  /** Selectors clicked through a locator (as opposed to raw mouse clicks). */
+  locatorClicks: string[] = []
   /** Milliseconds each visibility check takes before answering. */
   isVisibleDelayMs = 0
   visited: string[] = []
@@ -97,6 +113,8 @@ export class FakePage implements BrowserPageLike {
   clicks: { x: number; y: number }[] = []
   /** Submit presses after which the composer empties, as a real site does; 0 keeps the text. */
   clearAfterPresses = 0
+  /** Locator clicks after which the composer empties; 0 keeps the text. */
+  clearAfterClicks = 0
   closeCount = 0
   errors: Partial<Record<FakePageOperation, unknown>> = {}
   mouse = {

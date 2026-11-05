@@ -35,6 +35,14 @@ export interface SiteDriverConfig {
   /** Key that submits the rendered prompt. */
   submitKey: string
   /**
+   * Selector for the site's send button; tried before {@linkcode submitKey}.
+   *
+   * Some composers ignore a synthetic Enter entirely — Qianwen's editor only
+   * sends through its send button — so a driver names the button here and the
+   * key press stays as the fallback when the button is absent or disabled.
+   */
+  submitButton?: string
+  /**
    * Pattern for text that only means the site is still working, such as a
    * "thinking" placeholder. Matches are removed before judging, so text that
    * leaves only punctuation counts as pending while a real answer that merely
@@ -146,6 +154,15 @@ export interface BrowserInputLike extends BrowserLocatorLike {
   first(): BrowserInputLike
   /** @returns The number of matching elements. */
   count(): Promise<number>
+  /**
+   * @returns Whether the matching element is in its disabled state.
+   */
+  isDisabled(options?: { timeout?: number }): Promise<boolean>
+  /**
+   * Click the matching element.
+   * @param options - optional click options such as a timeout.
+   */
+  click(options?: { timeout?: number }): Promise<void>
   /**
    * @param index - zero-based element index.
    * @returns The locator for that element.

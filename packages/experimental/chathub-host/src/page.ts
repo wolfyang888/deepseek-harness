@@ -164,15 +164,15 @@ export class PlaywrightPage implements ChatPageHandle {
       if (readable && typed === undefined) {
         throw new BrowserTransportError('chathub-ui-drift', `${this.key}: the input never took the prompt`)
       }
-      await this.page.keyboard.press(driver.submitKey)
+      await this.submitPrompt(driver)
       await sleep(Math.max(typeDelayMs, 600))
       if (typed === undefined) return
       const after = await this.readComposer(composer)
       // Empty means the site took it; any change means the site reacted (a
       // kept draft with a newline, a rendered message). Only a composer that
-      // is identical to what was typed shows the key press was dropped.
+      // is identical to what was typed shows the submit was dropped.
       if (after === undefined || after !== typed) return
-      await this.page.keyboard.press(driver.submitKey)
+      await this.submitPrompt(driver)
       await sleep(Math.max(typeDelayMs, 600))
       if (await this.readComposer(composer) === typed) {
         throw new BrowserTransportError('chathub-ui-drift', `${this.key}: the input kept the prompt; the message was not sent`)
@@ -180,6 +180,28 @@ export class PlaywrightPage implements ChatPageHandle {
     } catch (error) {
       throw classifyPageError(error, `${this.key}: submitting the prompt`)
     }
+  }
+
+  /**
+   * Fire one submit attempt: the driver's send button when it declares one
+   * and the page still shows it enabled, otherwise its submit key.
+   *
+   * Qianwen's composer accepts inserted text but ignores a synthetic Enter —
+   * the only working path is its `发送消息` button — while DeepSeek submits on
+   * the key. The read-back confirmation in {@linkcode submit} judges whichever
+   * path ran, so a button click that the site ignores still ends as drift.
+   * @param driver - site facts carrying the button selector and submit key.
+   */
+  private async submitPrompt(driver: SiteDriverConfig): Promise<void> {
+    if (driver.submitButton !== undefined) {
+      const button = this.page.locator(driver.submitButton).first()
+      if (await button.isVisible().catch(() => false)
+        && !(await button.isDisabled().catch(() => true))) {
+        await button.click()
+        return
+      }
+    }
+    await this.page.keyboard.press(driver.submitKey)
   }
 
   /**
