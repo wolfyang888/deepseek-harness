@@ -175,9 +175,12 @@ function planLine(step: PlanStep, includeEvidence: boolean): string {
  * Derive the conversation status lines a prompt carries.
  *
  * These lines tell the receiving model where the conversation stands — which
- * model is active, how many turns completed or failed, and which models took
- * part — without the per-switch process detail (reasons, checkpoints, from/to
- * trails) the model cannot act on.
+ * model is active, how many turns completed, and which models took part.
+ * Successful turns need no narration: their outcomes already reach the prompt
+ * as facts, done plan steps, and decisions. Failed turns do not, so the most
+ * recent failure's reason is carried explicitly; without it the model sees a
+ * hole in the conversation and cannot tell an interruption from silence.
+ * Per-switch process detail (reasons, checkpoints, from/to trails) stays out.
  * @param session - Session to summarize.
  * @param providerId - Provider receiving the prompt.
  * @returns Status lines in render order.
@@ -189,12 +192,29 @@ function conversationStatusLines(session: ChatSessionRecord, providerId: string)
     .map(entry => entry.detail)
   const completed = details.filter(detail => detail === 'done').length
   lines.push(`Completed turns: ${completed}`)
-  const failed = details.filter(detail => detail.startsWith('failed')).length
-  if (failed > 0) lines.push(`Failed turns: ${failed}`)
+  const failures = details.filter(detail => detail.startsWith('failed'))
+  const lastFailure = failures.at(-1)
+  if (failures.length > 0 && lastFailure !== undefined) {
+    lines.push(`Failed turns: ${failures.length}`)
+    const reason = lastFailure.slice('failed:'.length).trim()
+    if (reason !== '') lines.push(`Last failure: ${truncate(reason)}`)
+  }
   if (session.providerHistory.length > 1) {
     lines.push(`Models involved so far: ${session.providerHistory.join(', ')}`)
   }
   return lines
+}
+
+/** Upper bound for one failure reason line in the prompt. */
+const FAILURE_REASON_LIMIT = 160
+
+/**
+ * Cap a failure reason so one long site message cannot flood the prompt.
+ * @param reason - Reason text from the timeline entry.
+ * @returns The reason, cut to {@link FAILURE_REASON_LIMIT} characters.
+ */
+function truncate(reason: string): string {
+  return reason.length <= FAILURE_REASON_LIMIT ? reason : `${reason.slice(0, FAILURE_REASON_LIMIT)}…`
 }
 
 /**

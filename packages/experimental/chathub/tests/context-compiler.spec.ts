@@ -73,6 +73,7 @@ describe('ContextCompiler.compile', () => {
       'Active model: deepseek-web',
       'Completed turns: 2',
       'Failed turns: 1',
+      'Last failure: deepseek-web: rate-limited',
       'Models involved so far: chatgpt-web, deepseek-web',
     ])
   })
@@ -116,6 +117,7 @@ describe('ContextCompiler.createPrompt', () => {
       + '\n- Active model: deepseek-web'
       + '\n- Completed turns: 2'
       + '\n- Failed turns: 1'
+      + '\n- Last failure: deepseek-web: rate-limited'
       + '\n- Models involved so far: chatgpt-web, deepseek-web',
     )
     expect(prompt).not.toContain('## Model Switches')
