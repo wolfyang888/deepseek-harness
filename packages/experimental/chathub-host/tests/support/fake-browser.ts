@@ -39,10 +39,10 @@ class FakeLocator implements BrowserInputLike {
     return this
   }
 
-  /** @returns The configured match count. */
+  /** @returns The configured match count; a visible selector has one match. */
   async count(): Promise<number> {
     this.page.raise('count')
-    return this.page.counts[this.selector] ?? 0
+    return Math.max(this.page.counts[this.selector] ?? 0, this.page.visible.has(this.selector) ? 1 : 0)
   }
 
   /**

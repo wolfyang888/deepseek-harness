@@ -70,6 +70,9 @@ export const DEFAULT_SITE_DRIVERS: Readonly<SiteDrivers> = {
     // send is accepted but never generates; surfacing it turns the guest
     // wall into an immediate auth-required instead of a turn timeout.
     loginWall: 'p:has-text("登录可同步历史对话")',
+    // The Slate editor keeps the first 10 000 inserted characters and drops
+    // the rest without any signal; leave headroom under the hard cap.
+    maxPromptChars: 9_000,
   },
   'glm-web': {
     url: 'https://chatglm.cn/',

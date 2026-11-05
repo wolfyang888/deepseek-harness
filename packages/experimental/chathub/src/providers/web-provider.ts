@@ -70,6 +70,12 @@ export interface WebChatTransport {
    *   could not open, or `undefined` when the user still has to sign in.
    */
   open(providerId: string, sessionKey?: string): Promise<WebChatTransportSession | WebChatTransportClosed | undefined>
+  /**
+   * Characters the site's composer accepts in one insertion.
+   * @param providerId - Site identity to query.
+   * @returns The ceiling, or `undefined` when the site declares none.
+   */
+  maxPromptChars?(providerId: string): number | undefined
 }
 
 /** Result from opening a browser session when the site refuses to start one. */

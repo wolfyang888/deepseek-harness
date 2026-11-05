@@ -118,6 +118,25 @@ describe('renderRequest', () => {
     expect(prompt).toContain('# NOW\nuser: now fix it')
   })
 
+  it('keeps the task as NOW when auxiliary surface messages follow it', () => {
+    const { prompt } = renderRequest(request(
+      user('读本地代码，给出 plugin 插件改进意见'),
+      user('Current runtime context. This snapshot supersedes earlier runtime-context snapshots.'),
+      user('<system-reminder>A skill is a reusable set of task-specific instructions.</system-reminder>'),
+    ), POLICY)
+    expect(prompt).toContain('# NOW\nuser: 读本地代码，给出 plugin 插件改进意见')
+    // The auxiliary lines stay visible in the conversation section.
+    expect(prompt).toContain('user: Current runtime context.')
+    expect(prompt).toContain('user: <system-reminder>')
+  })
+
+  it('falls back to the last auxiliary message when nothing else exists', () => {
+    const { prompt } = renderRequest(request(
+      user('Current runtime context. This snapshot supersedes earlier runtime-context snapshots.'),
+    ), POLICY)
+    expect(prompt).toContain('# NOW\nuser: Current runtime context.')
+  })
+
   it('marks a failed tool result and names an unknown call plainly', () => {
     const callId = ToolCallId('call-2')
     const { prompt } = renderRequest(request(

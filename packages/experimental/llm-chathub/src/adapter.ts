@@ -31,6 +31,7 @@ import {
   type ChatHubParsePolicy,
   type ChatHubRenderPolicy,
   type ChatHubToolCall,
+  type ChatHubTransport,
   type ChatHubTransportSession,
   type ChatHubTransportSource,
   type ChatHubTurnObservation,
@@ -66,6 +67,9 @@ export class ChatHubLlmAdapter extends LlmAdapter {
   /** Monotonic page counter; every attempt gets a fresh site conversation. */
   private sequence = 0
 
+  /** The transport the host lent once; the adapter borrows it, not owns it. */
+  private lentTransport: ChatHubTransport | undefined
+
   /**
    * @param source - host layer providing the transport and provider health.
    * @param config - route, budgets, and policy of this mount.
@@ -75,6 +79,13 @@ export class ChatHubLlmAdapter extends LlmAdapter {
     private readonly config: ChatHubLlmConfig,
   ) {
     super()
+  }
+
+  /**
+   * @returns The host transport, borrowed on first use.
+   */
+  private transport(): ChatHubTransport {
+    return this.lentTransport ??= this.source.transportForAdapter()
   }
 
   /**
@@ -117,7 +128,7 @@ export class ChatHubLlmAdapter extends LlmAdapter {
     const started = Date.now()
     const site = this.siteOf(options.provider)
     this.assertConversational(options, site)
-    const rendered = this.render(options)
+    const rendered = this.render(options, site)
     const answerBudget = (options.purpose as string | undefined) === 'compaction'
       ? COMPACTION_ANSWER_CHARS
       : ANSWER_CHARS
@@ -184,8 +195,8 @@ export class ChatHubLlmAdapter extends LlmAdapter {
    * @param options - assembled request.
    * @returns The prompt and its budget facts.
    */
-  private render(options: GenerateOptions): { prompt: string; droppedEntries: number } {
-    return renderRequest(options, this.renderPolicy(options))
+  private render(options: GenerateOptions, site: string): { prompt: string; droppedEntries: number } {
+    return renderRequest(options, this.renderPolicy(options, site))
   }
 
   /**
@@ -229,7 +240,7 @@ export class ChatHubLlmAdapter extends LlmAdapter {
    */
   private async ask(prompt: string, site: string, signal?: AbortSignal): Promise<string> {
     await this.assertHealthy(site)
-    const opened = await this.source.transportForAdapter().open(site, this.nextPageKey(site))
+    const opened = await this.transport().open(site, this.nextPageKey(site))
     if (opened === undefined) {
       throw new LlmError(`chathub-llm: ${site} is waiting for sign-in`, CHATHUB_LLM_AUTH_CODE)
     }
@@ -337,9 +348,10 @@ export class ChatHubLlmAdapter extends LlmAdapter {
 
   /**
    * @param options - assembled request whose tool schemas fill the prompt.
-   * @returns The render policy of this mount.
+   * @param site - site provider the route selected.
+   * @returns The render policy of this mount, clamped to the site's composer ceiling.
    */
-  private renderPolicy(options: GenerateOptions): ChatHubRenderPolicy {
+  private renderPolicy(options: GenerateOptions, site: string): ChatHubRenderPolicy {
     const tools = (options.tools ?? [])
       .filter(tool => this.config.allowTools.includes(tool.name))
       .map(tool => ({
@@ -347,11 +359,14 @@ export class ChatHubLlmAdapter extends LlmAdapter {
         description: tool.description,
         parameters: tool.parameters,
       }))
+    // A composer caps insertions silently; rendering above the site's ceiling
+    // would only guarantee a truncated prompt on the page.
+    const siteLimit = this.transport().maxPromptChars?.(site)
     return {
       tools,
       ...this.config.workspaceRoot === undefined ? {} : { workspaceRoot: this.config.workspaceRoot },
       verifyCommands: this.config.verifyCommands,
-      maxPromptChars: this.config.maxPromptChars,
+      maxPromptChars: Math.min(this.config.maxPromptChars, siteLimit ?? this.config.maxPromptChars),
       maxToolResultChars: this.config.maxToolResultChars,
       maxSystemChars: this.config.maxSystemChars,
       historyTurns: this.config.historyTurns,

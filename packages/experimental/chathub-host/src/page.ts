@@ -144,7 +144,7 @@ export class PlaywrightPage implements ChatPageHandle {
       if (box === null) {
         throw new BrowserTransportError('chathub-ui-drift', `${this.key}: input "${driver.input}" has no layout box`)
       }
-      const marker = composerMarker(prompt)
+      const markers = composerMarkers(prompt)
       let typed: string | undefined
       let readable = false
       for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -156,13 +156,15 @@ export class PlaywrightPage implements ChatPageHandle {
         // text in `value`, not markup); its behaviour stays as before.
         if (text === undefined) break
         readable = true
-        if (text.includes(marker)) {
+        if (text.includes(markers.head) && text.includes(markers.tail)) {
           typed = text
           break
         }
       }
       if (readable && typed === undefined) {
-        throw new BrowserTransportError('chathub-ui-drift', `${this.key}: the input never took the prompt`)
+        // A composer that took the opening text but not the closing line is a
+        // silent length cap: sending would ask the model to answer half a task.
+        throw new BrowserTransportError('chathub-ui-drift', `${this.key}: the composer truncated the prompt; it kept the opening but not the closing text`)
       }
       await this.submitPrompt(driver)
       await sleep(Math.max(typeDelayMs, 600))
@@ -283,12 +285,17 @@ export class PlaywrightPage implements ChatPageHandle {
 }
 
 /**
- * Opening text of a prompt, used to recognise it inside a composer.
+ * Head and tail text of a prompt, used to recognise it inside a composer.
+ *
+ * The tail matters as much as the head: composers cap insertion length
+ * silently — Qianwen's editor keeps the first 10 000 characters — and a
+ * head-only check reads a truncated prompt as a delivered one.
  * @param prompt - rendered prompt.
- * @returns Its first characters with whitespace collapsed.
+ * @returns Its first and last characters with whitespace collapsed.
  */
-function composerMarker(prompt: string): string {
-  return prompt.replace(/\s+/gu, ' ').trim().slice(0, 24)
+function composerMarkers(prompt: string): { head: string; tail: string } {
+  const flat = prompt.replace(/\s+/gu, ' ').trim()
+  return { head: flat.slice(0, 24), tail: flat.slice(-24) }
 }
 
 /**

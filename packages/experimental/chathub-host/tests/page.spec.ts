@@ -70,6 +70,9 @@ it('rejects a page that closes while waiting', async () => {
 
 it('classifies a thrown visibility check', async () => {
   const { wrapper, fake } = page()
+  // The visibility scan asks for matches first; one match must exist for the
+  // per-element isVisible call to run and fail.
+  fake.counts[DRIVER.input] = 1
   fake.errors.isVisible = new Error('element is not attached')
   await expect(wrapper.waitForInput(DRIVER.input, undefined, 20, 1))
     .rejects.toMatchObject({ token: 'chathub-ui-drift' })

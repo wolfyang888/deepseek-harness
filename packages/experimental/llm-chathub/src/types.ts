@@ -126,6 +126,12 @@ export interface ChatHubTransport {
    * @returns The session, a refusal, or `undefined` while sign-in is pending.
    */
   open(providerId: string, sessionKey?: string): Promise<ChatHubTransportSession | ChatHubTransportClosed | undefined>
+  /**
+   * Characters the site's composer accepts in one insertion.
+   * @param providerId - site provider id.
+   * @returns The ceiling, or `undefined` when the site declares none.
+   */
+  maxPromptChars?(providerId: string): number | undefined
 }
 
 /** Result of opening a session when the site refuses to start one. */

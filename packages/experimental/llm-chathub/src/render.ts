@@ -67,8 +67,12 @@ const PROTOCOL_TEXT = [
  */
 export function renderRequest(options: GenerateOptions, policy: ChatHubRenderPolicy): RenderedPrompt {
   const entries = conversationEntries(options.messages, policy.maxToolResultChars)
-  const now = entries.pop()
-  const history = entries
+  // The loop appends surface-owned auxiliary user messages (runtime-context
+  // snapshots, <system-reminder> catalogs) after the task; # NOW must stay the
+  // task, or the site answers the environment blurb instead of the request.
+  const nowIndex = entries.findLastIndex(entry => entry.role === 'user' && !isAuxiliary(entry.text))
+  const now = nowIndex >= 0 ? entries[nowIndex] : entries.at(-1)
+  const history = entries.filter((_, index) => index !== nowIndex)
   const system = clampText(systemTextOf(options), policy.maxSystemChars)
   const head = [
     '# ROLE', ROLE_TEXT, '',
@@ -145,6 +149,16 @@ function blocksText(blocks: readonly ContentBlock[], names: Map<string, string>)
  */
 function renderEntry(entry: Entry): string {
   return entry.role === 'tool' ? entry.text : `${entry.role}: ${entry.text}`
+}
+
+/**
+ * Decide whether a message is a loop-owned surface update rather than content.
+ * @param text - flattened message text.
+ * @returns `true` for runtime-context snapshots and whole-message skill reminders.
+ */
+function isAuxiliary(text: string): boolean {
+  return text.startsWith('Current runtime context')
+    || (text.startsWith('<system-reminder>') && text.endsWith('</system-reminder>'))
 }
 
 /**

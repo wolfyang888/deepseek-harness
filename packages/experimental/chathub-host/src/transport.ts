@@ -72,6 +72,15 @@ export class PlaywrightWebChatTransport implements WebChatTransport {
   }
 
   /**
+   * Characters one insertion may put into the site's composer.
+   * @param providerId - provider whose site composer is queried.
+   * @returns The driver's ceiling, or `undefined` when the site declares none.
+   */
+  maxPromptChars(providerId: string): number | undefined {
+    return this.drivers[providerId]?.maxPromptChars
+  }
+
+  /**
    * Release every page and browser resource this transport opened.
    * @returns Resolves when every page and browser resource is released.
    */

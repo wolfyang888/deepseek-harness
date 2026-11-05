@@ -53,6 +53,15 @@ export interface SiteDriverConfig {
   stablePolls?: number
   /** Milliseconds between answer polls; defaults to the service value. */
   pollMs?: number
+  /**
+   * Characters the site's composer accepts in one insertion.
+   *
+   * Composers cap input length silently — Qianwen's editor keeps the first
+   * 10 000 characters of an insertion and drops the rest — and a head-only
+   * read-back cannot see that. The adapter clamps its render budget to this
+   * ceiling, and the submit read-back checks the prompt's tail arrived.
+   */
+  maxPromptChars?: number
 }
 
 /** Provider-id keyed site drivers. */
