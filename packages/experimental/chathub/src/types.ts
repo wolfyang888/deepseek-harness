@@ -282,6 +282,12 @@ export interface ChatSessionRecord {
   context: SemanticContext
   checkpoints: SessionCheckpoint[]
   timeline: SessionTimelineEntry[]
+  /**
+   * Position of the last LLM-driven compaction, stamped by the compaction
+   * service and used for its cooldown. Absent until the first compaction;
+   * additive to the storage schema, so older snapshots restore unchanged.
+   */
+  lastAutoCompaction?: { at: number; messageCount: number }
 }
 
 /** Lifecycle state exposed to session views. */

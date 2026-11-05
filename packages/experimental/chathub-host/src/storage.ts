@@ -114,6 +114,7 @@ export const chatHubStoredSession = z.object({
     plan: z.array(planStep),
     memory: z.array(memoryEntry),
     context: semanticContext,
+    lastAutoCompaction: z.object({ at: z.number(), messageCount: z.number() }).optional(),
   }),
   status: z.enum(['idle', 'thinking', 'tool-running', 'waiting', 'done', 'failed']),
   lastError: z.string().optional(),
@@ -276,6 +277,9 @@ export class ChatHubRepository {
           modelSwitchHistory: record.context.modelSwitchHistory.map(entry => ({ ...entry })),
           lastToolResults: record.context.lastToolResults.map(entry => ({ ...entry })),
         },
+        ...record.lastAutoCompaction === undefined
+          ? {}
+          : { lastAutoCompaction: { ...record.lastAutoCompaction } },
       },
       status,
     }
@@ -402,9 +406,10 @@ export class ChatHubRepository {
       this.listTimeline(id),
       this.listCheckpoints(id),
     ])
+    const { lastAutoCompaction, ...stored } = row.record
     const snapshot: ChatHubSessionSnapshot = {
       record: {
-        ...row.record,
+        ...stored,
         plan: row.record.plan.map(toPlanStep),
         context: {
           ...row.record.context,
@@ -412,6 +417,7 @@ export class ChatHubRepository {
         },
         checkpoints: checkpoints.sort((left, right) => left.createdAt - right.createdAt),
         timeline: timeline.sort((left, right) => left.at - right.at),
+        ...lastAutoCompaction === undefined ? {} : { lastAutoCompaction },
       },
       status: row.status,
     }

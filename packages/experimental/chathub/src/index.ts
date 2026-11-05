@@ -73,3 +73,14 @@ export type {
   ModelSwitchOutcome,
   SessionManagerOptions,
 } from './session-manager.ts'
+export {
+  COMPACTION_INSTRUCTION,
+  SessionCompactionService,
+  mergeCheckpoint,
+  parseCheckpoint,
+} from './session-compaction.ts'
+export type {
+  AutoCompactionOptions,
+  CompactionCheckpoint,
+  CompactionResult,
+} from './session-compaction.ts'

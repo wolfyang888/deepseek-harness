@@ -12,6 +12,7 @@ import {
   ChatHubError,
   CheckpointService,
   ContextCompiler,
+  SessionCompactionService,
   SessionManager,
   SessionTimelineService,
   type ChatMessage,
@@ -38,6 +39,8 @@ import type {
 export interface ChatHubControllerOptions {
   /** Provider registry shared with the transport service; login and reauth stay there. */
   registry: IProviderRegistry
+  /** Auto-compaction trigger thresholds; defaults apply when absent. */
+  compaction?: { maxMessages?: number; minGap?: number }
   /** Clock override for deterministic ids and timestamps in tests. */
   now?: () => number
 }
@@ -57,6 +60,7 @@ export class ChatHubController extends TypertRemoteService {
 
   private readonly registry: IProviderRegistry
   private readonly manager: SessionManager
+  private readonly compaction: SessionCompactionService
   /** Named `timelineService` because the `timeline` Remote method owns the instance property. */
   private readonly timelineService: SessionTimelineService
   private readonly now: () => number
@@ -73,6 +77,14 @@ export class ChatHubController extends TypertRemoteService {
     this.registry = options.registry
     this.now = options.now ?? Date.now
     this.timelineService = new SessionTimelineService({ now: this.now })
+    this.compaction = new SessionCompactionService({
+      timeline: this.timelineService,
+      now: this.now,
+      ...options.compaction === undefined ? {} : {
+        maxMessages: options.compaction.maxMessages,
+        minGap: options.compaction.minGap,
+      },
+    })
     this.manager = new SessionManager({
       registry: options.registry,
       compiler: new ContextCompiler(),
@@ -143,8 +155,17 @@ export class ChatHubController extends TypertRemoteService {
     this.manager.setStatus(sessionId, 'thinking')
     await this.persistSession(repository, record)
 
+    // Best-effort context compaction: once the transcript grows past the
+    // threshold, the current model condenses its own site conversation into a
+    // checkpoint merged into the session memory before the real turn runs.
+    const transcript = await repository.listMessages(sessionId)
+    if (this.compaction.shouldRun(record, transcript.length)) {
+      const result = await this.compaction.run(record, provider, transcript.length)
+      if (result === 'compacted') await this.persistSession(repository, record)
+    }
+
     const request = this.manager.buildRequest(record, {
-      messages: await repository.listMessages(sessionId),
+      messages: transcript,
     })
     try {
       const response = await provider.sendMessage(request)

@@ -3,6 +3,7 @@ import { Context } from '@deepseek-ai/cordis'
 import Storage from '@deepseek-ai/dsh-storage'
 import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import {
+  COMPACTION_INSTRUCTION,
   ProviderRegistry,
   type ChatRequest,
   type ChatResponse,
@@ -92,6 +93,7 @@ interface HarnessOptions {
   providers?: readonly TurnProvider[]
   registry?: IProviderRegistry
   pool?: MemoryMediaPool
+  compaction?: { maxMessages?: number; minGap?: number }
 }
 
 /** Boot the controller over real memory storage with fake turn providers and a fixed clock. */
@@ -112,7 +114,7 @@ async function harness(options: HarnessOptions = {}) {
   if (options.registry === undefined) {
     for (const provider of providers) registry.register(provider)
   }
-  const controller = new ChatHubController(ctx, { registry, now: () => AT })
+  const controller = new ChatHubController(ctx, { registry, compaction: options.compaction, now: () => AT })
   return { ctx, pool, facility, registry, controller, providers }
 }
 
@@ -234,6 +236,63 @@ describe('ChatHubController turns', () => {
       const view = await controller.create({ title: 'T', goal: 'G', provider: 'deepseek-web' })
       const result = await controller.send(view.id, 'hello')
       expect(result).toEqual({ sessionId: view.id, status: 'failed', lastError: 'deepseek-web: unknown' })
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('compacts the transcript through the current model once it grows past the threshold', async () => {
+    const checkpoint = [
+      '## Primary Request and Intent',
+      '- review the draft report',
+      '',
+      '## Key Facts and Conclusions',
+      '- the draft misses a conclusion section',
+      '',
+      '## Errors and Fixes',
+      '- (none)',
+      '',
+      '## Pending Jobs',
+      '- write the conclusion',
+      '',
+      '## Current Work',
+      '- second-pass review',
+      '',
+      '## Next Step',
+      '- draft the conclusion',
+      '',
+      '## Critical Context',
+      '- keep the tone formal',
+    ].join('\n')
+    const { ctx, controller, providers } = await harness({
+      providers: [new TurnProvider({
+        id: 'deepseek-web',
+        answers: ['first answer', 'second answer', checkpoint, 'third answer'],
+      })],
+      compaction: { maxMessages: 4, minGap: 2 },
+    })
+    try {
+      const view = await controller.create({ title: 'Review', goal: 'Review the draft', provider: 'deepseek-web' })
+      await controller.send(view.id, 'first question')
+      await controller.send(view.id, 'second question')
+      const result = await controller.send(view.id, 'third question')
+
+      expect(result.status).toBe('done')
+      const deepseek = providers[0]!
+      expect(deepseek.requests).toHaveLength(4)
+      // Third provider call: the compaction turn carries the instruction alone,
+      // without the compiled task context.
+      const compaction = deepseek.requests[2]!
+      expect(compaction.systemPrompt).toBeUndefined()
+      expect(compaction.messages).toHaveLength(1)
+      expect(compaction.messages[0]).toMatchObject({ role: 'user', content: COMPACTION_INSTRUCTION })
+      // Fourth provider call: the real turn runs normally afterwards.
+      expect(deepseek.requests[3]!.messages.at(-1)).toMatchObject({ role: 'user', content: 'third question' })
+      // The compaction exchange stays out of the panel transcript.
+      const history = await controller.history(view.id)
+      expect(history).toHaveLength(6)
+      expect(history.map(entry => entry.content)).not.toContain(COMPACTION_INSTRUCTION)
+      expect((await controller.timeline(view.id)).map(entry => entry.detail)).toContain('compacted at 5 messages')
     } finally {
       await ctx.fiber.dispose()
     }
