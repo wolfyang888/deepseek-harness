@@ -15,14 +15,19 @@ import z from '@deepseek-ai/schemastery'
 import { ChatHubLlmAdapter } from './adapter.ts'
 import {
   DEFAULT_CHATHUB_LLM_CONFIG,
+  DEFAULT_SITE_ROUTING,
   type ChatHubAuxiliaryPolicy,
   type ChatHubLlmConfig,
   type ChatHubTurnObservation,
+  type SiteRoutingPolicy,
+  type SiteSelectionMode,
+  type SiteSelectionStrategy,
 } from './types.ts'
 
 export { ChatHubLlmAdapter } from './adapter.ts'
 export { parseAnswer, formatToolCall, TOOL_CALL_CLOSE, TOOL_CALL_OPEN } from './protocol.ts'
 export { renderRequest } from './render.ts'
+export { SiteRouter, type SiteChoiceRequest } from './router.ts'
 export { clampText } from './budget.ts'
 export * from './types.ts'
 
@@ -38,7 +43,10 @@ declare module '@deepseek-ai/cordis' {
 }
 
 /** Configuration as the mounting profile writes it; defaults fill the rest. */
-export type Config = Omit<ChatHubLlmConfig, 'onTurn' | 'route' | 'routes' | 'sites' | 'workspaceRoot' | 'auxiliary'> & {
+export type Config = Omit<
+  ChatHubLlmConfig,
+  'onTurn' | 'route' | 'routes' | 'sites' | 'workspaceRoot' | 'auxiliary' | 'autoRoute' | 'routing'
+> & {
   /** Provider route to register; defaults to `<site>-chathub` and forces one site. */
   route?: string
   /** Every site to mount; defaults to `[site]`. Ignored when `route` is set. */
@@ -47,6 +55,24 @@ export type Config = Omit<ChatHubLlmConfig, 'onTurn' | 'route' | 'routes' | 'sit
   workspaceRoot?: string
   /** Whether auxiliary calls may spend a site turn; defaults to `refuse`. */
   auxiliary?: ChatHubAuxiliaryPolicy
+  /**
+   * Route selection across mounted sites. `auto` also registers one aggregate
+   * route that picks a site per turn; `fixed` registers only the per-site
+   * routes. Defaults to `auto`, which changes nothing for a single-site mount.
+   */
+  selection?: SiteSelectionMode
+  /** Placement strategy of the aggregate route; defaults to `sticky`. */
+  selectionStrategy?: SiteSelectionStrategy
+  /** Route id of the aggregate route; defaults to `web-auto-chathub`. */
+  autoRoute?: string
+  /** How long one topic keeps its site, in milliseconds. */
+  stickyTtlMs?: number
+  /** Longest pacing wait tolerated to keep a topic on its site. */
+  stickyMaxWaitMs?: number
+  /** How long a site that failed a turn stays out of rotation. */
+  siteCooldownMs?: number
+  /** Extra sites one turn may try after a site-level failure. */
+  failoverAttempts?: number
 }
 
 /** Schema of the mounting row; every field is optional except the site. */
@@ -67,6 +93,13 @@ export const Config = z.object({
   maxToolCallsPerTurn: z.natural().min(1).default(DEFAULT_CHATHUB_LLM_CONFIG.maxToolCallsPerTurn),
   repairAttempts: z.natural().default(DEFAULT_CHATHUB_LLM_CONFIG.repairAttempts),
   auxiliary: z.union([z.const('refuse'), z.const('allow')]).default(DEFAULT_CHATHUB_LLM_CONFIG.auxiliary),
+  selection: z.union([z.const('auto'), z.const('fixed')]).default('auto'),
+  selectionStrategy: z.union([z.const('sticky'), z.const('round-robin')]).default(DEFAULT_SITE_ROUTING.strategy),
+  autoRoute: z.string().min(1).default('web-auto-chathub'),
+  stickyTtlMs: z.natural().default(DEFAULT_SITE_ROUTING.stickyTtlMs),
+  stickyMaxWaitMs: z.natural().default(DEFAULT_SITE_ROUTING.stickyMaxWaitMs),
+  siteCooldownMs: z.natural().default(DEFAULT_SITE_ROUTING.cooldownMs),
+  failoverAttempts: z.natural().default(DEFAULT_SITE_ROUTING.failoverAttempts),
 })
 
 export const name = 'llm-chathub'
@@ -88,11 +121,25 @@ export function resolveConfig(
   // would make "which site answered" ambiguous.
   const listed = config.sites ?? []
   const sites = config.route !== undefined ? [config.site] : (listed.length === 0 ? [config.site] : listed)
+  const siteRoutes = sites.map(site => `${site}-chathub`)
+  // Auto selection is an extra route, never a redirection: the per-site routes
+  // stay registered, so picking `qianwen-web` in the panel still means qianwen.
+  const auto = (config.selection ?? 'auto') === 'auto' && sites.length > 1
+  const autoRoute = auto ? config.autoRoute ?? 'web-auto-chathub' : undefined
+  const routing: SiteRoutingPolicy | undefined = autoRoute === undefined ? undefined : {
+    strategy: config.selectionStrategy ?? DEFAULT_SITE_ROUTING.strategy,
+    stickyTtlMs: config.stickyTtlMs ?? DEFAULT_SITE_ROUTING.stickyTtlMs,
+    stickyMaxWaitMs: config.stickyMaxWaitMs ?? DEFAULT_SITE_ROUTING.stickyMaxWaitMs,
+    cooldownMs: config.siteCooldownMs ?? DEFAULT_SITE_ROUTING.cooldownMs,
+    failoverAttempts: config.failoverAttempts ?? DEFAULT_SITE_ROUTING.failoverAttempts,
+  }
   return {
     site: config.site,
     sites,
     route: config.route ?? `${sites[0]}-chathub`,
-    routes: sites.map(site => `${site}-chathub`),
+    routes: autoRoute === undefined ? siteRoutes : [...siteRoutes, autoRoute],
+    ...autoRoute === undefined ? {} : { autoRoute },
+    ...routing === undefined ? {} : { routing },
     model: config.model,
     contextWindow: config.contextWindow,
     maxPromptChars: config.maxPromptChars,

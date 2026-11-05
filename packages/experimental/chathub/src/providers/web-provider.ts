@@ -76,6 +76,12 @@ export interface WebChatTransport {
    * @returns The ceiling, or `undefined` when the site declares none.
    */
   maxPromptChars?(providerId: string): number | undefined
+  /**
+   * Milliseconds before the site's next legal turn, without spending one.
+   * @param providerId - Site identity to query.
+   * @returns The wait; 0 means the site can take a turn now.
+   */
+  waitForTurnMs?(providerId: string): number
 }
 
 /** Result from opening a browser session when the site refuses to start one. */

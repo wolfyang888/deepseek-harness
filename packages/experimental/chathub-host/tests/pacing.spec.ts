@@ -58,6 +58,19 @@ describe('PacingGovernor', () => {
     expect(time.waits).toEqual([20_000])
   })
 
+  it('reports the wait without spending the turn', async () => {
+    const time = clock()
+    const governor = new PacingGovernor({ minTurnGapMs: 20_000, maxTurnsPerHour: 0, maxWaitMs: 30_000 }, time.now, time.wait)
+    expect(governor.waitFor('qianwen-web')).toBe(0)
+    await governor.admit('qianwen-web')
+    await time.wait(5_000)
+    // A caller holding several sites reads this to spend the turn where it
+    // can start now; reading it must not consume the envelope.
+    expect(governor.waitFor('qianwen-web')).toBe(15_000)
+    expect(governor.waitFor('qianwen-web')).toBe(15_000)
+    expect(governor.waitFor('deepseek-web')).toBe(0)
+  })
+
   it('keeps each site on its own envelope', async () => {
     const time = clock()
     const governor = new PacingGovernor({ minTurnGapMs: 20_000, maxTurnsPerHour: 0, maxWaitMs: 30_000 }, time.now, time.wait)

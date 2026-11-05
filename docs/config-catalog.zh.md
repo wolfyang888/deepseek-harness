@@ -997,7 +997,7 @@ export interface StagehandModelConfig {
 ## `@deepseek-ai/dsh-experimental-chathub-host`
 
 - `inject`: `typert` · `storageDomain`
-- `source`: [`packages/experimental/chathub-host/src/types.ts:86`](../packages/experimental/chathub-host/src/types.ts)
+- `source`: [`packages/experimental/chathub-host/src/types.ts:139`](../packages/experimental/chathub-host/src/types.ts)
 
 ```ts config-catalog
 /** Service configuration after schema defaults have been applied. */
@@ -1006,6 +1006,8 @@ export interface Config extends TransportConfig {
   browser: BrowserRuntimeConfig
   /** Provider-id keyed partial overrides of the shipped site drivers. */
   drivers?: Record<string, Partial<SiteDriverConfig>>
+  /** Anti-abuse envelope applied to every site turn; omitted keeps the default profile. */
+  pacing?: PacingConfig
 }
 
 /** Timing and queue policy shared by the transport, sessions, and pages. */
@@ -1059,12 +1061,31 @@ export interface SiteDriverConfig {
   input: string
   /** Assistant answer containers; the last one is the current answer. */
   answer: string
+  /**
+   * Optional element inside the last answer container that carries the reply
+   * text itself.
+   *
+   * A card container is as wide as the site's layout needs: on Qianwen the same
+   * wrap holds the thinking card, the tool/workflow card, and the reply, so
+   * reading the wrap returns all three run together. The last match of this
+   * selector inside the last container is the answer body; when it matches
+   * nothing, the container itself is read.
+   */
+  answerBody?: string
   /** Element that only appears on a signed-out wall. */
   loginWall?: string
   /** Path pattern identifying a login or logout redirect; matched case-insensitively. */
   signedOutPath?: string
   /** Key that submits the rendered prompt. */
   submitKey: string
+  /**
+   * Selector for the site's send button; tried before {@linkcode submitKey}.
+   *
+   * Some composers ignore a synthetic Enter entirely — Qianwen's editor only
+   * sends through its send button — so a driver names the button here and the
+   * key press stays as the fallback when the button is absent or disabled.
+   */
+  submitButton?: string
   /**
    * Pattern for text that only means the site is still working, such as a
    * "thinking" placeholder. Matches are removed before judging, so text that
@@ -1076,7 +1097,31 @@ export interface SiteDriverConfig {
   stablePolls?: number
   /** Milliseconds between answer polls; defaults to the service value. */
   pollMs?: number
+  /**
+   * Characters the site's composer accepts in one insertion.
+   *
+   * Composers cap input length silently — Qianwen's editor keeps the first
+   * 10 000 characters of an insertion and drops the rest — and a head-only
+   * read-back cannot see that. The adapter clamps its render budget to this
+   * ceiling, and the submit read-back checks the prompt's tail arrived.
+   */
+  maxPromptChars?: number
 }
+
+/** Configured pacing: a profile, per-field overrides, or both. */
+export interface PacingConfig {
+  /** Shipped envelope to start from; defaults to `conservative`. */
+  profile?: PacingProfile
+  /** Overrides the profile's minimum gap. */
+  minTurnGapMs?: number
+  /** Overrides the profile's hourly budget. */
+  maxTurnsPerHour?: number
+  /** Overrides the profile's longest tolerated wait. */
+  maxWaitMs?: number
+}
+
+/** Named anti-abuse envelopes; see {@linkcode PACING_PRESETS}. */
+export type PacingProfile = 'conservative' | 'balanced' | 'responsive' | 'off'
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-experimental-chathub-host -->
 
@@ -1349,28 +1394,65 @@ export interface InspectorOptions {
 ## `@deepseek-ai/dsh-experimental-llm-chathub`
 
 - `inject`: `llm` · `webChatTransport`
-- `source`: [`packages/experimental/llm-chathub/src/index.ts:39`](../packages/experimental/llm-chathub/src/index.ts)
+- `source`: [`packages/experimental/llm-chathub/src/index.ts:46`](../packages/experimental/llm-chathub/src/index.ts)
 
 ```ts config-catalog
 /** Configuration as the mounting profile writes it; defaults fill the rest. */
-export type Config = Omit<ChatHubLlmConfig, 'onTurn' | 'route' | 'workspaceRoot'> & {
-  /** Provider route to register; defaults to `<site>-chathub`. */
+export type Config = Omit<
+  ChatHubLlmConfig,
+  'onTurn' | 'route' | 'routes' | 'sites' | 'workspaceRoot' | 'auxiliary' | 'autoRoute' | 'routing'
+> & {
+  /** Provider route to register; defaults to `<site>-chathub` and forces one site. */
   route?: string
+  /** Every site to mount; defaults to `[site]`. Ignored when `route` is set. */
+  sites?: readonly string[]
   /** Absolute workspace root path arguments must stay under. */
   workspaceRoot?: string
+  /** Whether auxiliary calls may spend a site turn; defaults to `refuse`. */
+  auxiliary?: ChatHubAuxiliaryPolicy
+  /**
+   * Route selection across mounted sites. `auto` also registers one aggregate
+   * route that picks a site per turn; `fixed` registers only the per-site
+   * routes. Defaults to `auto`, which changes nothing for a single-site mount.
+   */
+  selection?: SiteSelectionMode
+  /** Placement strategy of the aggregate route; defaults to `sticky`. */
+  selectionStrategy?: SiteSelectionStrategy
+  /** Route id of the aggregate route; defaults to `web-auto-chathub`. */
+  autoRoute?: string
+  /** How long one topic keeps its site, in milliseconds. */
+  stickyTtlMs?: number
+  /** Longest pacing wait tolerated to keep a topic on its site. */
+  stickyMaxWaitMs?: number
+  /** How long a site that failed a turn stays out of rotation. */
+  siteCooldownMs?: number
+  /** Extra sites one turn may try after a site-level failure. */
+  failoverAttempts?: number
 }
 
 /**
  * Runtime configuration of one adapter instance.
  *
- * One instance drives exactly one site route: two sites mean two mounts, which
- * also keeps their page keys and browser profiles separable.
+ * One instance drives one route per configured site: the registry calls the
+ * adapter with the route id, and the adapter derives the site from it, so two
+ * sites stay two routes over one transport and one browser profile.
  */
 export interface ChatHubLlmConfig {
   /** Site provider id the host transport and drivers know, e.g. `deepseek-web`. */
   readonly site: string
+  /** Every site this instance serves; `site` is the default and first member. */
+  readonly sites: readonly string[]
   /** LLM provider route registered for this adapter, e.g. `deepseek-web-chathub`. */
   readonly route: string
+  /** One route per site, in `sites` order; a single-site mount has exactly one. */
+  readonly routes: readonly string[]
+  /**
+   * Aggregate route spanning every mounted site, when auto selection is on.
+   * A turn on it picks its site per request; the per-site routes stay pinned.
+   */
+  readonly autoRoute?: string | undefined
+  /** Placement policy of `autoRoute`; defaults to sticky affinity. */
+  readonly routing?: SiteRoutingPolicy | undefined
   /** Model id advertised on that route; the site selects the model itself. */
   readonly model: string
   /** Declared context capacity in tokens, used by harness budget planning. */
@@ -1394,17 +1476,66 @@ export interface ChatHubLlmConfig {
    * only traversal and the deny list are enforced, because the adapter has no
    * way to learn the root without the host's sandbox policy.
    */
-  readonly workspaceRoot?: string
+  readonly workspaceRoot?: string | undefined
   /** Upper bound of tool calls accepted from one reply; the protocol allows one. */
   readonly maxToolCallsPerTurn: number
   /** Extra rounds granted to a reply whose call block was rejected as illegal. */
   readonly repairAttempts: number
+  /**
+   * Whether a request carrying a declared auxiliary purpose — a session title,
+   * a compaction summary — may spend a site turn here. `refuse` is the
+   * default: those callers expect a fast, cheap classification call, and a
+   * page turn is neither.
+   */
+  readonly auxiliary: ChatHubAuxiliaryPolicy
   /** Receives one record per completed turn; never carries prompt or answer text. */
   readonly onTurn?: (record: ChatHubTurnObservation) => void
 }
 
+/**
+ * What this route does with a request that declares an auxiliary purpose.
+ *
+ * A browser turn costs one whole site conversation and one model round trip on
+ * the user's own account, and an auxiliary prompt carries neither the tool
+ * schemas nor the conversation, so sending one here spends a page and returns
+ * an answer the caller cannot use. Refusing keeps the route for the work it was
+ * mounted for and lets the auxiliary caller fail over to a configured API route.
+ */
+export type ChatHubAuxiliaryPolicy = 'refuse' | 'allow'
+
+/** Whether a mount also registers a route that spans every mounted site. */
+export type SiteSelectionMode = 'auto' | 'fixed'
+
+/** How the aggregate route places a turn when several sites are mounted. */
+export type SiteSelectionStrategy = 'sticky' | 'round-robin'
+
+/**
+ * Placement policy of the aggregate route.
+ *
+ * `sticky` is the shape a conversation needs: one topic keeps one model, so
+ * follow-up questions read as the same voice with the same habits, while a new
+ * topic starts on whichever site is least busy. The affinity only bends when
+ * the site would make the turn wait longer than `stickyMaxWaitMs` — idling for
+ * a throttled site while another can answer now is the one thing this policy
+ * exists to avoid.
+ */
+export interface SiteRoutingPolicy {
+  /** Placement strategy; `sticky` keeps a topic on one site. */
+  readonly strategy: SiteSelectionStrategy
+  /** How long a topic keeps its site, in milliseconds; 0 removes affinity. */
+  readonly stickyTtlMs: number
+  /** Longest wait tolerated to keep a topic on its site; longer means switch. */
+  readonly stickyMaxWaitMs: number
+  /** How long a site that failed a turn stays out of rotation, in milliseconds. */
+  readonly cooldownMs: number
+  /** Extra sites one turn may try after a site-level failure; 0 disables failover. */
+  readonly failoverAttempts: number
+}
+
 /** One turn's observable facts; no prompt, answer, or argument text. */
 export interface ChatHubTurnObservation {
+  /** Site that served the turn; differs from the route on the auto route. */
+  readonly site?: string
   /** Harness session the turn belongs to, when the loop stamped one. */
   readonly sessionId?: string
   /** Page key used for the last attempt. */
@@ -1419,6 +1550,8 @@ export interface ChatHubTurnObservation {
   readonly toolName?: string
   /** Rejection reason of the last reply, when it was rejected. */
   readonly invalid?: string
+  /** Non-fatal findings about the reply, such as a repaired argument. */
+  readonly warnings?: readonly string[]
   /** Wall-clock duration of the whole turn. */
   readonly ms: number
   /** Conversation entries dropped to fit the prompt budget. */

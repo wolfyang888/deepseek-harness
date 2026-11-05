@@ -2,7 +2,7 @@
 
 import { PlaywrightChatSession } from './session.ts'
 import { BrowserTransportError } from './errors.ts'
-import { PacingGovernor, resolvePacing } from './pacing.ts'
+import { PacingGovernor } from './pacing.ts'
 import type {
   ProviderFailureRule,
   WebChatTransport,
@@ -45,7 +45,7 @@ export class PlaywrightWebChatTransport implements WebChatTransport {
     private readonly config: ResolvedConfig,
     private readonly drivers: SiteDrivers,
   ) {
-    this.pacing = new PacingGovernor(config.pacing ?? resolvePacing(undefined))
+    this.pacing = new PacingGovernor(config.pacing)
   }
 
   /**
@@ -88,6 +88,15 @@ export class PlaywrightWebChatTransport implements WebChatTransport {
    */
   maxPromptChars(providerId: string): number | undefined {
     return this.drivers[providerId]?.maxPromptChars
+  }
+
+  /**
+   * Milliseconds before the site's next legal turn, without spending one.
+   * @param providerId - provider whose envelope is queried.
+   * @returns The wait; 0 means the site can take a turn now.
+   */
+  waitForTurnMs(providerId: string): number {
+    return this.pacing.waitFor(providerId)
   }
 
   /**

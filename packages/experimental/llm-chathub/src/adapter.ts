@@ -24,10 +24,12 @@ import { appendFile } from 'node:fs/promises'
 import { answerMarkupText } from '@deepseek-ai/dsh-experimental-chathub-host'
 import { parseAnswer } from './protocol.ts'
 import { renderRequest } from './render.ts'
+import { SiteRouter } from './router.ts'
 import {
   CHATHUB_LLM_AUTH_CODE,
   CHATHUB_LLM_MALFORMED_CODE,
   CHATHUB_LLM_TRANSPORT_CODE,
+  DEFAULT_SITE_ROUTING,
   type ChatHubLlmConfig,
   type ChatHubParsePolicy,
   type ChatHubRenderPolicy,
@@ -72,6 +74,9 @@ export class ChatHubLlmAdapter extends LlmAdapter {
   /** The transport the host lent once; the adapter borrows it, not owns it. */
   private lentTransport: ChatHubTransport | undefined
 
+  /** Placement of a turn across mounted sites; inert on a pinned route. */
+  private readonly router: SiteRouter
+
   /**
    * @param source - host layer providing the transport and provider health.
    * @param config - route, budgets, and policy of this mount.
@@ -81,6 +86,7 @@ export class ChatHubLlmAdapter extends LlmAdapter {
     private readonly config: ChatHubLlmConfig,
   ) {
     super()
+    this.router = new SiteRouter(config.routing ?? DEFAULT_SITE_ROUTING)
   }
 
   /**
@@ -95,6 +101,9 @@ export class ChatHubLlmAdapter extends LlmAdapter {
    * @returns Display metadata naming the site behind the route.
    */
   override providerInfo(provider: string): LlmProviderInfo {
+    if (this.isAutoRoute(provider)) {
+      return { id: provider, name: `ChatHub auto (${this.config.sites.join(', ')})` }
+    }
     return { id: provider, name: `ChatHub ${this.siteOf(provider)}` }
   }
 
@@ -128,38 +137,127 @@ export class ChatHubLlmAdapter extends LlmAdapter {
    */
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     const started = Date.now()
-    const site = this.siteOf(options.provider)
-    this.assertConversational(options, site)
-    const rendered = this.render(options, site)
-    await this.recordPrompt(site, rendered.prompt)
-    const answerBudget = (options.purpose as string | undefined) === 'compaction'
-      ? COMPACTION_ANSWER_CHARS
-      : ANSWER_CHARS
-    const parsed = await this.askUntilLegal(rendered.prompt, site, options.signal, answerBudget)
-    const call = parsed.call
+    const turn = await this.runTurn(options)
+    const call = turn.parsed.call
     this.report({
+      site: turn.site,
       ...options.sessionId === undefined ? {} : { sessionId: String(options.sessionId) },
-      pageKey: this.pageKeyOf(site),
-      attempt: parsed.attempt,
-      promptChars: rendered.prompt.length,
-      answerChars: parsed.answerChars,
+      pageKey: this.pageKeyOf(turn.site),
+      attempt: turn.parsed.attempt,
+      promptChars: turn.rendered.prompt.length,
+      answerChars: turn.parsed.answerChars,
       ...call === undefined ? {} : { toolName: call.name },
-      ...parsed.invalid === undefined ? {} : { invalid: parsed.invalid },
-      ...parsed.warnings.length === 0 ? {} : { warnings: parsed.warnings },
+      ...turn.parsed.invalid === undefined ? {} : { invalid: turn.parsed.invalid },
+      ...turn.parsed.warnings.length === 0 ? {} : { warnings: turn.parsed.warnings },
       ms: Date.now() - started,
-      droppedEntries: rendered.droppedEntries,
+      droppedEntries: turn.rendered.droppedEntries,
     })
-    if (parsed.invalid !== undefined) {
-      throw new LlmError(`chathub-llm: ${site} answered illegally: ${parsed.invalid}`, CHATHUB_LLM_MALFORMED_CODE)
+    if (turn.parsed.invalid !== undefined) {
+      throw new LlmError(
+        `chathub-llm: ${turn.site} answered illegally: ${turn.parsed.invalid}`,
+        CHATHUB_LLM_MALFORMED_CODE,
+      )
     }
     yield { type: 'block-start', index: 0, blockType: 'text' }
-    if (parsed.text.length > 0) yield { type: 'text-delta', index: 0, text: parsed.text }
-    yield { type: 'block-end', index: 0, block: { type: 'text', text: parsed.text } }
+    if (turn.parsed.text.length > 0) yield { type: 'text-delta', index: 0, text: turn.parsed.text }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text: turn.parsed.text } }
     if (call === undefined) {
       yield { type: 'finish', reason: { kind: 'stop' } }
       return
     }
     yield* this.toolCallChunks(call)
+  }
+
+  /**
+   * Place the turn on a site, render for it, and read one legal answer.
+   *
+   * On the aggregate route the site is chosen per turn: the topic keeps its
+   * site while that site is ready, and a site that fails a turn is replaced
+   * within the same request instead of failing the whole step. A pinned route
+   * never moves — the user picked that model, and answering from another one
+   * silently is worse than failing.
+   * @param options - assembled request.
+   * @returns The site that served, what it was shown, and how it answered.
+   * @throws LlmError when no site serves the turn.
+   */
+  private async runTurn(options: GenerateOptions): Promise<{
+    site: string
+    rendered: { prompt: string; droppedEntries: number }
+    parsed: Awaited<ReturnType<ChatHubLlmAdapter['askUntilLegal']>>
+  }> {
+    this.assertConversational(options, options.provider)
+    const pinned = this.pinnedSiteOf(options.provider)
+    const key = this.topicKeyOf(options)
+    const answerBudget = (options.purpose as string | undefined) === 'compaction'
+      ? COMPACTION_ANSWER_CHARS
+      : ANSWER_CHARS
+    const routing = this.config.routing ?? DEFAULT_SITE_ROUTING
+    let candidates = await this.candidateSites(pinned)
+    let failures = 0
+    for (;;) {
+      const site = this.router.choose({
+        key,
+        candidates,
+        ...pinned === undefined ? {} : { pinned },
+        waitOf: candidate => this.transport().waitForTurnMs?.(candidate) ?? 0,
+      })
+      const rendered = this.render(options, site)
+      await this.recordPrompt(site, rendered.prompt)
+      try {
+        const parsed = await this.askUntilLegal(rendered.prompt, site, options.signal, answerBudget)
+        this.router.succeed(key, site)
+        return { site, rendered, parsed }
+      } catch (error) {
+        if (pinned !== undefined || failures >= routing.failoverAttempts || !failoverEligible(error)) throw error
+        failures += 1
+        // A site that refused or timed out should not take the next turn of
+        // this topic either, so the penalty covers the whole rotation.
+        this.router.penalize(site)
+        candidates = candidates.filter(candidate => candidate !== site)
+      }
+    }
+  }
+
+  /**
+   * @param options - the assembled request.
+   * @returns The key a topic is tracked under: its session, else one bucket.
+   */
+  private topicKeyOf(options: GenerateOptions): string {
+    return options.sessionId === undefined ? 'default' : String(options.sessionId)
+  }
+
+  /**
+   * @param pinned - the site a pinned route fixes, if any.
+   * @returns Sites that may serve this turn, health allowing.
+   */
+  private async candidateSites(pinned: string | undefined): Promise<string[]> {
+    if (pinned !== undefined) return [pinned]
+    const views = await this.source.providers()
+    const healthy = new Set(views
+      .filter(view => view.health.status !== 'needs-auth' && view.health.status !== 'failed')
+      .map(view => view.id))
+    const mounted = this.config.sites.filter(site => healthy.has(site))
+    // When nothing is healthy the turn still runs on a mounted site, so the
+    // failure names the real problem (sign-in) instead of "no route".
+    return mounted.length > 0 ? mounted : [...this.config.sites]
+  }
+
+  /**
+   * @param route - the registered route the registry called with.
+   * @returns The site it pins, or `undefined` for the aggregate route.
+   * @throws LlmError for a route this mount does not serve.
+   */
+  private pinnedSiteOf(route: string): string | undefined {
+    if (this.isAutoRoute(route)) return undefined
+    return this.siteOf(route)
+  }
+
+  /**
+   * @param route - a registered route.
+   * @returns Whether the route spans every mounted site.
+   */
+  private isAutoRoute(route: string): boolean {
+    return this.config.autoRoute !== undefined && route === this.config.autoRoute
   }
 
   /**
@@ -437,6 +535,31 @@ function transportFailure(error: unknown, site: string): unknown {
   const token = readToken(error)
   const code = token === undefined ? CHATHUB_LLM_TRANSPORT_CODE : TRANSPORT_CODES[token] ?? CHATHUB_LLM_TRANSPORT_CODE
   return new LlmError(`chathub-llm: ${site}: ${error.message}`, code, { cause: error })
+}
+
+/** Failure codes that blame the site rather than the request or the answer. */
+const SITE_FAILURE_CODES: ReadonlySet<string> = new Set([
+  CHATHUB_LLM_AUTH_CODE,
+  'RATE_LIMIT',
+  'TIMEOUT',
+  'SERVER',
+  CHATHUB_LLM_TRANSPORT_CODE,
+])
+
+/**
+ * Whether the same request may be replayed on another site.
+ *
+ * A site that is signed out, throttled, timed out, or whose page drifted says
+ * nothing about the request; another site deserves the turn. A malformed
+ * answer, an overflow, a cancelled turn, or an illegal request does not — those
+ * fail the same way everywhere and the caller must decide.
+ * @param error - rejection from one site's turn.
+ * @returns Whether failover to the next site is meaningful.
+ */
+function failoverEligible(error: unknown): boolean {
+  if (!(error instanceof LlmError)) return false
+  const code = (error as { code?: unknown }).code
+  return typeof code === 'string' && SITE_FAILURE_CODES.has(code)
 }
 
 /**

@@ -25,7 +25,18 @@ Turn one signed-in web chat site into an LLM route the harness agent loop can dr
 <a id="use-this-package"></a>
 ## Use this package
 
-Mounting the plugin registers exactly one LLM provider route — `<site>-chathub` unless the row sets `route` — with the display name `ChatHub <site>` and one model id (`web-model` by default). The site picks its own underlying model, so the id is a routing label, not a capability claim: `token-meter` can only estimate usage because a web answer reports no counts.
+Mounting the plugin registers one LLM provider route per mounted site — `<site>-chathub` unless the row sets `route` — with the display name `ChatHub <site>` and one model id (`web-model` by default). The site picks its own underlying model, so the id is a routing label, not a capability claim: `token-meter` can only estimate usage because a web answer reports no counts.
+
+### Several sites, one deciding route
+
+With two or more sites mounted and `selection: auto` (the default), the row also registers one aggregate route, `web-auto-chathub`, that chooses a site per turn. Its display name lists the candidates: `ChatHub auto (deepseek-web, qianwen-web)`. The per-site routes stay registered and stay pinned, so picking `qianwen-web` in the panel never answers from another site — the aggregate route is an addition, not a redirection.
+
+A turn on the aggregate route is placed by [`SiteRouter`](src/router.ts):
+
+- **One topic, one model.** A topic is the harness session. Its first turn picks a site, and later turns of the same session keep it for `stickyTtlMs`, so follow-ups read with one voice.
+- **New topics spread.** A session without an affinity takes the site that is least recently used, so one account does not absorb a whole day of work.
+- **Pacing is a placement fact, not a stall.** The host reports each site's remaining anti-abuse wait. A site whose wait exceeds `stickyMaxWaitMs` loses the turn to a ready one instead of the loop sleeping through the gap; a topic that moves stays on its new site afterwards.
+- **A failing site is replaced.** A signed-out, throttled, timed-out, or drifted site earns a `cooldownMs` penalty and the same request is replayed on the next candidate (`failoverAttempts`). A malformed answer, an overflow, a cancelled turn, or an illegal request is not retried elsewhere: those fail the same way on every site.
 
 ### When to choose it
 
@@ -39,7 +50,7 @@ The package ships an opt-in bundle layer, [`cordis.patch.yml`](cordis.patch.yml)
 pnpm dsh web --patch packages/experimental/chathub-host/cordis.patch.yml --patch packages/experimental/llm-chathub/cordis.patch.yml
 ```
 
-The layer mounts one `llm-chathub` row with environment-driven defaults: `DSH_CHATHUB_LLM_SITE` (default `deepseek-web`), `DSH_CHATHUB_LLM_MODEL`, `DSH_CHATHUB_LLM_ROOT` (default the host process's working directory), `DSH_CHATHUB_LLM_TOOLS` (default `read,grep,glob,edit,write`), and `DSH_CHATHUB_LLM_VERIFY` (default `pnpm run typecheck`). The first agent step opens a page; nothing starts a browser at mount time.
+The layer mounts one `llm-chathub` row with environment-driven defaults: `DSH_CHATHUB_LLM_SITE` (default `deepseek-web`), `DSH_CHATHUB_LLM_MODEL`, `DSH_CHATHUB_LLM_ROOT` (default the host process's working directory), `DSH_CHATHUB_LLM_TOOLS` (default `read,grep,glob,edit,write`), and `DSH_CHATHUB_LLM_VERIFY` (default `pnpm run typecheck`). With `DSH_CHATHUB_LLM_SITES` listing two or more sites, `DSH_CHATHUB_LLM_SELECTION` (default `auto`) decides whether the aggregate route is added, and `DSH_CHATHUB_LLM_SELECTION_STRATEGY`, `DSH_CHATHUB_LLM_FAILOVER`, `DSH_CHATHUB_LLM_TOPIC_TTL_MS`, `DSH_CHATHUB_LLM_SITE_COOLDOWN_MS` tune its placement. The first agent step opens a page; nothing starts a browser at mount time.
 
 ### Configuration
 
@@ -79,6 +90,13 @@ The layer mounts one `llm-chathub` row with environment-driven defaults: `DSH_CH
 | `maxToolCallsPerTurn` | `1` | Accepted calls per reply; extra blocks are dropped with a warning |
 | `repairAttempts` | `1` | Extra rounds granted to a rejected reply |
 | `auxiliary` | `refuse` | Whether auxiliary calls other than compaction (session titles, …) may spend a site turn; compaction is always served, because its checkpoint output is the caller's result and refusing it fails every model switch on a web-only mount |
+| `selection` | `auto` | Whether a mount with two or more sites also registers the aggregate `web-auto-chathub` route; `fixed` keeps only the per-site routes |
+| `selectionStrategy` | `sticky` | `sticky` keeps a topic on its site; `round-robin` rotates every turn |
+| `autoRoute` | `web-auto-chathub` | Route id of the aggregate route |
+| `stickyTtlMs` | `1800000` | How long one topic keeps its site (30 min); `0` removes affinity |
+| `stickyMaxWaitMs` | `3000` | Longest pacing wait tolerated to keep a topic on its site |
+| `siteCooldownMs` | `600000` | How long a site that failed a turn stays out of rotation |
+| `failoverAttempts` | `1` | Extra sites one turn may try after a site-level failure; `0` disables failover |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-experimental-llm-chathub) is the exhaustive source for every accepted field.
 

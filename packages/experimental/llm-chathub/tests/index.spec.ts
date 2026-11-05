@@ -87,14 +87,33 @@ describe('resolveConfig', () => {
     expect(records).toHaveLength(1)
   })
 
-  it('mounts one route per listed site', () => {
+  it('mounts one route per listed site plus the aggregate auto route', () => {
     const resolved = resolveConfig(
       { ...ROW, sites: ['deepseek-web', 'qianwen-web'] },
       () => {},
     )
     expect(resolved.sites).toEqual(['deepseek-web', 'qianwen-web'])
-    expect(resolved.routes).toEqual(['deepseek-web-chathub', 'qianwen-web-chathub'])
+    // The per-site routes stay pinned; the aggregate route is extra, so a
+    // panel choice of `qianwen-web` never answers from another site.
+    expect(resolved.routes).toEqual(['deepseek-web-chathub', 'qianwen-web-chathub', 'web-auto-chathub'])
+    expect(resolved.autoRoute).toBe('web-auto-chathub')
     expect(resolved.route).toBe('deepseek-web-chathub')
+    expect(resolved.routing).toMatchObject({ strategy: 'sticky', failoverAttempts: 1 })
+  })
+
+  it('keeps a single-site mount to its own route', () => {
+    const resolved = resolveConfig({ ...ROW, sites: ['deepseek-web'] }, () => {})
+    expect(resolved.routes).toEqual(['deepseek-web-chathub'])
+    expect(resolved.autoRoute).toBeUndefined()
+  })
+
+  it('registers only the pinned routes when selection is fixed', () => {
+    const resolved = resolveConfig(
+      { ...ROW, sites: ['deepseek-web', 'qianwen-web'], selection: 'fixed' },
+      () => {},
+    )
+    expect(resolved.routes).toEqual(['deepseek-web-chathub', 'qianwen-web-chathub'])
+    expect(resolved.autoRoute).toBeUndefined()
   })
 
   it('keeps an explicit route and root', () => {
@@ -128,7 +147,7 @@ describe('apply', () => {
     expect(mounted.providers).toEqual(['deepseek-web-chathub'])
   })
 
-  it('registers one route per listed site', () => {
+  it('registers one route per listed site and the aggregate route', () => {
     const ctx = new Context()
     const registered: string[][] = []
     ctx.provide('llm', {
@@ -144,7 +163,7 @@ describe('apply', () => {
       providers: () => Promise.resolve([]),
     } as never)
     apply(ctx, { ...ROW, sites: ['deepseek-web', 'qianwen-web'] })
-    expect(registered[0]).toEqual(['deepseek-web-chathub', 'qianwen-web-chathub'])
+    expect(registered[0]).toEqual(['deepseek-web-chathub', 'qianwen-web-chathub', 'web-auto-chathub'])
   })
 
   it('drives the transport the host lent it and reports the turn', async () => {

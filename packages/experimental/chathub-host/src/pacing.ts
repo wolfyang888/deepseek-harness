@@ -98,6 +98,19 @@ export class PacingGovernor {
   }
 
   /**
+   * Report the wait without taking the turn.
+   *
+   * `admit` blocks; a caller holding several sites needs the number up front so
+   * it can spend the turn where it can start now instead of sleeping through
+   * the gap of one site while another sits idle.
+   * @param site - site provider id.
+   * @returns Milliseconds before the site's next legal turn; 0 means now.
+   */
+  waitFor(site: string): number {
+    return this.requiredWait(site, this.now())
+  }
+
+  /**
    * @param site - site provider id.
    * @param at - current clock reading.
    * @returns Milliseconds before the next turn is legal; 0 means now.

@@ -26,10 +26,12 @@ class FakeSession implements ChatHubTransportSession {
   /**
    * @param source - transport that scripted this page.
    * @param key - page key the transport opened it under.
+   * @param site - site provider the page belongs to.
    */
   constructor(
     private readonly source: FakeSource,
     readonly key: string,
+    private readonly site: string,
   ) {}
 
   /**
@@ -38,6 +40,9 @@ class FakeSession implements ChatHubTransportSession {
    */
   async send(payload: { prompt: string }): Promise<{ content: string }> {
     this.source.prompts.push(payload.prompt)
+    if (this.source.failSites.has(this.site)) {
+      throw new LlmError(`chathub-llm: ${this.site} is needs-auth; sign in first`, 'AUTH')
+    }
     const failure = this.source.sendError
     if (failure !== undefined) throw failure
     this.source.onSend?.()
@@ -61,10 +66,14 @@ class FakeSession implements ChatHubTransportSession {
 /** Scripted transport: health row, answer queue, and open behaviour. */
 class FakeSource implements ChatHubTransportSource {
   health = 'ready'
+  /** Per-site health that overrides {@link health} for a listed site. */
+  healthBySite: Record<string, string> = {}
   answers: string[] = []
   openMode: 'session' | 'pending' | 'closed' = 'session'
   sendError: unknown
   onSend: (() => void) | undefined
+  /** Sites whose page refuses the turn as signed out. */
+  readonly failSites = new Set<string>()
   readonly prompts: string[] = []
   readonly keys: string[] = []
   readonly released: string[] = []
@@ -73,8 +82,8 @@ class FakeSource implements ChatHubTransportSource {
   /** @returns One health row per health-known site. */
   providers(): Promise<readonly { id: string; health: { status: string } }[]> {
     return Promise.resolve([
-      { id: 'deepseek-web', health: { status: this.health } },
-      { id: 'qianwen-web', health: { status: this.health } },
+      { id: 'deepseek-web', health: { status: this.healthBySite['deepseek-web'] ?? this.health } },
+      { id: 'qianwen-web', health: { status: this.healthBySite['qianwen-web'] ?? this.health } },
     ])
   }
 
@@ -86,7 +95,7 @@ class FakeSource implements ChatHubTransportSource {
         this.keys.push(key ?? '')
         if (this.openMode === 'pending') return undefined
         if (this.openMode === 'closed') return { closed: true, reason: 'not-signed-in' } as const
-        return new FakeSession(this, key ?? '')
+        return new FakeSession(this, key ?? '', providerId)
       },
     }
   }
@@ -484,5 +493,82 @@ describe('ChatHubLlmAdapter answer text', () => {
     const args = JSON.parse(delta.argumentsDelta) as { old_string: string }
     // The site's markup is stripped; the argument's own whitespace is not.
     expect(args.old_string).toBe('    x = 1,   -- 慢')
+  })
+})
+
+/** Mount with the aggregate route on: both sites, plus auto selection. */
+const AUTO: Partial<ChatHubLlmConfig> = {
+  sites: ['deepseek-web', 'qianwen-web'],
+  routes: ['deepseek-web-chathub', 'qianwen-web-chathub', 'web-auto-chathub'],
+  autoRoute: 'web-auto-chathub',
+}
+
+/**
+ * @param session - harness session, the key a topic is tracked under.
+ * @returns A request on the aggregate route.
+ */
+function autoRequest(session: string): GenerateOptions {
+  return {
+    ...request(),
+    provider: 'web-auto-chathub',
+    sessionId: session as NonNullable<GenerateOptions['sessionId']>,
+  }
+}
+
+describe('ChatHubLlmAdapter site selection', () => {
+  it('keeps one topic on one site and starts a new topic on the other', async () => {
+    const source = new FakeSource()
+    source.answers = ['first', 'second', 'third']
+    const subject = adapter(source, AUTO)
+    await collect(subject.stream(autoRequest('session-a')))
+    await collect(subject.stream(autoRequest('session-a')))
+    await collect(subject.stream(autoRequest('session-b')))
+    // Two turns of one conversation read as one voice; a new conversation
+    // spreads to the account that has been idle.
+    expect(source.sites).toEqual(['deepseek-web', 'deepseek-web', 'qianwen-web'])
+  })
+
+  it('does not spend a turn on a site that needs sign-in', async () => {
+    const source = new FakeSource()
+    source.healthBySite = { 'deepseek-web': 'needs-auth' }
+    source.answers = ['ok']
+    await collect(adapter(source, AUTO).stream(autoRequest('session-a')))
+    expect(source.sites).toEqual(['qianwen-web'])
+  })
+
+  it('replaces a site that fails the turn instead of failing the step', async () => {
+    const source = new FakeSource()
+    source.failSites.add('deepseek-web')
+    source.answers = ['ok']
+    const chunks = await collect(adapter(source, AUTO).stream(autoRequest('session-a')))
+    expect(source.sites).toEqual(['deepseek-web', 'qianwen-web'])
+    expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'stop' } })
+  })
+
+  it('reports the site that served an auto turn', async () => {
+    const source = new FakeSource()
+    source.answers = ['ok']
+    const records: ChatHubTurnObservation[] = []
+    await collect(adapter(source, { ...AUTO, onTurn: record => records.push(record) })
+      .stream(autoRequest('session-a')))
+    expect(records[0]?.site).toBe('deepseek-web')
+  })
+
+  it('never answers a pinned route from another site', async () => {
+    const source = new FakeSource()
+    source.failSites.add('deepseek-web')
+    source.answers = ['ok']
+    await expect(collect(adapter(source, AUTO).stream(request()))).rejects.toMatchObject({ code: 'AUTH' })
+    // The user picked this model; a silent substitute is worse than a failure.
+    expect(source.sites).toEqual(['deepseek-web'])
+  })
+
+  it('still names sign-in when every site needs it', async () => {
+    const source = new FakeSource()
+    source.health = 'needs-auth'
+    source.answers = ['ok']
+    await expect(collect(adapter(source, AUTO).stream(autoRequest('session-a'))))
+      .rejects.toMatchObject({ code: 'AUTH' })
+    expect(source.sites).toEqual([])
   })
 })

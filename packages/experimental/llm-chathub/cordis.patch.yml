@@ -33,6 +33,20 @@
 #   DSH_CHATHUB_LLM_PROMPT_LOG  path of a JSONL tape recording every rendered
 #                            prompt (what the site actually read); unset keeps
 #                            the tape off
+#   DSH_CHATHUB_LLM_SELECTION  `auto` (default) or `fixed`. With two or more
+#                            mounted sites, `auto` also registers one aggregate
+#                            route (default id `web-auto-chathub`) that picks a
+#                            site per turn: a topic keeps its site, a new topic
+#                            takes the least busy one, and a paced or failing
+#                            site is skipped instead of waited out. The
+#                            per-site routes stay pinned either way.
+#   DSH_CHATHUB_LLM_SELECTION_STRATEGY  `sticky` (default) or `round-robin`
+#   DSH_CHATHUB_LLM_FAILOVER  extra sites one turn may try after a site-level
+#                            failure (default 1); 0 disables failover
+#   DSH_CHATHUB_LLM_TOPIC_TTL_MS  how long a topic keeps its site (default
+#                            1800000 = 30 min)
+#   DSH_CHATHUB_LLM_SITE_COOLDOWN_MS  how long a failed site stays out of
+#                            rotation (default 600000 = 10 min)
 - insert:
     - id: llm-chathub
       name: '@deepseek-ai/dsh-experimental-llm-chathub'
@@ -44,11 +58,18 @@
         allowTools: !!js (process.env.DSH_CHATHUB_LLM_TOOLS ?? 'read,grep,glob,edit,write').split(',')
         verifyCommands: !!js (process.env.DSH_CHATHUB_LLM_VERIFY ?? 'pnpm run typecheck').split(',')
         auxiliary: !!js process.env.DSH_CHATHUB_LLM_AUXILIARY ?? 'refuse'
+        selection: !!js process.env.DSH_CHATHUB_LLM_SELECTION ?? 'auto'
+        selectionStrategy: !!js process.env.DSH_CHATHUB_LLM_SELECTION_STRATEGY ?? 'sticky'
+        autoRoute: !!js process.env.DSH_CHATHUB_LLM_AUTO_ROUTE ?? 'web-auto-chathub'
+        stickyTtlMs: !!js Number(process.env.DSH_CHATHUB_LLM_TOPIC_TTL_MS ?? 1800000)
+        siteCooldownMs: !!js Number(process.env.DSH_CHATHUB_LLM_SITE_COOLDOWN_MS ?? 600000)
+        failoverAttempts: !!js Number(process.env.DSH_CHATHUB_LLM_FAILOVER ?? 1)
 
 # The compaction engine prices every routed model against its declared context
 # window. These routes declare 32k — below the 64k default compaction headroom —
 # so without a per-route policy every model switch fails with
-# MODEL_SWITCH_COMPACTION_FAILED. Pin a small-headroom policy per mounted site;
+# MODEL_SWITCH_COMPACTION_FAILED. Pin a small-headroom policy per mounted site
+# and for the aggregate route, which declares the same 32k window:
 # the engine ignores policies for routes that do not exist, and this override
 # replaces any earlier `compaction-basic` config (patch overrides replace the
 # whole config object). A separate top-level patch entry so it targets the
@@ -56,12 +77,20 @@
 - id: compaction-basic
   config:
     modelPolicies: !!js |
-      (process.env.DSH_CHATHUB_LLM_SITES ?? process.env.DSH_CHATHUB_LLM_SITE ?? 'deepseek-web')
-        .split(',')
-        .filter(Boolean)
-        .map((site) => ({
-          provider: `${site.trim()}-chathub`,
-          model: process.env.DSH_CHATHUB_LLM_MODEL ?? 'web-model',
+      (() => {
+        const sites = (process.env.DSH_CHATHUB_LLM_SITES ?? process.env.DSH_CHATHUB_LLM_SITE ?? 'deepseek-web')
+          .split(',')
+          .map((site) => site.trim())
+          .filter(Boolean)
+        const model = process.env.DSH_CHATHUB_LLM_MODEL ?? 'web-model'
+        const routes = sites.map((site) => `${site}-chathub`)
+        if ((process.env.DSH_CHATHUB_LLM_SELECTION ?? 'auto') === 'auto' && sites.length > 1) {
+          routes.push(process.env.DSH_CHATHUB_LLM_AUTO_ROUTE ?? 'web-auto-chathub')
+        }
+        return routes.map((provider) => ({
+          provider,
+          model,
           headroomTokens: 8192,
           maxTokens: 8192,
         }))
+      })()

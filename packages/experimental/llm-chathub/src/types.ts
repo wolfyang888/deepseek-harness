@@ -32,6 +32,35 @@ export const CHATHUB_LLM_TRANSPORT_CODE = 'TRANSPORT'
  */
 export type ChatHubAuxiliaryPolicy = 'refuse' | 'allow'
 
+/** Whether a mount also registers a route that spans every mounted site. */
+export type SiteSelectionMode = 'auto' | 'fixed'
+
+/** How the aggregate route places a turn when several sites are mounted. */
+export type SiteSelectionStrategy = 'sticky' | 'round-robin'
+
+/**
+ * Placement policy of the aggregate route.
+ *
+ * `sticky` is the shape a conversation needs: one topic keeps one model, so
+ * follow-up questions read as the same voice with the same habits, while a new
+ * topic starts on whichever site is least busy. The affinity only bends when
+ * the site would make the turn wait longer than `stickyMaxWaitMs` — idling for
+ * a throttled site while another can answer now is the one thing this policy
+ * exists to avoid.
+ */
+export interface SiteRoutingPolicy {
+  /** Placement strategy; `sticky` keeps a topic on one site. */
+  readonly strategy: SiteSelectionStrategy
+  /** How long a topic keeps its site, in milliseconds; 0 removes affinity. */
+  readonly stickyTtlMs: number
+  /** Longest wait tolerated to keep a topic on its site; longer means switch. */
+  readonly stickyMaxWaitMs: number
+  /** How long a site that failed a turn stays out of rotation, in milliseconds. */
+  readonly cooldownMs: number
+  /** Extra sites one turn may try after a site-level failure; 0 disables failover. */
+  readonly failoverAttempts: number
+}
+
 /** Default text head so a prompt always names the task even when budgets bite. */
 export const DEFAULT_MAX_TEXT_CHARS = 2_000
 /** Description budget of one tool schema inside the rendered prompt. */
@@ -53,6 +82,13 @@ export interface ChatHubLlmConfig {
   readonly route: string
   /** One route per site, in `sites` order; a single-site mount has exactly one. */
   readonly routes: readonly string[]
+  /**
+   * Aggregate route spanning every mounted site, when auto selection is on.
+   * A turn on it picks its site per request; the per-site routes stay pinned.
+   */
+  readonly autoRoute?: string | undefined
+  /** Placement policy of `autoRoute`; defaults to sticky affinity. */
+  readonly routing?: SiteRoutingPolicy | undefined
   /** Model id advertised on that route; the site selects the model itself. */
   readonly model: string
   /** Declared context capacity in tokens, used by harness budget planning. */
@@ -132,6 +168,12 @@ export interface ChatHubTransport {
    * @returns The ceiling, or `undefined` when the site declares none.
    */
   maxPromptChars?(providerId: string): number | undefined
+  /**
+   * Milliseconds before the site's next legal turn, without spending one.
+   * @param providerId - site provider id.
+   * @returns The wait; 0 means the site can take a turn now.
+   */
+  waitForTurnMs?(providerId: string): number
 }
 
 /** Result of opening a session when the site refuses to start one. */
@@ -223,6 +265,8 @@ export interface ChatHubRenderPolicy {
 
 /** One turn's observable facts; no prompt, answer, or argument text. */
 export interface ChatHubTurnObservation {
+  /** Site that served the turn; differs from the route on the auto route. */
+  readonly site?: string
   /** Harness session the turn belongs to, when the loop stamped one. */
   readonly sessionId?: string
   /** Page key used for the last attempt. */
@@ -281,3 +325,15 @@ export const DEFAULT_CHATHUB_LLM_CONFIG = {
   repairAttempts: 1,
   auxiliary: 'refuse',
 } as const
+
+/** Shipped placement policy; a mount overrides only what differs. */
+export const DEFAULT_SITE_ROUTING: SiteRoutingPolicy = {
+  strategy: 'sticky',
+  // Half an hour covers one sitting: a topic is one task, and a task resumed
+  // after lunch is a new one, free to land on a fresher site.
+  stickyTtlMs: 1_800_000,
+  // A short gap is worth waiting for to keep one voice; a paced site is not.
+  stickyMaxWaitMs: 3_000,
+  cooldownMs: 600_000,
+  failoverAttempts: 1,
+}

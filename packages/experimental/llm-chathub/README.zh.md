@@ -25,7 +25,18 @@ kind: "package-bundle"
 <a id="use-this-package"></a>
 ## 使用此包
 
-挂载后只注册一条 LLM 提供方路由：默认是 `<site>-chathub`，行内设置 `route` 可改名；显示名为 `ChatHub <site>`，只声明一个模型 id（默认 `web-model`）。站点自己选择背后的大模型，因此这个 id 只是路由标识，不是能力声明：网页回答不返回用量，`token-meter` 只能估算。
+挂载后每个站点注册一条 LLM 提供方路由：默认是 `<site>-chathub`，行内设置 `route` 可改名；显示名为 `ChatHub <site>`，只声明一个模型 id（默认 `web-model`）。站点自己选择背后的大模型，因此这个 id 只是路由标识，不是能力声明：网页回答不返回用量，`token-meter` 只能估算。
+
+### 多站点：一条自动选择的路由
+
+挂载两个及以上站点、且 `selection` 为 `auto`（默认）时，本行还会注册一条聚合路由 `web-auto-chathub`，按轮次选择站点，显示名列出候选：`ChatHub auto (deepseek-web, qianwen-web)`。各站点自己的路由仍然注册、仍然钉死，因此在面板里选 `qianwen-web` 绝不会由别的站点回答——聚合路由是新增，不是改道。
+
+聚合路由上的每一轮由 [`SiteRouter`](src/router.ts) 决定落在哪：
+
+- **同一话题同一个模型。** 话题就是 harness 会话：首轮选定站点，后续轮次在 `stickyTtlMs` 内保持该站点，追问读起来是同一个声音。
+- **新话题分摊。** 没有话题归属的会话落到最久未被使用的站点，避免一个账号吃掉一整天的工作量。
+- **节流是选址事实，不是干等。** 宿主会报告每个站点距下一轮合法还需多久；等待超过 `stickyMaxWaitMs` 的站点会被换成就绪的站点，而不是让循环睡过间隔。话题一旦迁移，之后继续留在新站点。
+- **失败的站点被替换。** 掉登录、被限流、超时、页面漂移的站点进入 `cooldownMs` 冷却，同一请求在下一个候选上重放（`failoverAttempts`）。回答不合法、预算溢出、被取消、请求非法不换站点重试——这些在每个站点上都会同样失败。
 
 ### 何时选择它
 
@@ -39,7 +50,7 @@ kind: "package-bundle"
 pnpm dsh web --patch packages/experimental/chathub-host/cordis.patch.yml --patch packages/experimental/llm-chathub/cordis.patch.yml
 ```
 
-该层插入一行 `llm-chathub`，默认值来自环境变量：`DSH_CHATHUB_LLM_SITE`（默认 `deepseek-web`）、`DSH_CHATHUB_LLM_MODEL`、`DSH_CHATHUB_LLM_ROOT`（默认宿主进程工作目录）、`DSH_CHATHUB_LLM_TOOLS`（默认 `read,grep,glob,edit,write`）、`DSH_CHATHUB_LLM_VERIFY`（默认 `pnpm run typecheck`）。第一个智能体步骤才会打开页面；挂载本身不启动浏览器。
+该层插入一行 `llm-chathub`，默认值来自环境变量：`DSH_CHATHUB_LLM_SITE`（默认 `deepseek-web`）、`DSH_CHATHUB_LLM_MODEL`、`DSH_CHATHUB_LLM_ROOT`（默认宿主进程工作目录）、`DSH_CHATHUB_LLM_TOOLS`（默认 `read,grep,glob,edit,write`）、`DSH_CHATHUB_LLM_VERIFY`（默认 `pnpm run typecheck`）。当 `DSH_CHATHUB_LLM_SITES` 列出两个及以上站点时，`DSH_CHATHUB_LLM_SELECTION`（默认 `auto`）决定是否追加聚合路由，其选址可用 `DSH_CHATHUB_LLM_SELECTION_STRATEGY`、`DSH_CHATHUB_LLM_FAILOVER`、`DSH_CHATHUB_LLM_TOPIC_TTL_MS`、`DSH_CHATHUB_LLM_SITE_COOLDOWN_MS` 调整。第一个智能体步骤才会打开页面；挂载本身不启动浏览器。
 
 ### 配置
 
@@ -79,6 +90,13 @@ pnpm dsh web --patch packages/experimental/chathub-host/cordis.patch.yml --patch
 | `maxToolCallsPerTurn` | `1` | 每次回答接受的调用数，多余的块丢弃并告警 |
 | `repairAttempts` | `1` | 被拒回答额外获得的轮数 |
 | `auxiliary` | `refuse` | 除压缩以外的辅助调用（会话标题等）是否可以消耗一次站点轮次；压缩始终服务——它的检查点输出就是调用方的结果，拒绝它会让纯 web 挂载下的每次模型切换都失败 |
+| `selection` | `auto` | 挂载两个及以上站点时是否额外注册聚合路由 `web-auto-chathub`；`fixed` 只保留各站点自己的路由 |
+| `selectionStrategy` | `sticky` | `sticky` 让同一话题留在同一站点；`round-robin` 每轮轮换 |
+| `autoRoute` | `web-auto-chathub` | 聚合路由的 id |
+| `stickyTtlMs` | `1800000` | 同一话题保持站点的时长（30 分钟）；`0` 关闭话题归属 |
+| `stickyMaxWaitMs` | `3000` | 为保持话题不迁移而容忍的最长节流等待 |
+| `siteCooldownMs` | `600000` | 失败站点退出轮换的冷却时长 |
+| `failoverAttempts` | `1` | 站点级失败后同一轮还可尝试的其他站点数；`0` 关闭故障转移 |
 
 自动生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-experimental-llm-chathub)是全部可接受字段的完整来源。
 

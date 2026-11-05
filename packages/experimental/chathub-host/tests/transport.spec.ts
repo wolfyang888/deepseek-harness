@@ -86,6 +86,18 @@ it('holds a second turn until the site envelope allows it', async () => {
   await transport.dispose()
 })
 
+it('reports the pacing wait without spending the turn', async () => {
+  const policy: PacingPolicy = { minTurnGapMs: 400, maxTurnsPerHour: 0, maxWaitMs: 1_000 }
+  const { transport } = await fixture(true, policy)
+  const session = await transport.open('deepseek-web')
+  if (session !== undefined && 'send' in session) await session.close()
+  // The turn just taken leaves this site waiting, and another site free —
+  // which is the fact a site-selecting caller needs before it picks one.
+  expect(transport.waitForTurnMs('deepseek-web')).toBeGreaterThan(0)
+  expect(transport.waitForTurnMs('qianwen-web')).toBe(0)
+  await transport.dispose()
+})
+
 it('opens a session on a signed-in page and reuses the page', async () => {
   const { transport, context } = await fixture(true)
   const session = await transport.open('deepseek-web')
