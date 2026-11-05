@@ -57,6 +57,7 @@ export class ContextCompiler implements IContextCompiler {
       workingMemory: [...new Set([...session.context.workingMemory, ...memoryHighlights(session)])],
       modelSwitchHistory: session.context.modelSwitchHistory.map(record => ({ ...record })),
       lastToolResults: session.context.lastToolResults.map(result => ({ ...result })),
+      conversationStatus: conversationStatusLines(session, _providerId),
     }
   }
 
@@ -87,7 +88,7 @@ function fullPrompt(context: SemanticContext, providerId: string): string {
     section('Open Questions', bulleted(context.openQuestions)),
     section('Decisions', bulleted(context.decisions)),
     section('Working Memory', bulleted(context.workingMemory)),
-    section('Model Switches', context.modelSwitchHistory.map(switchLine)),
+    section('Conversation Status', bulleted(context.conversationStatus ?? [])),
     section('Recent Tool Results', context.lastToolResults.map(toolLine)),
   ])
 }
@@ -127,6 +128,7 @@ function detailedPrompt(context: SemanticContext, providerId: string): string {
       .map(step => planLine(step, true))),
     section('Current Blockers', bulleted(context.openQuestions)),
     section('Next Actions', bulleted(context.workingMemory)),
+    section('Conversation Status', bulleted(context.conversationStatus ?? [])),
     section('Recent Tool Results', context.lastToolResults.map(toolLine)),
   ])
 }
@@ -170,11 +172,29 @@ function planLine(step: PlanStep, includeEvidence: boolean): string {
 }
 
 /**
- * @param record - Completed switch.
- * @returns One switch line.
+ * Derive the conversation status lines a prompt carries.
+ *
+ * These lines tell the receiving model where the conversation stands — which
+ * model is active, how many turns completed or failed, and which models took
+ * part — without the per-switch process detail (reasons, checkpoints, from/to
+ * trails) the model cannot act on.
+ * @param session - Session to summarize.
+ * @param providerId - Provider receiving the prompt.
+ * @returns Status lines in render order.
  */
-function switchLine(record: SemanticContext['modelSwitchHistory'][number]): string {
-  return `- ${record.from} -> ${record.to}: ${record.reason}`
+function conversationStatusLines(session: ChatSessionRecord, providerId: string): string[] {
+  const lines = [`Active model: ${providerId}`]
+  const details = session.timeline
+    .filter(entry => entry.kind === 'status')
+    .map(entry => entry.detail)
+  const completed = details.filter(detail => detail === 'done').length
+  lines.push(`Completed turns: ${completed}`)
+  const failed = details.filter(detail => detail.startsWith('failed')).length
+  if (failed > 0) lines.push(`Failed turns: ${failed}`)
+  if (session.providerHistory.length > 1) {
+    lines.push(`Models involved so far: ${session.providerHistory.join(', ')}`)
+  }
+  return lines
 }
 
 /**

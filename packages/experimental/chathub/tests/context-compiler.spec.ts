@@ -20,6 +20,13 @@ function memory(overrides: Partial<MemoryEntry>): MemoryEntry {
 function fixture(): ChatSessionRecord {
   return sessionRecord({
     goal: 'fix the build error',
+    providerHistory: ['chatgpt-web', 'deepseek-web'],
+    timeline: [
+      { id: 'tl_1', kind: 'session-created', at: 1, provider: 'chatgpt-web', detail: 'Session created for chatgpt-web.' },
+      { id: 'tl_2', kind: 'status', at: 2, provider: 'chatgpt-web', detail: 'done' },
+      { id: 'tl_3', kind: 'status', at: 3, provider: 'deepseek-web', detail: 'done' },
+      { id: 'tl_4', kind: 'status', at: 4, provider: 'deepseek-web', detail: 'failed: deepseek-web: rate-limited' },
+    ],
     plan: [
       planStep({ id: 'p1', title: 'locate', status: 'done', summary: 'found config path bug', evidence: ['build.log'] }),
       planStep({ id: 'p2', title: 'patch', status: 'blocked', summary: '' }),
@@ -62,6 +69,12 @@ describe('ContextCompiler.compile', () => {
     ])
     expect(context.modelSwitchHistory).toEqual(session.context.modelSwitchHistory)
     expect(context.lastToolResults).toEqual(session.context.lastToolResults)
+    expect(context.conversationStatus).toEqual([
+      'Active model: deepseek-web',
+      'Completed turns: 2',
+      'Failed turns: 1',
+      'Models involved so far: chatgpt-web, deepseek-web',
+    ])
   })
 
   it('returns copies that cannot mutate the session', () => {
@@ -98,7 +111,15 @@ describe('ContextCompiler.createPrompt', () => {
     expect(prompt).toContain('## Open Questions\n- is there a second failure?')
     expect(prompt).toContain('## Decisions\n- keep pnpm')
     expect(prompt).toContain('## Working Memory\n- config path located')
-    expect(prompt).toContain('## Model Switches\n- chatgpt-web -> deepseek-web: coding')
+    expect(prompt).toContain(
+      '## Conversation Status'
+      + '\n- Active model: deepseek-web'
+      + '\n- Completed turns: 2'
+      + '\n- Failed turns: 1'
+      + '\n- Models involved so far: chatgpt-web, deepseek-web',
+    )
+    expect(prompt).not.toContain('## Model Switches')
+    expect(prompt).not.toContain('chatgpt-web -> deepseek-web')
     expect(prompt).toContain('## Recent Tool Results\n- read_file: read tsconfig')
   })
 
@@ -125,6 +146,8 @@ describe('ContextCompiler.createPrompt', () => {
     expect(prompt).toContain('- [blocked] patch')
     expect(prompt).toContain('## Current Blockers\n- is there a second failure?')
     expect(prompt).toContain('## Next Actions\n- config path located')
+    expect(prompt).toContain('## Conversation Status\n- Active model: chatgpt-web')
+    expect(prompt).not.toContain('## Model Switches')
     expect(prompt).toContain('## Recent Tool Results\n- read_file: read tsconfig')
   })
 

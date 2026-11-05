@@ -211,6 +211,13 @@ export interface SemanticContext {
   workingMemory: string[]
   modelSwitchHistory: ModelSwitchRecord[]
   lastToolResults: ToolResultSummary[]
+  /**
+   * Current conversation status lines a prompt renders, derived from the
+   * session's timeline: active model, completed turns, failures, and the
+   * models involved so far. Switch process details (per-switch records,
+   * reasons, checkpoints) are deliberately excluded.
+   */
+  conversationStatus?: string[]
 }
 
 /**
