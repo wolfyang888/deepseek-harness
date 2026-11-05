@@ -66,6 +66,10 @@ export const DEFAULT_SITE_DRIVERS: Readonly<SiteDrivers> = {
     // The composer accepts inserted text but drops a synthetic Enter; the
     // send button next to it is the only path that actually submits.
     submitButton: 'button[aria-label="发送消息"]',
+    // A guest session never stops showing this sidebar line, and a guest
+    // send is accepted but never generates; surfacing it turns the guest
+    // wall into an immediate auth-required instead of a turn timeout.
+    loginWall: 'p:has-text("登录可同步历史对话")',
   },
   'glm-web': {
     url: 'https://chatglm.cn/',

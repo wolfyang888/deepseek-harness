@@ -287,6 +287,11 @@ export interface TurnPage {
    */
   answerHtml(selector: string, body?: string): Promise<string>
   /**
+   * @param selector - signed-out wall selector.
+   * @returns Whether the wall is currently visible.
+   */
+  wallVisible(selector: string): Promise<boolean>
+  /**
    * @param prompt - rendered prompt to type.
    * @param driver - site facts for input and submission.
    * @param typeDelayMs - delay between keystrokes.

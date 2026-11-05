@@ -175,7 +175,7 @@ export class PlaywrightChatSession implements WebChatTransportSession {
         )
       }
       await sleep(Math.min(pollMs, remaining))
-      this.assertNotSignedOut()
+      await this.assertNotSignedOut()
       const current = this.answerFrom(
         await this.page.answerHtml(this.driver.answer, this.driver.answerBody),
         prompt,
@@ -214,23 +214,32 @@ export class PlaywrightChatSession implements WebChatTransportSession {
   }
 
   /**
-   * Reject a page that closed or navigated to a login path mid-turn.
+   * Reject a page that closed, navigated to a login path, or showed the
+   * site's signed-out wall mid-turn.
    * @throws BrowserTransportError with `chathub-signed-out`.
    */
-  private assertNotSignedOut(): void {
+  private async assertNotSignedOut(): Promise<void> {
     if (this.page.isClosed()) {
       throw new BrowserTransportError('chathub-signed-out', `${this.key}: page closed during the turn`)
     }
-    if (this.driver.signedOutPath === undefined) return
-    let path = ''
-    try {
-      path = new URL(this.page.url()).pathname
-    } catch {
-      // An unparsable URL means the page left the site; report the same signed-out token.
-      throw new BrowserTransportError('chathub-signed-out', `${this.key}: page navigated off-site`)
+    if (this.driver.signedOutPath !== undefined) {
+      let path = ''
+      try {
+        path = new URL(this.page.url()).pathname
+      } catch {
+        // An unparsable URL means the page left the site; report the same signed-out token.
+        throw new BrowserTransportError('chathub-signed-out', `${this.key}: page navigated off-site`)
+      }
+      if (new RegExp(this.driver.signedOutPath, 'i').test(path)) {
+        throw new BrowserTransportError('chathub-signed-out', `${this.key}: redirected to a login path`)
+      }
     }
-    if (new RegExp(this.driver.signedOutPath, 'i').test(path)) {
-      throw new BrowserTransportError('chathub-signed-out', `${this.key}: redirected to a login path`)
+    // A wall that appears after submission — a session expiring or a guest
+    // gate locking generation — never changes the URL, so the path check
+    // alone would let the turn burn its whole timeout on an answer the site
+    // will never produce.
+    if (this.driver.loginWall !== undefined && await this.page.wallVisible(this.driver.loginWall)) {
+      throw new BrowserTransportError('chathub-signed-out', `${this.key}: the site's signed-out wall is up`)
     }
   }
 

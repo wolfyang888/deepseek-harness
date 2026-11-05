@@ -114,7 +114,11 @@ async function harness(options: HarnessOptions = {}) {
   if (options.registry === undefined) {
     for (const provider of providers) registry.register(provider)
   }
-  const controller = new ChatHubController(ctx, { registry, compaction: options.compaction, now: () => AT })
+  const controller = new ChatHubController(ctx, {
+    registry,
+    ...(options.compaction === undefined ? {} : { compaction: options.compaction }),
+    now: () => AT,
+  })
   return { ctx, pool, facility, registry, controller, providers }
 }
 

@@ -66,6 +66,14 @@ class ScriptedPage implements TurnPage {
   }
 
   /**
+   * @param _selector - signed-out wall selector.
+   * @returns Always invisible; walls are exercised by the page-level specs.
+   */
+  async wallVisible(_selector: string): Promise<boolean> {
+    return false
+  }
+
+  /**
    * @param prompt - prompt the session submits.
    * @returns Resolves unless the test configured a failure.
    */

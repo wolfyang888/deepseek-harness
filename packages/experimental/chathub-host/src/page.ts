@@ -175,6 +175,12 @@ export class PlaywrightPage implements ChatPageHandle {
       await this.submitPrompt(driver)
       await sleep(Math.max(typeDelayMs, 600))
       if (await this.readComposer(composer) === typed) {
+        // A send the site silently drops is most often its signed-out gate
+        // (a login modal over the composer); report that cause when the site
+        // declares one, so the turn asks for login instead of a vague drift.
+        if (driver.loginWall !== undefined && await this.visible(driver.loginWall)) {
+          throw new BrowserTransportError('chathub-signed-out', `${this.key}: the send was blocked by the site's signed-out wall`)
+        }
         throw new BrowserTransportError('chathub-ui-drift', `${this.key}: the input kept the prompt; the message was not sent`)
       }
     } catch (error) {
@@ -247,12 +253,29 @@ export class PlaywrightPage implements ChatPageHandle {
   }
 
   /**
+   * @param selector - signed-out wall selector.
+   * @returns Whether the wall is currently visible.
+   */
+  async wallVisible(selector: string): Promise<boolean> {
+    return this.visible(selector)
+  }
+
+  /**
    * @param selector - element selector.
-   * @returns Whether an element matching the selector is visible.
+   * @returns Whether any element matching the selector is visible.
+   *
+   * Sites ship several matches for one composer selector — a hidden legacy
+   * textarea ahead of the live editor — so the check scans every match
+   * instead of trusting the first.
    */
   private async visible(selector: string): Promise<boolean> {
     try {
-      return await this.page.locator(selector).first().isVisible()
+      const locator = this.page.locator(selector)
+      const count = await locator.count()
+      for (let index = 0; index < count; index += 1) {
+        if (await locator.nth(index).isVisible()) return true
+      }
+      return false
     } catch (error) {
       throw classifyPageError(error, `${this.key}: inspecting "${selector}"`)
     }
