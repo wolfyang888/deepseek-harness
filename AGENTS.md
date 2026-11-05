@@ -176,6 +176,14 @@ Real-API tests/demos read `DEEPSEEK_API_KEY`, optional `DEEPSEEK_BASE_URL`, and 
 - Add a model by implementing one adapter and registering it through `webProviderAdapters` or `ProviderRegistry`.
 - The [unified Web UI design](chatDeepDoc/chatHub-web-ui-plan.md) splits the panel across `chathub-host` (`chatHub` Remote controller, durable storage domain) and `client-ui-chathub` (browser-only sidebar panel); UI actions stay Remote calls, never in-process controller imports.
 
+## Working rules for the browser-model local-edit track
+
+This fork drives a large local native project through browser-backed web models. Three standing rules govern every change on that track:
+
+1. **Do not touch the main business flow.** Leave `agent-loop`, the session lifecycle, and shipped profile bundles as they are; the web-model track stays inside `packages/experimental/`.
+2. **Solve by adding plugins.** A fix ships as a new plugin or a documented extension point in an experimental package, and mounting it is opt-in; an existing plugin's behavior and defaults stay unchanged for callers that do not mount the new one.
+3. **Prove it in a real browser before reporting done.** Launch the browser plugin against a logged-in profile, exercise the actual page path, and report success only after that run — never from unit tests alone.
+
 ## Defensive patterns
 
 Read [docs/defensive-patterns/README.md](docs/defensive-patterns/README.md) before changing a package surface, remote service, client component or state, conversation or Session behavior, or lifecycle, concurrency, subprocess, and teardown code. Its [review principles](docs/defensive-patterns/README.md#why-these-rules) apply per artifact.

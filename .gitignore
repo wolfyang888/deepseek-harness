@@ -53,3 +53,6 @@ native/system/test/bin/
 
 # Owner-local real-browser validation profile (cookies, login state).
 /packages/experimental/chathub/.real-browser-profile/
+
+# Local agent workspace (session memory logs, preview artifacts).
+/.workbuddy/
