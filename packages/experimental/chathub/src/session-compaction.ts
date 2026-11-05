@@ -87,6 +87,45 @@ const SECTION_ROUTES: ReadonlyArray<{ section: string; target: keyof CompactionC
   { section: 'Critical Context', target: 'decisions' },
 ]
 
+/** Known section names, keyed by lower-case title. */
+const SECTION_TARGETS = new Map(SECTION_ROUTES.map(route => [route.section.toLowerCase(), route.target]))
+
+/** Markdown heading marker, e.g. `## ` or `#### `. */
+const HEADING_MARKER = /^#{1,6}\s+/
+
+/** Markdown list marker a site may keep in extracted text. */
+const LIST_MARKER = /^[-*+]\s+/
+
+/** Filler a model writes for a section it has nothing to add to. */
+const EMPTY_MARKER = /^\(?(none|n\/a)\)?(\s+reported)?\.?$/i
+
+/**
+ * Read one answer line as a checkpoint heading.
+ *
+ * A browser site renders `## Title` as an HTML heading and its list items as
+ * `<li>`, so the extracted answer carries `Title` and bare lines instead of the
+ * markers the instruction asked for; a plain-text answer may instead use
+ * `**Title**` or `Title:`. All four forms route. A decorated line whose title
+ * is not a known section closes the current section; an undecorated line that
+ * merely resembles a title stays content, so a sentence never retargets the
+ * lines below it.
+ * @param line - One trimmed answer line.
+ * @returns The section target, `null` for a closing decoration, or undefined
+ * when the line is content.
+ */
+function headingOf(line: string): keyof CompactionCheckpoint | null | undefined {
+  if (LIST_MARKER.test(line)) return undefined
+  const decorated = HEADING_MARKER.test(line) || /^\*\*.+\*\*$/.test(line) || line.endsWith(':')
+  const title = line
+    .replace(HEADING_MARKER, '')
+    .replace(/:\s*$/, '')
+    .replace(/^[*_\s]+|[*_\s]+$/g, '')
+    .trim()
+  const known = SECTION_TARGETS.get(title.toLowerCase())
+  if (known !== undefined) return known
+  return decorated ? null : undefined
+}
+
 /**
  * Parse a model-produced checkpoint into semantic-context collections.
  * @param markdown - The model's checkpoint answer.
@@ -97,15 +136,15 @@ export function parseCheckpoint(markdown: string): CompactionCheckpoint {
   let target: keyof CompactionCheckpoint | undefined
   for (const rawLine of markdown.split('\n')) {
     const line = rawLine.trim()
-    const heading = /^##\s+(.+)$/.exec(line)
-    if (heading !== null) {
-      const title = heading[1]?.trim() ?? ''
-      target = SECTION_ROUTES.find(route => route.section.toLowerCase() === title.toLowerCase())?.target
+    const heading = headingOf(line)
+    if (heading !== undefined) {
+      target = heading ?? undefined
       continue
     }
-    if (target === undefined || !line.startsWith('- ') || line.slice(2).trim() === '(none)') continue
-    const bullet = line.slice(2).trim()
-    if (bullet !== '') checkpoint[target].push(bullet)
+    if (target === undefined || line === '') continue
+    const bullet = line.replace(LIST_MARKER, '').trim()
+    if (bullet === '' || EMPTY_MARKER.test(bullet)) continue
+    checkpoint[target].push(bullet)
   }
   return checkpoint
 }

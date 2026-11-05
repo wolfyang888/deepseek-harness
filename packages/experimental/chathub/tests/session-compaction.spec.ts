@@ -98,6 +98,48 @@ describe('parseCheckpoint', () => {
     expect(checkpoint.workingMemory).toEqual([])
     expect(checkpoint.decisions).toEqual([])
   })
+
+  it('treats the fillers a model writes for an empty section as empty', () => {
+    const checkpoint = parseCheckpoint([
+      'Errors and Fixes',
+      'None reported.',
+      'Pending Jobs',
+      '(none)',
+      'n/a',
+    ].join('\n'))
+    expect(checkpoint.facts).toEqual([])
+    expect(checkpoint.workingMemory).toEqual([])
+  })
+
+  it('routes an answer whose markers the site stripped', () => {
+    const checkpoint = parseCheckpoint([
+      'Primary Request and Intent',
+      'change slow_ms default from 200 to 150',
+      'Key Facts and Conclusions',
+      'line 45 holds the config default',
+      'Pending Jobs',
+      'add slow_ratio to the report stats',
+    ].join('\n'))
+    expect(checkpoint.facts).toEqual(['change slow_ms default from 200 to 150', 'line 45 holds the config default'])
+    expect(checkpoint.workingMemory).toEqual(['add slow_ratio to the report stats'])
+  })
+
+  it('reads bold and colon-decorated titles as headings', () => {
+    const checkpoint = parseCheckpoint([
+      '**Next Step**:',
+      'rerun the bundler',
+    ].join('\n'))
+    expect(checkpoint.workingMemory).toEqual(['rerun the bundler'])
+  })
+
+  it('keeps a sentence that resembles a title as content', () => {
+    const checkpoint = parseCheckpoint([
+      'Next Step',
+      'rerun the bundler',
+      'the failure is in stage 2 of the build',
+    ].join('\n'))
+    expect(checkpoint.workingMemory).toEqual(['rerun the bundler', 'the failure is in stage 2 of the build'])
+  })
 })
 
 describe('mergeCheckpoint', () => {
