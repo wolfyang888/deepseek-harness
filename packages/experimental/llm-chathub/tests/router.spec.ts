@@ -76,6 +76,15 @@ describe('SiteRouter', () => {
     expect(next).not.toBe(first)
   })
 
+  it('keeps the other topics when one site is penalized', () => {
+    const router = new SiteRouter(policy(), () => 1_000)
+    router.choose({ key: 's1', candidates: SITES, waitOf: () => 0 })
+    router.choose({ key: 's2', candidates: SITES, waitOf: () => 0 })
+    // Penalizing one site drops only the topics that were on it.
+    router.penalize('deepseek-web')
+    expect(router.choose({ key: 's2', candidates: SITES, waitOf: () => 0 })).toBe('qianwen-web')
+  })
+
   it('returns a cooled site to rotation once the cooldown ends', () => {
     const now = { at: 0 }
     const router = new SiteRouter(policy({ cooldownMs: 60_000, stickyTtlMs: 0 }), clock(now))
@@ -86,8 +95,7 @@ describe('SiteRouter', () => {
     expect(router.choose({ key: 's2', candidates: SITES, waitOf: () => 0 })).toBe('deepseek-web')
   })
 
-  it('forgets a topic once its affinity expires', () => {
-    const now = { at: 0 }
+  it('forgets a topic once its affinity expires', () => {    const now = { at: 0 }
     const router = new SiteRouter(policy({ stickyTtlMs: 60_000 }), clock(now))
     const first = router.choose({ key: 's1', candidates: SITES, waitOf: () => 0 })
     now.at = 61_000
@@ -113,5 +121,112 @@ describe('SiteRouter', () => {
     const router = new SiteRouter(policy(), () => 0)
     expect(() => router.choose({ key: 's1', candidates: [], waitOf: () => 0 }))
       .toThrow(/no site can serve/u)
+  })
+})
+
+const RANKED = ['qianwen-web', 'deepseek-web', 'chatgpt-web']
+const RANKS = { 'qianwen-web': 10, 'deepseek-web': 20, 'chatgpt-web': 30 }
+
+describe('SiteRouter escalation', () => {
+  it('moves a topic one rank up after it fails twice on its site', () => {
+    const router = new SiteRouter(
+      policy({ cooldownMs: 0, escalateAfterFailures: 2, siteRank: RANKS }),
+      () => 0,
+    )
+    expect(router.choose({ key: 's1', candidates: RANKED, waitOf: () => 0 })).toBe('qianwen-web')
+    router.fail('s1', 'qianwen-web')
+    router.fail('s1', 'qianwen-web')
+    // One step, not straight to the top: the next model that may follow the
+    // protocol is the cheapest replacement.
+    expect(router.choose({ key: 's1', candidates: RANKED, waitOf: () => 0 })).toBe('deepseek-web')
+  })
+
+  it('keeps climbing while the replacement keeps failing', () => {
+    const router = new SiteRouter(
+      policy({ cooldownMs: 0, escalateAfterFailures: 2, siteRank: RANKS }),
+      () => 0,
+    )
+    router.choose({ key: 's1', candidates: RANKED, waitOf: () => 0 })
+    router.fail('s1', 'qianwen-web')
+    router.fail('s1', 'qianwen-web')
+    const second = router.choose({ key: 's1', candidates: RANKED, waitOf: () => 0 })
+    expect(second).toBe('deepseek-web')
+    router.succeed('s1', second)
+    router.fail('s1', 'deepseek-web')
+    router.fail('s1', 'deepseek-web')
+    expect(router.choose({ key: 's1', candidates: RANKED, waitOf: () => 0 })).toBe('chatgpt-web')
+  })
+
+  it('does not escalate on a failure streak a success already broke', () => {
+    const router = new SiteRouter(
+      policy({ cooldownMs: 0, escalateAfterFailures: 2, demoteMs: 60_000 }),
+      () => 0,
+    )
+    router.fail('s1', 'qianwen-web')
+    router.succeed('s1', 'qianwen-web')
+    router.fail('s2', 'qianwen-web')
+    // One failure either side of a working turn is not a broken site: a new
+    // topic still prefers it over a site that would make the turn wait.
+    expect(router.choose({
+      key: 's3',
+      candidates: ['qianwen-web', 'deepseek-web'],
+      waitOf: site => (site === 'qianwen-web' ? 0 : 30_000),
+    })).toBe('qianwen-web')
+  })
+
+  it('benches a site that keeps failing for every topic', () => {
+    const now = { at: 0 }
+    const router = new SiteRouter(
+      policy({ cooldownMs: 0, escalateAfterFailures: 2, demoteMs: 60_000 }),
+      clock(now),
+    )
+    router.fail('s1', 'qianwen-web')
+    router.fail('s2', 'qianwen-web')
+    // A site that failed two turns in a row is no longer a candidate for a
+    // fresh topic until its demotion ends, even when it is the readier page.
+    expect(router.choose({
+      key: 's3',
+      candidates: ['qianwen-web', 'deepseek-web'],
+      waitOf: site => (site === 'qianwen-web' ? 0 : 30_000),
+    })).toBe('deepseek-web')
+    now.at = 61_000
+    expect(router.choose({
+      key: 's4',
+      candidates: ['qianwen-web', 'deepseek-web'],
+      waitOf: site => (site === 'qianwen-web' ? 0 : 30_000),
+    })).toBe('qianwen-web')
+  })
+
+  it('runs on the failed site again when nothing outranks it', () => {
+    const router = new SiteRouter(
+      policy({ cooldownMs: 0, escalateAfterFailures: 2, siteRank: RANKS }),
+      () => 0,
+    )
+    router.fail('s1', 'qianwen-web')
+    router.fail('s1', 'qianwen-web')
+    // No stronger site is mounted; a stuck turn on the old model still beats
+    // no turn at all.
+    expect(router.choose({ key: 's1', candidates: ['qianwen-web'], waitOf: () => 0 })).toBe('qianwen-web')
+  })
+
+  it('stops escalating when the mount turns it off', () => {
+    const router = new SiteRouter(
+      policy({ cooldownMs: 0, escalateAfterFailures: 0, siteRank: RANKS }),
+      () => 0,
+    )
+    router.fail('s1', 'qianwen-web')
+    router.fail('s1', 'qianwen-web')
+    expect(router.choose({ key: 's1', candidates: RANKED, waitOf: () => 0 })).toBe('qianwen-web')
+  })
+
+  it('treats a site the mount does not rank as the weakest', () => {
+    const router = new SiteRouter(
+      policy({ cooldownMs: 0, escalateAfterFailures: 2, siteRank: RANKS }),
+      () => 0,
+    )
+    router.fail('s1', 'custom-web')
+    router.fail('s1', 'custom-web')
+    expect(router.choose({ key: 's1', candidates: ['custom-web', 'deepseek-web'], waitOf: () => 0 }))
+      .toBe('deepseek-web')
   })
 })

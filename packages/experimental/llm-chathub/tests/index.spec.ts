@@ -135,6 +135,24 @@ describe('resolveConfig', () => {
     expect(resolved.workspaceRoot).toBe('/work/repo')
   })
 
+  it('keeps a root that is only a separator', () => {
+    expect(resolveConfig({ ...ROW, workspaceRoot: '/' }, () => {}).workspaceRoot).toBe('/')
+  })
+
+  it('ranks every shipped site and lets the row extend the order', () => {
+    const resolved = resolveConfig({
+      ...ROW,
+      sites: ['deepseek-web', 'qianwen-web'],
+      escalateAfterFailures: 1,
+      siteRank: { 'qianwen-web': 99 },
+    }, () => {})
+    expect(resolved.routing).toMatchObject({ escalateAfterFailures: 1, demoteMs: 1_800_000 })
+    expect(resolved.routing?.siteRank).toMatchObject({ 'qianwen-web': 99, 'chatgpt-web': 30 })
+    // The shipped ranks survive a partial override, so an unlisted strong site
+    // is still reachable by escalation.
+    expect(resolved.routing?.siteRank['deepseek-web']).toBe(20)
+  })
+
   it('rejects a relative root instead of guessing one', () => {
     expect(() => resolveConfig({ ...ROW, workspaceRoot: 'repo' }, () => {}))
       .toThrow(/workspaceRoot "repo" must be an absolute path/u)

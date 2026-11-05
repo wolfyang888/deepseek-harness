@@ -47,6 +47,15 @@
 #                            1800000 = 30 min)
 #   DSH_CHATHUB_LLM_SITE_COOLDOWN_MS  how long a failed site stays out of
 #                            rotation (default 600000 = 10 min)
+#   DSH_CHATHUB_LLM_ESCALATE_AFTER  consecutive failures before a topic moves
+#                            to a stronger site, and before a repeatedly failing
+#                            site is benched (default 2); 0 disables escalation
+#   DSH_CHATHUB_LLM_SITE_DEMOTE_MS  how long a site that failed
+#                            ESCALATE_AFTER turns in a row stays benched
+#                            (default 1800000 = 30 min)
+#   DSH_CHATHUB_LLM_SITE_RANK  capability order used for escalation, as
+#                            `site:rank` pairs (default ships qianwen 10,
+#                            deepseek/glm/doubao 20, chatgpt/gemini 30)
 - insert:
     - id: llm-chathub
       name: '@deepseek-ai/dsh-experimental-llm-chathub'
@@ -64,6 +73,18 @@
         stickyTtlMs: !!js Number(process.env.DSH_CHATHUB_LLM_TOPIC_TTL_MS ?? 1800000)
         siteCooldownMs: !!js Number(process.env.DSH_CHATHUB_LLM_SITE_COOLDOWN_MS ?? 600000)
         failoverAttempts: !!js Number(process.env.DSH_CHATHUB_LLM_FAILOVER ?? 1)
+        escalateAfterFailures: !!js Number(process.env.DSH_CHATHUB_LLM_ESCALATE_AFTER ?? 2)
+        siteDemoteMs: !!js Number(process.env.DSH_CHATHUB_LLM_SITE_DEMOTE_MS ?? 1800000)
+        siteRank: !!js |
+          Object.fromEntries(
+            (process.env.DSH_CHATHUB_LLM_SITE_RANK ?? '')
+              .split(',')
+              .filter(Boolean)
+              .map((pair) => {
+                const [site, rank] = pair.split(':')
+                return [site.trim(), Number(rank)]
+              }),
+          )
 
 # The compaction engine prices every routed model against its declared context
 # window. These routes declare 32k — below the 64k default compaction headroom —

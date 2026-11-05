@@ -182,7 +182,7 @@ This fork drives a large local native project through browser-backed web models.
 
 1. **Do not touch the main business flow.** Leave `agent-loop`, the session lifecycle, and shipped profile bundles as they are; the web-model track stays inside `packages/experimental/`.
 2. **Solve by adding plugins.** A fix ships as a new plugin or a documented extension point in an experimental package, and mounting it is opt-in; an existing plugin's behavior and defaults stay unchanged for callers that do not mount the new one.
-3. **Prove it in a real browser before reporting done.** Launch the browser plugin against a logged-in profile, exercise the actual page path, and report success only after that run — never from unit tests alone.
+3. **Prove it in a real browser before reporting done.** Run the browser plugin against a logged-in profile and the actual page path; a unit test encodes this fork's model of the site and passes when that model is wrong. Shape the run like real use — project-sized prompt, two turns of one topic, a task that needs a legal tool call ([`manual-check.mts`](packages/experimental/llm-chathub/manual-check.mts)) — and report the per-turn site and failure code ([why these runs diverge](chatDeepDoc/web-model-verification.md)).
 
 ## Defensive patterns
 

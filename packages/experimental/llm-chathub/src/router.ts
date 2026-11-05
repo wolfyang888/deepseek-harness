@@ -44,6 +44,14 @@ export class SiteRouter {
   private readonly cooldowns = new Map<string, number>()
   /** Site to the last instant it was picked, for spreading new topics. */
   private readonly lastPicked = new Map<string, number>()
+  /** `topic\0site` to consecutive failures, reset by a turn that succeeds. */
+  private readonly topicFailures = new Map<string, number>()
+  /** Site to consecutive failed turns, reset by a turn that succeeds. */
+  private readonly siteFailures = new Map<string, number>()
+  /** Site to the instant its demotion ends. */
+  private readonly demotions = new Map<string, number>()
+  /** Topic key to the lowest rank its next site must beat. */
+  private readonly floors = new Map<string, number>()
   /** Rotation cursor of the `round-robin` strategy. */
   private cursor = 0
 
@@ -65,10 +73,11 @@ export class SiteRouter {
   choose(request: SiteChoiceRequest): string {
     if (request.pinned !== undefined) return request.pinned
     const at = this.now()
-    // A cooled-down site is skipped while any other can serve; when every
-    // candidate is cooling the turn still runs, and its failure reports why.
-    const usable = request.candidates.filter(site => !this.cooling(site, at))
-    const pool = usable.length > 0 ? usable : [...request.candidates]
+    // A cooled-down or benched site is skipped while any other can serve; when
+    // every candidate is out, the turn still runs, and its failure reports why.
+    const open = request.candidates.filter(site => !this.cooling(site, at))
+    const fresh = open.filter(site => !this.demoted(site, at))
+    const pool = this.stricter(request.key, fresh.length > 0 ? fresh : open)
     const first = pool[0]
     if (first === undefined) throw new Error('chathub-llm: no site can serve this turn')
 
@@ -84,16 +93,56 @@ export class SiteRouter {
 
   /**
    * Record that a turn on this site succeeded; the topic stays where it ran.
+   *
+   * A success is also the only thing that clears a failure streak: one working
+   * turn proves the account and the page are usable again, so the site returns
+   * to the rotation with its rank intact.
    * @param key - topic key.
    * @param site - site that answered.
    */
   succeed(key: string, site: string): void {
+    this.topicFailures.delete(topicSite(key, site))
+    this.siteFailures.delete(site)
     this.pin(key, site, this.now())
   }
 
   /**
-   * Record that a site failed a turn: keep it out of rotation for a while, and
-   * drop any topic affinity pointing at it.
+   * Record that an attempt on this site failed.
+   *
+   * Beyond the per-site cooldown, repeated failure changes what the topic is
+   * allowed to run on: the site is benched from fresh topics for `demoteMs`
+   * once it fails `escalateAfterFailures` turns in a row, and the topic's next
+   * site must rank above the one that failed it `escalateAfterFailures` times.
+   * That is the difference between "wait and retry the same model" and "this
+   * conversation needs a model that follows the protocol".
+   * @param key - topic key.
+   * @param site - site whose attempt failed.
+   */
+  fail(key: string, site: string): void {
+    const pair = topicSite(key, site)
+    const forTopic = (this.topicFailures.get(pair) ?? 0) + 1
+    this.topicFailures.set(pair, forTopic)
+    const forSite = (this.siteFailures.get(site) ?? 0) + 1
+    this.siteFailures.set(site, forSite)
+    const limit = this.policy.escalateAfterFailures
+    if (limit > 0) {
+      if (forTopic >= limit) {
+        this.topicFailures.delete(pair)
+        this.floors.set(key, Math.max(this.floors.get(key) ?? Number.NEGATIVE_INFINITY, this.rankOf(site)))
+      }
+      if (forSite >= limit) {
+        this.siteFailures.delete(site)
+        this.demotions.set(site, this.now() + this.policy.demoteMs)
+      }
+    }
+    this.penalize(site)
+    // The failed site must not keep the topic's affinity; otherwise the topic
+    // would return to it as soon as its cooldown ends.
+    this.affinities.delete(key)
+  }
+
+  /**
+   * Record that a site failed a turn without blaming one topic.
    * @param site - site that failed.
    */
   penalize(site: string): void {
@@ -103,6 +152,37 @@ export class SiteRouter {
     for (const [key, affinity] of this.affinities) {
       if (affinity.site === site) this.affinities.delete(key)
     }
+  }
+
+  /**
+   * @param site - site provider id.
+   * @returns Its configured capability rank, or 0 when the mount ranks it not.
+   */
+  private rankOf(site: string): number {
+    return this.policy.siteRank[site] ?? 0
+  }
+
+  /**
+   * Narrow a pool to sites that can lift a stuck topic.
+   * @param key - topic key.
+   * @param pool - sites that may serve this turn.
+   * @returns The nearest stronger rank, or the pool unchanged when no site
+   * ranks above the topic's floor.
+   */
+  private stricter(key: string, pool: readonly string[]): readonly string[] {
+    const floor = this.floors.get(key)
+    if (floor === undefined) return pool
+    const stronger = pool.filter(site => this.rankOf(site) > floor)
+    if (stronger.length === 0) {
+      // Nothing stronger is left; a stuck turn on the old model still beats no
+      // turn at all, so the floor stops constraining this topic.
+      this.floors.delete(key)
+      return pool
+    }
+    // One capability step, not straight to the top: the cheapest model that may
+    // still follow the protocol is the right replacement first.
+    const nearest = Math.min(...stronger.map(site => this.rankOf(site)))
+    return stronger.filter(site => this.rankOf(site) === nearest)
   }
 
   /**
@@ -131,6 +211,19 @@ export class SiteRouter {
     if (until === undefined) return false
     if (at < until) return true
     this.cooldowns.delete(site)
+    return false
+  }
+
+  /**
+   * @param site - site provider id.
+   * @param at - current clock reading.
+   * @returns Whether the site is still benched for repeated failure.
+   */
+  private demoted(site: string, at: number): boolean {
+    const until = this.demotions.get(site)
+    if (until === undefined) return false
+    if (at < until) return true
+    this.demotions.delete(site)
     return false
   }
 
@@ -178,4 +271,13 @@ export class SiteRouter {
     this.lastPicked.set(site, at)
     return site
   }
+}
+
+/**
+ * @param key - topic key.
+ * @param site - site provider id.
+ * @returns The map key of one topic's failure streak on one site.
+ */
+function topicSite(key: string, site: string): string {
+  return `${key}\u0000${site}`
 }

@@ -36,7 +36,8 @@ kind: "package-bundle"
 - **同一话题同一个模型。** 话题就是 harness 会话：首轮选定站点，后续轮次在 `stickyTtlMs` 内保持该站点，追问读起来是同一个声音。
 - **新话题分摊。** 没有话题归属的会话落到最久未被使用的站点，避免一个账号吃掉一整天的工作量。
 - **节流是选址事实，不是干等。** 宿主会报告每个站点距下一轮合法还需多久；等待超过 `stickyMaxWaitMs` 的站点会被换成就绪的站点，而不是让循环睡过间隔。话题一旦迁移，之后继续留在新站点。
-- **失败的站点被替换。** 掉登录、被限流、超时、页面漂移的站点进入 `cooldownMs` 冷却，同一请求在下一个候选上重放（`failoverAttempts`）。回答不合法、预算溢出、被取消、请求非法不换站点重试——这些在每个站点上都会同样失败。
+- **失败的站点被替换。** 掉登录、被限流、超时、页面漂移的站点进入 `cooldownMs` 冷却，同一请求在下一个候选上重放（`failoverAttempts`）。回答不遵守协议同样会换站点重放：提示词是固定且自包含的，会变的是模型本身。预算溢出、被取消、请求非法不换站点——这些在每个站点上都会同样失败。
+- **反复失败就往上换更强的模型。** 站点带有能力等级（`siteRank`：千问 10，deepseek/glm/doubao 20，chatgpt/gemini 30）。同一话题在同一站点失败 `escalateAfterFailures` 次（默认 2）后，转到最近的更强站点继续；站点连续失败同样次数后会被停用 `demoteMs`，新话题不再落到它上面。两条计数都在成功一轮后清零。
 
 ### 何时选择它
 
@@ -50,7 +51,7 @@ kind: "package-bundle"
 pnpm dsh web --patch packages/experimental/chathub-host/cordis.patch.yml --patch packages/experimental/llm-chathub/cordis.patch.yml
 ```
 
-该层插入一行 `llm-chathub`，默认值来自环境变量：`DSH_CHATHUB_LLM_SITE`（默认 `deepseek-web`）、`DSH_CHATHUB_LLM_MODEL`、`DSH_CHATHUB_LLM_ROOT`（默认宿主进程工作目录）、`DSH_CHATHUB_LLM_TOOLS`（默认 `read,grep,glob,edit,write`）、`DSH_CHATHUB_LLM_VERIFY`（默认 `pnpm run typecheck`）。当 `DSH_CHATHUB_LLM_SITES` 列出两个及以上站点时，`DSH_CHATHUB_LLM_SELECTION`（默认 `auto`）决定是否追加聚合路由，其选址可用 `DSH_CHATHUB_LLM_SELECTION_STRATEGY`、`DSH_CHATHUB_LLM_FAILOVER`、`DSH_CHATHUB_LLM_TOPIC_TTL_MS`、`DSH_CHATHUB_LLM_SITE_COOLDOWN_MS` 调整。第一个智能体步骤才会打开页面；挂载本身不启动浏览器。
+该层插入一行 `llm-chathub`，默认值来自环境变量：`DSH_CHATHUB_LLM_SITE`（默认 `deepseek-web`）、`DSH_CHATHUB_LLM_MODEL`、`DSH_CHATHUB_LLM_ROOT`（默认宿主进程工作目录）、`DSH_CHATHUB_LLM_TOOLS`（默认 `read,grep,glob,edit,write`）、`DSH_CHATHUB_LLM_VERIFY`（默认 `pnpm run typecheck`）。当 `DSH_CHATHUB_LLM_SITES` 列出两个及以上站点时，`DSH_CHATHUB_LLM_SELECTION`（默认 `auto`）决定是否追加聚合路由，其选址可用 `DSH_CHATHUB_LLM_SELECTION_STRATEGY`、`DSH_CHATHUB_LLM_FAILOVER`、`DSH_CHATHUB_LLM_TOPIC_TTL_MS`、`DSH_CHATHUB_LLM_SITE_COOLDOWN_MS`、`DSH_CHATHUB_LLM_ESCALATE_AFTER`、`DSH_CHATHUB_LLM_SITE_DEMOTE_MS`、`DSH_CHATHUB_LLM_SITE_RANK`（`site:rank,…`）调整。第一个智能体步骤才会打开页面；挂载本身不启动浏览器。
 
 ### 配置
 
@@ -97,6 +98,9 @@ pnpm dsh web --patch packages/experimental/chathub-host/cordis.patch.yml --patch
 | `stickyMaxWaitMs` | `3000` | 为保持话题不迁移而容忍的最长节流等待 |
 | `siteCooldownMs` | `600000` | 失败站点退出轮换的冷却时长 |
 | `failoverAttempts` | `1` | 站点级失败后同一轮还可尝试的其他站点数；`0` 关闭故障转移 |
+| `escalateAfterFailures` | `2` | 同一话题连续失败多少次后换更强的站点，站点连续失败多少次后被停用；`0` 关闭升级 |
+| `siteDemoteMs` | `1800000` | 反复失败的站点被停用的时长（30 分钟） |
+| `siteRank` | 内置顺序 | 站点能力等级，例如 `{ 'chatgpt-web': 30 }`；在内置等级之上合并 |
 
 自动生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-experimental-llm-chathub)是全部可接受字段的完整来源。
 

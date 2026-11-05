@@ -1394,7 +1394,7 @@ export interface InspectorOptions {
 ## `@deepseek-ai/dsh-experimental-llm-chathub`
 
 - `inject`: `llm` · `webChatTransport`
-- `source`: [`packages/experimental/llm-chathub/src/index.ts:46`](../packages/experimental/llm-chathub/src/index.ts)
+- `source`: [`packages/experimental/llm-chathub/src/index.ts:47`](../packages/experimental/llm-chathub/src/index.ts)
 
 ```ts config-catalog
 /** Configuration as the mounting profile writes it; defaults fill the rest. */
@@ -1428,6 +1428,12 @@ export type Config = Omit<
   siteCooldownMs?: number
   /** Extra sites one turn may try after a site-level failure. */
   failoverAttempts?: number
+  /** Consecutive failures before a topic moves to a stronger site. */
+  escalateAfterFailures?: number
+  /** How long a site that keeps failing stays benched. */
+  siteDemoteMs?: number
+  /** Capability rank per site, e.g. `{ 'chatgpt-web': 30 }`. */
+  siteRank?: Readonly<Record<string, number>>
 }
 
 /**
@@ -1530,6 +1536,16 @@ export interface SiteRoutingPolicy {
   readonly cooldownMs: number
   /** Extra sites one turn may try after a site-level failure; 0 disables failover. */
   readonly failoverAttempts: number
+  /**
+   * Consecutive failures before a site loses its standing: a topic that failed
+   * this many times on one site moves to a stronger one, and a site that fails
+   * this many turns in a row is benched for `demoteMs`. 0 disables escalation.
+   */
+  readonly escalateAfterFailures: number
+  /** How long a site that failed {@link escalateAfterFailures} turns stays benched. */
+  readonly demoteMs: number
+  /** Capability rank per site; a higher rank is a stronger model. */
+  readonly siteRank: Readonly<Record<string, number>>
 }
 
 /** One turn's observable facts; no prompt, answer, or argument text. */
@@ -1550,6 +1566,12 @@ export interface ChatHubTurnObservation {
   readonly toolName?: string
   /** Rejection reason of the last reply, when it was rejected. */
   readonly invalid?: string
+  /**
+   * Stable failure code of an attempt that did not produce an answer, such as
+   * `TRANSPORT` or `MALFORMED_RESPONSE`. One record is emitted per failed
+   * attempt, so a turn that moved between sites leaves one record per site.
+   */
+  readonly failure?: string
   /** Non-fatal findings about the reply, such as a repaired argument. */
   readonly warnings?: readonly string[]
   /** Wall-clock duration of the whole turn. */

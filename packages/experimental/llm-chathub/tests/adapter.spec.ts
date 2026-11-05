@@ -1,6 +1,9 @@
 /** Adapter: one loop step per site turn, with the repair and failure policy. */
 
 import { LlmError, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { ChatHubLlmAdapter } from '../src/adapter.ts'
 import { TOOL_CALL_CLOSE, TOOL_CALL_OPEN } from '../src/protocol.ts'
@@ -71,6 +74,7 @@ class FakeSource implements ChatHubTransportSource {
   answers: string[] = []
   openMode: 'session' | 'pending' | 'closed' = 'session'
   sendError: unknown
+  openError: unknown
   onSend: (() => void) | undefined
   /** Sites whose page refuses the turn as signed out. */
   readonly failSites = new Set<string>()
@@ -93,6 +97,7 @@ class FakeSource implements ChatHubTransportSource {
       open: async (providerId: string, key?: string) => {
         this.sites.push(providerId)
         this.keys.push(key ?? '')
+        if (this.openError !== undefined) throw this.openError
         if (this.openMode === 'pending') return undefined
         if (this.openMode === 'closed') return { closed: true, reason: 'not-signed-in' } as const
         return new FakeSession(this, key ?? '', providerId)
@@ -183,6 +188,16 @@ describe('ChatHubLlmAdapter metadata', () => {
     })
     expect(subject.providerInfo('deepseek-web-chathub').name).toBe('ChatHub deepseek-web')
     expect(subject.providerInfo('qianwen-web-chathub').name).toBe('ChatHub qianwen-web')
+  })
+
+  it('names the aggregate route after every site it spans', () => {
+    const subject = adapter(new FakeSource(), {
+      sites: ['deepseek-web', 'qianwen-web'],
+      routes: ['deepseek-web-chathub', 'qianwen-web-chathub', 'web-auto-chathub'],
+      autoRoute: 'web-auto-chathub',
+    })
+    expect(subject.providerInfo('web-auto-chathub'))
+      .toEqual({ id: 'web-auto-chathub', name: 'ChatHub auto (deepseek-web, qianwen-web)' })
   })
 
   it('refuses a route outside the configured sites', async () => {
@@ -287,6 +302,24 @@ describe('ChatHubLlmAdapter turns', () => {
     }).stream(request()))).rejects.toMatchObject({ code: 'MALFORMED_RESPONSE' })
     expect(source.keys).toEqual(['deepseek-web:1'])
     expect(records).toHaveLength(1)
+  })
+
+  it('tapes the exact prompt the site read when the log is enabled', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'chathub-tape-'))
+    const tape = join(dir, 'prompts.jsonl')
+    process.env.DSH_CHATHUB_LLM_PROMPT_LOG = tape
+    try {
+      const source = new FakeSource()
+      source.answers = ['ok']
+      await collect(adapter(source).stream(request()))
+      const entry = JSON.parse(await readFile(tape, 'utf8')) as { site: string; chars: number; prompt: string }
+      expect(entry.site).toBe('deepseek-web')
+      expect(entry.chars).toBe(entry.prompt.length)
+      expect(entry.prompt).toContain('# NOW')
+    } finally {
+      delete process.env.DSH_CHATHUB_LLM_PROMPT_LOG
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 
   it('reports one observation per turn without any text', async () => {
@@ -552,6 +585,65 @@ describe('ChatHubLlmAdapter site selection', () => {
     await collect(adapter(source, { ...AUTO, onTurn: record => records.push(record) })
       .stream(autoRequest('session-a')))
     expect(records[0]?.site).toBe('deepseek-web')
+  })
+
+  it('replays a protocol-breaking answer on another site', async () => {
+    const source = new FakeSource()
+    const records: ChatHubTurnObservation[] = []
+    // The prompt is fixed and self-contained, so a model that cannot produce a
+    // legal call block is the part that varies: another site deserves the turn.
+    source.answers = [call('{"name":"bash","arguments":{"command":"ls"}}'), 'ok']
+    const chunks = await collect(adapter(source, {
+      ...AUTO,
+      repairAttempts: 0,
+      onTurn: record => records.push(record),
+    }).stream(autoRequest('session-a')))
+    expect(source.sites).toEqual(['deepseek-web', 'qianwen-web'])
+    expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'stop' } })
+    // The failed attempt stays on the tape, so a turn that moved is visible
+    // site by site instead of only as its final answer.
+    expect(records.map(record => record.failure ?? null)).toEqual(['MALFORMED_RESPONSE', null])
+    expect(records.map(record => record.site)).toEqual(['deepseek-web', 'qianwen-web'])
+  })
+
+  it('names the transport code when the page throws no structured failure', async () => {
+    const source = new FakeSource()
+    const records: ChatHubTurnObservation[] = []
+    source.sendError = 'page exploded'
+    await expect(collect(adapter(source, { ...AUTO, onTurn: record => records.push(record) })
+      .stream(autoRequest('session-a')))).rejects.toBe('page exploded')
+    expect(records[0]?.failure).toBe('TRANSPORT')
+    // Nothing about a page that threw an opaque value says another site would
+    // answer differently, so the turn stops here.
+    expect(source.sites).toEqual(['deepseek-web'])
+  })
+
+  it('names the transport code when opening the page throws a bare error', async () => {
+    const source = new FakeSource()
+    const records: ChatHubTurnObservation[] = []
+    source.openError = new Error('browser unavailable')
+    await expect(collect(adapter(source, { onTurn: record => records.push(record) }).stream(request())))
+      .rejects.toThrow(/browser unavailable/u)
+    expect(records[0]?.failure).toBe('TRANSPORT')
+  })
+
+  it('carries repaired-argument warnings into the turn record', async () => {
+    const source = new FakeSource()
+    const records: ChatHubTurnObservation[] = []
+    source.answers = [call('{"name":"edit","arguments":{"file_path":"a.lua","old_string":"x – y","new_string":"z"}}')]
+    await collect(adapter(source, { onTurn: record => records.push(record) }).stream(request()))
+    expect(records[0]?.warnings?.[0]).toMatch(/folded 1 typographic/u)
+  })
+
+  it('does not replay a cancelled turn on another site', async () => {
+    const source = new FakeSource()
+    const controller = new AbortController()
+    controller.abort()
+    await expect(collect(adapter(source, AUTO).stream({
+      ...autoRequest('session-a'),
+      signal: controller.signal,
+    }))).rejects.toMatchObject({ code: 'ABORTED' })
+    expect(source.sites).toEqual([])
   })
 
   it('never answers a pinned route from another site', async () => {

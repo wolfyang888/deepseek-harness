@@ -36,7 +36,8 @@ A turn on the aggregate route is placed by [`SiteRouter`](src/router.ts):
 - **One topic, one model.** A topic is the harness session. Its first turn picks a site, and later turns of the same session keep it for `stickyTtlMs`, so follow-ups read with one voice.
 - **New topics spread.** A session without an affinity takes the site that is least recently used, so one account does not absorb a whole day of work.
 - **Pacing is a placement fact, not a stall.** The host reports each site's remaining anti-abuse wait. A site whose wait exceeds `stickyMaxWaitMs` loses the turn to a ready one instead of the loop sleeping through the gap; a topic that moves stays on its new site afterwards.
-- **A failing site is replaced.** A signed-out, throttled, timed-out, or drifted site earns a `cooldownMs` penalty and the same request is replayed on the next candidate (`failoverAttempts`). A malformed answer, an overflow, a cancelled turn, or an illegal request is not retried elsewhere: those fail the same way on every site.
+- **A failing site is replaced.** A signed-out, throttled, timed-out, or drifted site earns a `cooldownMs` penalty and the same request is replayed on the next candidate (`failoverAttempts`). A reply that breaks the protocol is replayed too: the prompt is fixed and self-contained, so a model that cannot produce a legal call block is the part that varies. An overflow, a cancelled turn, or an illegal request is not retried elsewhere — those fail the same way everywhere.
+- **Repeated failure climbs to a stronger model.** Sites carry a capability rank (`siteRank`: qianwen 10, deepseek/glm/doubao 20, chatgpt/gemini 30). A topic that fails `escalateAfterFailures` turns (default 2) on one site continues on the nearest stronger one, and a site that fails that many turns in a row is benched for `demoteMs` so fresh topics stop landing on it. Both counters reset on a working turn.
 
 ### When to choose it
 
@@ -50,7 +51,7 @@ The package ships an opt-in bundle layer, [`cordis.patch.yml`](cordis.patch.yml)
 pnpm dsh web --patch packages/experimental/chathub-host/cordis.patch.yml --patch packages/experimental/llm-chathub/cordis.patch.yml
 ```
 
-The layer mounts one `llm-chathub` row with environment-driven defaults: `DSH_CHATHUB_LLM_SITE` (default `deepseek-web`), `DSH_CHATHUB_LLM_MODEL`, `DSH_CHATHUB_LLM_ROOT` (default the host process's working directory), `DSH_CHATHUB_LLM_TOOLS` (default `read,grep,glob,edit,write`), and `DSH_CHATHUB_LLM_VERIFY` (default `pnpm run typecheck`). With `DSH_CHATHUB_LLM_SITES` listing two or more sites, `DSH_CHATHUB_LLM_SELECTION` (default `auto`) decides whether the aggregate route is added, and `DSH_CHATHUB_LLM_SELECTION_STRATEGY`, `DSH_CHATHUB_LLM_FAILOVER`, `DSH_CHATHUB_LLM_TOPIC_TTL_MS`, `DSH_CHATHUB_LLM_SITE_COOLDOWN_MS` tune its placement. The first agent step opens a page; nothing starts a browser at mount time.
+The layer mounts one `llm-chathub` row with environment-driven defaults: `DSH_CHATHUB_LLM_SITE` (default `deepseek-web`), `DSH_CHATHUB_LLM_MODEL`, `DSH_CHATHUB_LLM_ROOT` (default the host process's working directory), `DSH_CHATHUB_LLM_TOOLS` (default `read,grep,glob,edit,write`), and `DSH_CHATHUB_LLM_VERIFY` (default `pnpm run typecheck`). With `DSH_CHATHUB_LLM_SITES` listing two or more sites, `DSH_CHATHUB_LLM_SELECTION` (default `auto`) decides whether the aggregate route is added, and `DSH_CHATHUB_LLM_SELECTION_STRATEGY`, `DSH_CHATHUB_LLM_FAILOVER`, `DSH_CHATHUB_LLM_TOPIC_TTL_MS`, `DSH_CHATHUB_LLM_SITE_COOLDOWN_MS`, `DSH_CHATHUB_LLM_ESCALATE_AFTER`, `DSH_CHATHUB_LLM_SITE_DEMOTE_MS`, and `DSH_CHATHUB_LLM_SITE_RANK` (`site:rank,…`) tune its placement. The first agent step opens a page; nothing starts a browser at mount time.
 
 ### Configuration
 
@@ -97,6 +98,9 @@ The layer mounts one `llm-chathub` row with environment-driven defaults: `DSH_CH
 | `stickyMaxWaitMs` | `3000` | Longest pacing wait tolerated to keep a topic on its site |
 | `siteCooldownMs` | `600000` | How long a site that failed a turn stays out of rotation |
 | `failoverAttempts` | `1` | Extra sites one turn may try after a site-level failure; `0` disables failover |
+| `escalateAfterFailures` | `2` | Consecutive failures before a topic moves to a stronger site, and before that site is benched; `0` disables escalation |
+| `siteDemoteMs` | `1800000` | How long a site that keeps failing stays benched (30 min) |
+| `siteRank` | shipped order | Capability rank per site, e.g. `{ 'chatgpt-web': 30 }`; merged over the shipped ranks |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-experimental-llm-chathub) is the exhaustive source for every accepted field.
 

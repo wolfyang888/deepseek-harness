@@ -59,6 +59,16 @@ export interface SiteRoutingPolicy {
   readonly cooldownMs: number
   /** Extra sites one turn may try after a site-level failure; 0 disables failover. */
   readonly failoverAttempts: number
+  /**
+   * Consecutive failures before a site loses its standing: a topic that failed
+   * this many times on one site moves to a stronger one, and a site that fails
+   * this many turns in a row is benched for `demoteMs`. 0 disables escalation.
+   */
+  readonly escalateAfterFailures: number
+  /** How long a site that failed {@link escalateAfterFailures} turns stays benched. */
+  readonly demoteMs: number
+  /** Capability rank per site; a higher rank is a stronger model. */
+  readonly siteRank: Readonly<Record<string, number>>
 }
 
 /** Default text head so a prompt always names the task even when budgets bite. */
@@ -281,6 +291,12 @@ export interface ChatHubTurnObservation {
   readonly toolName?: string
   /** Rejection reason of the last reply, when it was rejected. */
   readonly invalid?: string
+  /**
+   * Stable failure code of an attempt that did not produce an answer, such as
+   * `TRANSPORT` or `MALFORMED_RESPONSE`. One record is emitted per failed
+   * attempt, so a turn that moved between sites leaves one record per site.
+   */
+  readonly failure?: string
   /** Non-fatal findings about the reply, such as a repaired argument. */
   readonly warnings?: readonly string[]
   /** Wall-clock duration of the whole turn. */
@@ -326,6 +342,26 @@ export const DEFAULT_CHATHUB_LLM_CONFIG = {
   auxiliary: 'refuse',
 } as const
 
+/**
+ * Shipped capability ranks, used only to pick a replacement after repeated
+ * failures.
+ *
+ * A web site is spent per turn and a bad turn is usually the model failing the
+ * protocol, not the page breaking: the reply arrives without a call block, or
+ * with a call the whitelist rejects. Repeating the same request on a stronger
+ * model is what rescues the step, so escalation needs an ordering. This is not
+ * a quality claim about the model weights — it is the order in which this
+ * adapter moves a stuck topic up. A site missing here ranks 0.
+ */
+export const DEFAULT_SITE_RANK: Readonly<Record<string, number>> = {
+  'qianwen-web': 10,
+  'glm-web': 20,
+  'doubao-web': 20,
+  'deepseek-web': 20,
+  'chatgpt-web': 30,
+  'gemini-web': 30,
+}
+
 /** Shipped placement policy; a mount overrides only what differs. */
 export const DEFAULT_SITE_ROUTING: SiteRoutingPolicy = {
   strategy: 'sticky',
@@ -336,4 +372,10 @@ export const DEFAULT_SITE_ROUTING: SiteRoutingPolicy = {
   stickyMaxWaitMs: 3_000,
   cooldownMs: 600_000,
   failoverAttempts: 1,
+  // Twice is the smallest count that separates a flaky page from a model that
+  // will not follow the protocol; escalating after one failure would spend the
+  // strongest account on every transient hiccup.
+  escalateAfterFailures: 2,
+  demoteMs: 1_800_000,
+  siteRank: DEFAULT_SITE_RANK,
 }

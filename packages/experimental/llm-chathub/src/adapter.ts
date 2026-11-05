@@ -137,8 +137,15 @@ export class ChatHubLlmAdapter extends LlmAdapter {
    */
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     const started = Date.now()
-    const turn = await this.runTurn(options)
+    const turn = await this.runTurn(options, started)
     const call = turn.parsed.call
+    if (turn.parsed.invalid !== undefined) {
+      // The attempt that produced it is already on the tape as a failure.
+      throw new LlmError(
+        `chathub-llm: ${turn.site} answered illegally: ${turn.parsed.invalid}`,
+        CHATHUB_LLM_MALFORMED_CODE,
+      )
+    }
     this.report({
       site: turn.site,
       ...options.sessionId === undefined ? {} : { sessionId: String(options.sessionId) },
@@ -147,17 +154,10 @@ export class ChatHubLlmAdapter extends LlmAdapter {
       promptChars: turn.rendered.prompt.length,
       answerChars: turn.parsed.answerChars,
       ...call === undefined ? {} : { toolName: call.name },
-      ...turn.parsed.invalid === undefined ? {} : { invalid: turn.parsed.invalid },
       ...turn.parsed.warnings.length === 0 ? {} : { warnings: turn.parsed.warnings },
       ms: Date.now() - started,
       droppedEntries: turn.rendered.droppedEntries,
     })
-    if (turn.parsed.invalid !== undefined) {
-      throw new LlmError(
-        `chathub-llm: ${turn.site} answered illegally: ${turn.parsed.invalid}`,
-        CHATHUB_LLM_MALFORMED_CODE,
-      )
-    }
     yield { type: 'block-start', index: 0, blockType: 'text' }
     if (turn.parsed.text.length > 0) yield { type: 'text-delta', index: 0, text: turn.parsed.text }
     yield { type: 'block-end', index: 0, block: { type: 'text', text: turn.parsed.text } }
@@ -173,14 +173,18 @@ export class ChatHubLlmAdapter extends LlmAdapter {
    *
    * On the aggregate route the site is chosen per turn: the topic keeps its
    * site while that site is ready, and a site that fails a turn is replaced
-   * within the same request instead of failing the whole step. A pinned route
+   * within the same request instead of failing the whole step. A reply that
+   * breaks the protocol counts as a site failure too — the prompt is fixed and
+   * self-contained, so a model that twice answers without a legal call block is
+   * a model this topic should leave, not a request to repeat. A pinned route
    * never moves — the user picked that model, and answering from another one
    * silently is worse than failing.
    * @param options - assembled request.
+   * @param started - clock reading when the step began, for attempt records.
    * @returns The site that served, what it was shown, and how it answered.
    * @throws LlmError when no site serves the turn.
    */
-  private async runTurn(options: GenerateOptions): Promise<{
+  private async runTurn(options: GenerateOptions, started: number): Promise<{
     site: string
     rendered: { prompt: string; droppedEntries: number }
     parsed: Awaited<ReturnType<ChatHubLlmAdapter['askUntilLegal']>>
@@ -203,19 +207,64 @@ export class ChatHubLlmAdapter extends LlmAdapter {
       })
       const rendered = this.render(options, site)
       await this.recordPrompt(site, rendered.prompt)
+      let parsed: Awaited<ReturnType<ChatHubLlmAdapter['askUntilLegal']>>
       try {
-        const parsed = await this.askUntilLegal(rendered.prompt, site, options.signal, answerBudget)
-        this.router.succeed(key, site)
-        return { site, rendered, parsed }
+        parsed = await this.askUntilLegal(rendered.prompt, site, options.signal, answerBudget)
       } catch (error) {
+        this.reportAttempt(options, site, rendered, failures + 1, started, failureCodeOf(error))
         if (pinned !== undefined || failures >= routing.failoverAttempts || !failoverEligible(error)) throw error
         failures += 1
-        // A site that refused or timed out should not take the next turn of
-        // this topic either, so the penalty covers the whole rotation.
-        this.router.penalize(site)
+        this.router.fail(key, site)
         candidates = candidates.filter(candidate => candidate !== site)
+        continue
       }
+      if (parsed.invalid !== undefined) {
+        // The repair rounds already ran on this site, so a still-illegal reply
+        // is the site's ceiling for this request, not a prompt to send again.
+        this.reportAttempt(options, site, rendered, failures + 1, started, CHATHUB_LLM_MALFORMED_CODE)
+        if (pinned !== undefined || failures >= routing.failoverAttempts) {
+          this.router.fail(key, site)
+          return { site, rendered, parsed }
+        }
+        failures += 1
+        this.router.fail(key, site)
+        candidates = candidates.filter(candidate => candidate !== site)
+        continue
+      }
+      this.router.succeed(key, site)
+      return { site, rendered, parsed }
     }
+  }
+
+  /**
+   * Emit the record of an attempt that produced no answer, so a turn that
+   * moved between sites is visible site by site instead of only as a failure.
+   * @param options - the assembled request.
+   * @param site - site the attempt ran on.
+   * @param rendered - the prompt it was shown, for its length.
+   * @param attempt - 1-based attempt number within this step.
+   * @param started - clock reading when the step began.
+   * @param failure - stable code of the failure.
+   */
+  private reportAttempt(
+    options: GenerateOptions,
+    site: string,
+    rendered: { prompt: string; droppedEntries: number },
+    attempt: number,
+    started: number,
+    failure: string,
+  ): void {
+    this.report({
+      site,
+      ...options.sessionId === undefined ? {} : { sessionId: String(options.sessionId) },
+      pageKey: this.pageKeyOf(site),
+      attempt,
+      promptChars: rendered.prompt.length,
+      answerChars: 0,
+      failure,
+      ms: Date.now() - started,
+      droppedEntries: rendered.droppedEntries,
+    })
   }
 
   /**
@@ -550,16 +599,17 @@ const SITE_FAILURE_CODES: ReadonlySet<string> = new Set([
  * Whether the same request may be replayed on another site.
  *
  * A site that is signed out, throttled, timed out, or whose page drifted says
- * nothing about the request; another site deserves the turn. A malformed
- * answer, an overflow, a cancelled turn, or an illegal request does not — those
- * fail the same way everywhere and the caller must decide.
+ * nothing about the request; another site deserves the turn. An overflow, a
+ * cancelled turn, or an illegal request does not — those fail the same way
+ * everywhere and the caller must decide. An answer that breaks the protocol is
+ * neither: `runTurn` replays it on a stronger site, because the prompt is fixed
+ * and the model is the part that varies.
  * @param error - rejection from one site's turn.
  * @returns Whether failover to the next site is meaningful.
  */
 function failoverEligible(error: unknown): boolean {
   if (!(error instanceof LlmError)) return false
-  const code = (error as { code?: unknown }).code
-  return typeof code === 'string' && SITE_FAILURE_CODES.has(code)
+  return SITE_FAILURE_CODES.has(error.code)
 }
 
 /**
@@ -572,4 +622,15 @@ function readToken(error: Error): string | undefined {
   if (typeof own === 'string') return own
   const prefix = /^(chathub-[a-z-]+):/u.exec(error.message)
   return prefix?.[1]
+}
+
+/**
+ * Name the failure an attempt ended with, for its turn record.
+ * @param error - rejection from one site's attempt.
+ * @returns The harness failure code, or the transport code when none applies.
+ */
+function failureCodeOf(error: unknown): string {
+  if (error instanceof LlmError) return error.code
+  if (!(error instanceof Error)) return CHATHUB_LLM_TRANSPORT_CODE
+  return readToken(error) ?? CHATHUB_LLM_TRANSPORT_CODE
 }

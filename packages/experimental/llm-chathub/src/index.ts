@@ -15,6 +15,7 @@ import z from '@deepseek-ai/schemastery'
 import { ChatHubLlmAdapter } from './adapter.ts'
 import {
   DEFAULT_CHATHUB_LLM_CONFIG,
+  DEFAULT_SITE_RANK,
   DEFAULT_SITE_ROUTING,
   type ChatHubAuxiliaryPolicy,
   type ChatHubLlmConfig,
@@ -73,6 +74,12 @@ export type Config = Omit<
   siteCooldownMs?: number
   /** Extra sites one turn may try after a site-level failure. */
   failoverAttempts?: number
+  /** Consecutive failures before a topic moves to a stronger site. */
+  escalateAfterFailures?: number
+  /** How long a site that keeps failing stays benched. */
+  siteDemoteMs?: number
+  /** Capability rank per site, e.g. `{ 'chatgpt-web': 30 }`. */
+  siteRank?: Readonly<Record<string, number>>
 }
 
 /** Schema of the mounting row; every field is optional except the site. */
@@ -100,6 +107,9 @@ export const Config = z.object({
   stickyMaxWaitMs: z.natural().default(DEFAULT_SITE_ROUTING.stickyMaxWaitMs),
   siteCooldownMs: z.natural().default(DEFAULT_SITE_ROUTING.cooldownMs),
   failoverAttempts: z.natural().default(DEFAULT_SITE_ROUTING.failoverAttempts),
+  escalateAfterFailures: z.natural().default(DEFAULT_SITE_ROUTING.escalateAfterFailures),
+  siteDemoteMs: z.natural().default(DEFAULT_SITE_ROUTING.demoteMs),
+  siteRank: z.dict(z.natural()).default({}),
 })
 
 export const name = 'llm-chathub'
@@ -132,6 +142,12 @@ export function resolveConfig(
     stickyMaxWaitMs: config.stickyMaxWaitMs ?? DEFAULT_SITE_ROUTING.stickyMaxWaitMs,
     cooldownMs: config.siteCooldownMs ?? DEFAULT_SITE_ROUTING.cooldownMs,
     failoverAttempts: config.failoverAttempts ?? DEFAULT_SITE_ROUTING.failoverAttempts,
+    escalateAfterFailures: config.escalateAfterFailures ?? DEFAULT_SITE_ROUTING.escalateAfterFailures,
+    demoteMs: config.siteDemoteMs ?? DEFAULT_SITE_ROUTING.demoteMs,
+    // A mount that ranks only some sites keeps the shipped ranks for the rest:
+    // otherwise an unranked chatgpt would rank below a ranked qianwen and the
+    // escalation would never reach it.
+    siteRank: { ...DEFAULT_SITE_RANK, ...config.siteRank },
   }
   return {
     site: config.site,

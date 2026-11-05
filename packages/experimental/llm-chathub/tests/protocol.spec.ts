@@ -220,4 +220,13 @@ describe('parseAnswer typographic repair', () => {
     )
     expect(parsed.warnings).toEqual([])
   })
+
+  it('walks past an argument that is not text', () => {
+    const parsed = parseAnswer(
+      formatToolCall({ name: 'edit', arguments: { file_path: 'a.lua', old_string: 'x – y', new_string: 'z', offset: 3 } }),
+      policy,
+    )
+    expect(parsed.call?.arguments['offset']).toBe(3)
+    expect(parsed.call?.arguments['old_string']).toBe('x -- y')
+  })
 })
