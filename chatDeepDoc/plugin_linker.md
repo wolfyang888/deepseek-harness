@@ -77,8 +77,8 @@ Memory & Context / Tools / Agents / Workflow / Integrations / Models / Dev / Kno
 
 | 接口 | 代码 |
 |---|---|
-| subagent 工具（`tool-subagent`） | [`packages/subagent/tool-subagent`](../packages/subagent/tool-subagent) |
-| 子代理协议（acp / claude-code / codex / in-process） | [`packages/subagent/subagent-acp`](../packages/subagent/subagent-acp) |
+| subagent 工具（`tool-subagent`） | [`packages/subagent/tool-subagent`](../packages/subagent/tool-subagent/src/index.ts) |
+| 子代理协议（acp / claude-code / codex / in-process） | [`packages/subagent/subagent-acp`](../packages/subagent/subagent-acp/src/index.ts) |
 | agent-team 的 `Context` 服务扩展（TeamRoster/TaskBoard） | [`packages/experimental/agent-team/src/index.ts#L37`](../packages/experimental/agent-team/src/index.ts#L37) |
 | 团队名册 / 任务板 / 任务图 | [`roster.ts`](../packages/experimental/agent-team/src/roster.ts) · [`task-board.ts`](../packages/experimental/agent-team/src/task-board.ts) · [`task-graph.ts`](../packages/experimental/agent-team/src/task-graph.ts) |
 
@@ -86,11 +86,11 @@ Memory & Context / Tools / Agents / Workflow / Integrations / Models / Dev / Kno
 
 | 接口 | 代码 |
 |---|---|
-| 压缩插件族（basic / image-offload / tool-result-pruner） | [`packages/compaction/compaction-basic`](../packages/compaction/compaction-basic) |
+| 压缩插件族（basic / image-offload / tool-result-pruner） | [`packages/compaction/compaction-basic`](../packages/compaction/compaction-basic/src/index.ts) |
 | chathub 会话自动压缩（七段检查点协议） | [`packages/experimental/chathub/src/session-compaction.ts`](../packages/experimental/chathub/src/session-compaction.ts) |
-| 上下文注入插件族（agent-instructions / file-reference / time-context 等） | [`packages/context/agent-instructions`](../packages/context/agent-instructions) |
-| 溢出转存（spill / spill-policy） | [`packages/spill/spill-policy`](../packages/spill/spill-policy) |
-| 会话持久化 | [`packages/session/session-persistence-jsonl`](../packages/session/session-persistence-jsonl) |
+| 上下文注入插件族（agent-instructions / file-reference / time-context 等） | [`packages/context/agent-instructions`](../packages/context/agent-instructions/src/index.ts) |
+| 溢出转存（spill / spill-policy） | [`packages/spill/spill-policy`](../packages/spill/spill-policy/src/index.ts) |
+| 会话持久化 | [`packages/session/session-persistence-jsonl`](../packages/session/session-persistence-jsonl/src/index.ts) |
 
 **Hooks —— 生命周期命令钩子**
 
@@ -105,7 +105,7 @@ Memory & Context / Tools / Agents / Workflow / Integrations / Models / Dev / Kno
 | 接口 | 代码 |
 |---|---|
 | workflow 工具注册 | [`packages/workflow/tool-workflow/src/index.ts#L331`](../packages/workflow/tool-workflow/src/index.ts#L331) |
-| workflow 引擎 / PTC 运行时 | [`packages/workflow/workflow`](../packages/workflow/workflow) · [`packages/workflow/workflow-ptc`](../packages/workflow/workflow-ptc) |
+| workflow 引擎 / PTC 运行时 | [`packages/workflow/workflow`](../packages/workflow/workflow/src/index.ts) · [`packages/workflow/workflow-ptc`](../packages/workflow/workflow-ptc/src/index.ts) |
 
 **Integrations —— 浏览器桥与外部集成**
 
@@ -114,7 +114,7 @@ Memory & Context / Tools / Agents / Workflow / Integrations / Models / Dev / Kno
 | 站点驱动配置 `SiteDriverConfig`（input/answer/submitButton/loginWall…） | [`packages/experimental/chathub-host/src/types.ts#L31`](../packages/experimental/chathub-host/src/types.ts#L31) |
 | 浏览器运行时（profile 锁 / CDP / 托管启动） | [`packages/experimental/chathub-host/src/runtime.ts#L112`](../packages/experimental/chathub-host/src/runtime.ts#L112) |
 | 页面操作（提交/回读/答案轮询） | [`packages/experimental/chathub-host/src/page.ts#L14`](../packages/experimental/chathub-host/src/page.ts#L14) |
-| MCP / SSH / 终端 / 浏览器使用 | [`packages/mcp`](../packages/mcp) · [`packages/ssh`](../packages/ssh) · [`packages/terminal`](../packages/terminal) · [`packages/browser-use`](../packages/browser-use) |
+| MCP / SSH / 终端 / 浏览器使用 | [`mcp-client`](../packages/mcp/mcp-client/src/index.ts) · [`fs-ssh`](../packages/ssh/fs-ssh/src/index.ts) · [`terminal`](../packages/terminal/terminal/src/index.ts) · [`browser-use`](../packages/browser-use/browser-use/src/index.ts) |
 
 ---
 
