@@ -97,6 +97,8 @@ class FakeLocator implements BrowserInputLike {
 export class FakePage implements BrowserPageLike {
   closed = false
   urlValue = 'https://fake.test/'
+  /** Context this page reports; a context's `newPage` wires itself in. */
+  contextValue: FakeContext | undefined
   counts: Record<string, number> = {}
   texts: Record<string, string> = {}
   boxes: Record<string, { x: number; y: number; width: number; height: number } | null> = {}
@@ -149,6 +151,12 @@ export class FakePage implements BrowserPageLike {
     return this.urlValue
   }
 
+  /** @returns The context the page was opened in, or a fresh cookie-less one. */
+  context(): BrowserContextLike {
+    this.contextValue ??= new FakeContext()
+    return this.contextValue
+  }
+
   /**
    * @param selector - selector to resolve.
    * @returns A locator double for that selector.
@@ -194,19 +202,27 @@ export class FakeContext implements BrowserContextLike {
   closeCount = 0
   defaultTimeout: number | undefined
   pageFactory: () => FakePage = () => new FakePage()
+  /** Cookie names the fake context reports; tests flip this to simulate sign-in. */
+  cookieNames: string[] = []
 
   /** @returns Pages opened through this context. */
   pages(): FakePage[] {
     return this.pagesList
   }
 
-  /** @returns A new fake page. */
+  /** @returns A new fake page wired to this context. */
   async newPage(): Promise<FakePage> {
     if (this.newPageError !== undefined) throw this.newPageError
     this.newPageCount += 1
     const page = this.pageFactory()
+    page.contextValue = this
     this.pagesList.push(page)
     return page
+  }
+
+  /** @returns The cookie names the test configured. */
+  async cookies(): Promise<readonly { name: string }[]> {
+    return this.cookieNames.map(name => ({ name }))
   }
 
   /** @returns Resolves after recording the close. */

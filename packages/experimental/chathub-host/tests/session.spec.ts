@@ -74,6 +74,17 @@ class ScriptedPage implements TurnPage {
   }
 
   /**
+   * @param _name - cookie name the driver declares.
+   * @returns Whether the test marked the session cookie present.
+   */
+  async cookiePresent(_name: string): Promise<boolean> {
+    return this.cookieNames.includes(_name)
+  }
+
+  /** Cookie names the scripted context reports; empty means signed out. */
+  cookieNames: string[] = []
+
+  /**
    * @param prompt - prompt the session submits.
    * @returns Resolves unless the test configured a failure.
    */
@@ -245,6 +256,17 @@ it('skips the path check when the driver has no signed-out pattern', async () =>
   page.answers = ['<p>answer</p>', '<p>answer</p>', '<p>answer</p>']
   page.urlValue = '::'
   await expect(chat.send(payload())).resolves.toMatchObject({ content: '<p>answer</p>' })
+})
+
+it('fails a cookie-gated site whose session cookie disappears mid-turn', async () => {
+  // Doubao expires by dropping `sessionid` with no wall element to name.
+  const gated: SiteDriverConfig = { ...DRIVER, loginCookie: 'sessionid' }
+  const page = new ScriptedPage()
+  page.cookieNames = ['sessionid']
+  page.answers = ['answer']
+  const chat = new PlaywrightChatSession('doubao-web', page, gated, CONFIG, new FakeGate())
+  page.cookieNames = []
+  await expect(chat.send(payload())).rejects.toMatchObject({ token: 'chathub-signed-out' })
 })
 
 it('releases the turn lease after success and failure', async () => {

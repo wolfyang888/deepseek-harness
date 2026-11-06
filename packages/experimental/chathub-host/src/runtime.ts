@@ -175,8 +175,7 @@ export class PlaywrightBrowserRuntime implements TransportRuntime {
     if (this.config.mode !== 'managed' || !this.config.headless) {
       const page = await this.acquire(providerId, driver)
       const signedIn = await page.waitForInput(
-        driver.input,
-        driver.loginWall,
+        driver,
         timeoutMs,
         this.timings.pollMs,
         signal,
@@ -191,8 +190,7 @@ export class PlaywrightBrowserRuntime implements TransportRuntime {
       const page = await this.createPage(providerId, driver)
       this.pages.set(providerId, page)
       const signedIn = await page.waitForInput(
-        driver.input,
-        driver.loginWall,
+        driver,
         timeoutMs,
         this.timings.pollMs,
         signal,

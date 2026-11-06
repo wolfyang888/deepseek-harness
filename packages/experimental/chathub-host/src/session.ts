@@ -241,6 +241,11 @@ export class PlaywrightChatSession implements WebChatTransportSession {
     if (this.driver.loginWall !== undefined && await this.page.wallVisible(this.driver.loginWall)) {
       throw new BrowserTransportError('chathub-signed-out', `${this.key}: the site's signed-out wall is up`)
     }
+    // A site judged by its session cookie expires by dropping that cookie,
+    // with no wall element stable enough to name.
+    if (this.driver.loginCookie !== undefined && !(await this.page.cookiePresent(this.driver.loginCookie))) {
+      throw new BrowserTransportError('chathub-signed-out', `${this.key}: the session cookie is gone`)
+    }
   }
 
   /**

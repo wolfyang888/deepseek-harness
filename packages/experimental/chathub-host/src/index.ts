@@ -143,6 +143,7 @@ export class WebChatTransportService extends TypertRemoteService {
       input: z.string().min(1),
       answer: z.string().min(1),
       loginWall: z.string().min(1),
+      loginCookie: z.string().min(1),
       signedOutPath: z.string().min(1),
       submitKey: z.string().min(1),
       stablePolls: z.natural().min(1),

@@ -30,6 +30,17 @@ export interface SiteDriverConfig {
   answerBody?: string
   /** Element that only appears on a signed-out wall. */
   loginWall?: string
+  /**
+   * Cookie whose presence proves a signed-in session, such as Doubao's
+   * `sessionid`.
+   *
+   * Some sites render the composer for a guest too, so a visible input proves
+   * nothing and no wall element is stable across their DOM churn: those sites
+   * are detected by this cookie instead, at every checkpoint that judges
+   * sign-in — opening a page, the login window's success poll, a send the
+   * site dropped, and the mid-turn wall checks.
+   */
+  loginCookie?: string
   /** Path pattern identifying a login or logout redirect; matched case-insensitively. */
   signedOutPath?: string
   /** Key that submits the rendered prompt. */
@@ -218,6 +229,8 @@ export interface BrowserPageLike {
   isClosed(): boolean
   /** @returns The current absolute page URL. */
   url(): string
+  /** @returns The context this page belongs to, which owns the cookies. */
+  context(): BrowserContextLike
   /**
    * @param selector - CSS selector to resolve.
    * @returns A locator over matching elements.
@@ -270,6 +283,11 @@ export interface BrowserContextLike {
   pages(): BrowserPageLike[]
   /** @returns A newly opened page. */
   newPage(): Promise<BrowserPageLike>
+  /**
+   * @returns The context's cookies; a driver's {@linkcode SiteDriverConfig.loginCookie}
+   * is looked up here to judge whether the site session is signed in.
+   */
+  cookies(): Promise<readonly { name: string }[]>
   /** @returns Resolves when the context is closed. */
   close(): Promise<void>
   /**
@@ -329,6 +347,11 @@ export interface TurnPage {
    */
   wallVisible(selector: string): Promise<boolean>
   /**
+   * @param name - cookie name the driver declares as its session proof.
+   * @returns Whether the context carries that cookie; sites without one skip it.
+   */
+  cookiePresent(name: string): Promise<boolean>
+  /**
    * @param prompt - rendered prompt to type.
    * @param driver - site facts for input and submission.
    * @param typeDelayMs - delay between keystrokes.
@@ -340,16 +363,22 @@ export interface TurnPage {
 /** Page handle the transport opens and releases. */
 export interface ChatPageHandle extends TurnPage {
   /**
-   * @param input - chat input selector.
-   * @param loginWall - signed-out wall selector, when the site has one.
-   * @param timeoutMs - longest wait for either element.
+   * Wait for a signed-in composer, stopping early on a signed-out wall or
+   * cancellation.
+   *
+   * A visible input alone proves nothing for a site whose driver declares a
+   * {@linkcode SiteDriverConfig.loginCookie}: its guest pages render the
+   * composer while the session is not signed in, so the cookie must be present
+   * before this wait reports the page ready.
+   * @param driver - site facts: input selector, wall selector, session cookie.
+   * @param timeoutMs - longest wait for the signed-in composer.
    * @param pollMs - delay between visibility checks.
    * @param signal - cancels the wait.
-   * @returns `true` when the chat input is visible before the deadline.
+   * @returns `true` when the chat input is visible, and the session cookie is
+   * present when the site declares one, before the deadline.
    */
   waitForInput(
-    input: string,
-    loginWall: string | undefined,
+    driver: SiteDriverConfig,
     timeoutMs: number,
     pollMs: number,
     signal?: AbortSignal,

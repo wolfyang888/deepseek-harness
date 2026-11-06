@@ -53,7 +53,7 @@ const resolved = resolveConfig({
   site: sites[0] as string,
   sites,
   model: 'web-model',
-  contextWindow: 32_000,
+  contextWindow: 128_000,
   maxPromptChars: 48_000,
   maxToolResultChars: 6_000,
   maxSystemChars: 4_000,

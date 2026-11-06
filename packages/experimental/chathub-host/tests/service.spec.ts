@@ -62,6 +62,8 @@ async function harness(options: {
   drivers?: Record<string, Partial<SiteDriverConfig>>
   page?: (page: FakePage) => void
   cdp?: boolean
+  loginTimeoutMs?: number
+  pacing?: Config['pacing']
 } = {}): Promise<{
   ctx: Context
   service: WebChatTransportService
@@ -95,7 +97,12 @@ async function harness(options: {
   ctx.provide('storageDomain', {
     open: () => Promise.reject(new Error('service.spec never opens the chathub domain')),
   } as never)
-  await ctx.plugin(WebChatTransportService, options.cdp === true ? cdpConfig(dir) : config(dir, options.drivers))
+  const resolved = options.cdp === true ? cdpConfig(dir) : config(dir, options.drivers)
+  await ctx.plugin(WebChatTransportService, {
+    ...resolved,
+    ...options.loginTimeoutMs === undefined ? {} : { loginTimeoutMs: options.loginTimeoutMs },
+    ...options.pacing === undefined ? {} : { pacing: options.pacing },
+  })
   return { ctx, service: ctx.webChatTransport, opened }
 }
 
@@ -166,6 +173,39 @@ describe('WebChatTransportService', () => {
     const health = await service.reauthenticate('deepseek-web')
     expect(health).toMatchObject({ providerId: 'deepseek-web', ready: false, status: 'needs-auth' })
     expect(sharedLauncher.launched.map(launch => launch.options.headless)).toEqual([true])
+  })
+
+  it('reports a cookie-gated site as not signed in while the cookie is absent', async () => {
+    // Doubao renders its composer for a guest; the QR scan never landed, so
+    // the visible input must not read as a successful sign-in.
+    const { service, opened } = await harness({ visible: ['.ProseMirror[contenteditable="true"]'] })
+    const health = await service.login('doubao-web', new AbortController().signal)
+    expect(health).toMatchObject({ providerId: 'doubao-web', ready: false, status: 'not-started' })
+    expect(opened[0]?.cookieNames).toEqual([])
+  })
+
+  it('waits for a cookie-gated site until its session cookie lands', async () => {
+    // The QR scan lands the cookie some milliseconds after the login page
+    // opens; the wait must hold out for it instead of trusting the composer.
+    // The window is generous because Windows timer granularity stretches the
+    // 1ms polls, and pacing is off so the follow-up open is not spaced out.
+    const { service } = await harness({
+      visible: ['.ProseMirror[contenteditable="true"]'],
+      loginTimeoutMs: 500,
+      pacing: { profile: 'off' },
+      page: (page) => {
+        setTimeout(() => {
+          if (page.contextValue !== undefined) page.contextValue.cookieNames = ['sessionid']
+        }, 20)
+      },
+    })
+    const health = await service.login('doubao-web', new AbortController().signal)
+    expect(health).toMatchObject({ providerId: 'doubao-web', ready: true, status: 'ready' })
+    // A later turn on another page of the same context stays signed in.
+    const transport = service.transportForAdapter()
+    const session = await transport.open('doubao-web', 'adapter:1')
+    expect(session).toBeDefined()
+    if (session !== undefined && 'send' in session) await session.close()
   })
 
   it('treats an omitted driver map as no overrides', async () => {

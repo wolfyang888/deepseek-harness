@@ -6,6 +6,10 @@ import { FakePage } from './support/fake-browser.ts'
 
 const KEY = 'deepseek-web'
 const DRIVER = { url: 'https://fake.test/chat', input: '#prompt', answer: '.answer', submitKey: 'Enter' }
+/** A driver whose site shows its wall as an element. */
+const LOGIN_DRIVER = { ...DRIVER, loginWall: '.login-wall' }
+/** Doubao's shape: the composer renders for a guest, so a cookie proves sign-in. */
+const COOKIE_DRIVER = { ...DRIVER, loginCookie: 'sessionid' }
 
 function page(fake = new FakePage()): { wrapper: PlaywrightPage; fake: FakePage } {
   return { wrapper: new PlaywrightPage(fake, KEY, 10), fake }
@@ -33,36 +37,56 @@ it('maps a navigation timeout to a turn timeout, not UI drift', async () => {
 it('waits for a visible chat input', async () => {
   const { wrapper, fake } = page()
   fake.visible.add(DRIVER.input)
-  await expect(wrapper.waitForInput(DRIVER.input, undefined, 20, 1)).resolves.toBe(true)
+  await expect(wrapper.waitForInput(DRIVER, 20, 1)).resolves.toBe(true)
+})
+
+it('reports a cookie-gated site as unsigned-in while the cookie is absent', async () => {
+  // A guest page still renders the composer; only the session cookie says
+  // the page can really send.
+  const { wrapper, fake } = page()
+  fake.visible.add(DRIVER.input)
+  await expect(wrapper.waitForInput(COOKIE_DRIVER, 2, 1)).resolves.toBe(false)
+})
+
+it('waits until the session cookie lands, then reports the site ready', async () => {
+  // The window is generous because Windows timer granularity stretches the
+  // 1ms polls; only the cookie's arrival ends the wait early.
+  const { wrapper, fake } = page()
+  fake.visible.add(DRIVER.input)
+  const waiting = wrapper.waitForInput(COOKIE_DRIVER, 200, 1)
+  setTimeout(() => {
+    if (fake.contextValue !== undefined) fake.contextValue.cookieNames = ['sessionid']
+  }, 20)
+  await expect(waiting).resolves.toBe(true)
 })
 
 it('stops waiting when the login wall appears', async () => {
   const { wrapper, fake } = page()
   fake.visible.add('.login-wall')
-  await expect(wrapper.waitForInput(DRIVER.input, '.login-wall', 20, 1)).resolves.toBe(false)
+  await expect(wrapper.waitForInput(LOGIN_DRIVER, 20, 1)).resolves.toBe(false)
 })
 
 it('reports an unsigned-in site after the deadline', async () => {
   const { wrapper } = page()
-  await expect(wrapper.waitForInput(DRIVER.input, '.login-wall', 2, 1)).resolves.toBe(false)
+  await expect(wrapper.waitForInput(LOGIN_DRIVER, 2, 1)).resolves.toBe(false)
 })
 
 it('stops immediately when the deadline has already passed', async () => {
   const { wrapper } = page()
-  await expect(wrapper.waitForInput(DRIVER.input, undefined, 1, 10)).resolves.toBe(false)
+  await expect(wrapper.waitForInput(DRIVER, 1, 10)).resolves.toBe(false)
 })
 
 it('stops when a visibility check outlasts the deadline', async () => {
   const { wrapper, fake } = page()
   fake.isVisibleDelayMs = 5
-  await expect(wrapper.waitForInput(DRIVER.input, undefined, 2, 1)).resolves.toBe(false)
+  await expect(wrapper.waitForInput(DRIVER, 2, 1)).resolves.toBe(false)
 })
 
 it('stops with a false result when the caller aborts', async () => {
   const { wrapper } = page()
-  await expect(wrapper.waitForInput(DRIVER.input, undefined, 20, 1, AbortSignal.abort())).resolves.toBe(false)
+  await expect(wrapper.waitForInput(DRIVER, 20, 1, AbortSignal.abort())).resolves.toBe(false)
   const controller = new AbortController()
-  const waiting = wrapper.waitForInput(DRIVER.input, undefined, 50, 5, controller.signal)
+  const waiting = wrapper.waitForInput(DRIVER, 50, 5, controller.signal)
   controller.abort()
   await expect(waiting).resolves.toBe(false)
 })
@@ -70,7 +94,7 @@ it('stops with a false result when the caller aborts', async () => {
 it('rejects a page that closes while waiting', async () => {
   const { wrapper, fake } = page()
   fake.closed = true
-  await expect(wrapper.waitForInput(DRIVER.input, undefined, 20, 1))
+  await expect(wrapper.waitForInput(DRIVER, 20, 1))
     .rejects.toMatchObject({ token: 'chathub-signed-out' })
 })
 
@@ -80,7 +104,7 @@ it('classifies a thrown visibility check', async () => {
   // per-element isVisible call to run and fail.
   fake.counts[DRIVER.input] = 1
   fake.errors.isVisible = new Error('element is not attached')
-  await expect(wrapper.waitForInput(DRIVER.input, undefined, 20, 1))
+  await expect(wrapper.waitForInput(DRIVER, 20, 1))
     .rejects.toMatchObject({ token: 'chathub-ui-drift' })
 })
 
@@ -159,6 +183,17 @@ it('reports a composer that keeps the prompt as UI drift', async () => {
   fake.texts[DRIVER.input] = '<p>hello world</p>'
   await expect(wrapper.submit('hello world', DRIVER, 1)).rejects.toMatchObject({ token: 'chathub-ui-drift' })
   // One submit plus the one retry, never an unbounded loop.
+  expect(fake.keys).toEqual(['Enter', 'Enter'])
+})
+
+it('reports a dropped send on a cookie-gated site as signed-out, not drift', async () => {
+  // Doubao's guest gate swallows the send while the QR wall is up; the absent
+  // session cookie is what names the cause.
+  const { wrapper, fake } = page()
+  fake.boxes[DRIVER.input] = { x: 0, y: 0, width: 10, height: 10 }
+  fake.texts[DRIVER.input] = '<p>hello world</p>'
+  await expect(wrapper.submit('hello world', COOKIE_DRIVER, 1))
+    .rejects.toMatchObject({ token: 'chathub-signed-out' })
   expect(fake.keys).toEqual(['Enter', 'Enter'])
 })
 

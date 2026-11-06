@@ -45,6 +45,12 @@ export const DEFAULT_SITE_DRIVERS: Readonly<SiteDrivers> = {
     pending: '思考中|正在思考|正在生成|生成中',
     signedOutPath: SIGNED_OUT_PATH,
     submitKey: 'Enter',
+    // Doubao renders its composer for a guest too and its QR login modal has
+    // no URL change and no selector stable across its DOM churn, so the only
+    // reliable sign-in proof is the `sessionid` cookie a scan lands. Without
+    // this, a guest page opens "ready", the send is silently dropped, and the
+    // turn dies as ui-drift instead of asking for sign-in.
+    loginCookie: 'sessionid',
   },
   'qianwen-web': {
     url: 'https://www.qianwen.com/',

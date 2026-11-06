@@ -56,17 +56,21 @@ export class PlaywrightPage implements ChatPageHandle {
   }
 
   /**
-   * Wait for the chat input, stopping early on a signed-out wall or cancellation.
-   * @param input - chat input selector.
-   * @param loginWall - signed-out wall selector, when the site has one.
-   * @param timeoutMs - longest wait for either element.
+   * Wait for a signed-in composer, stopping early on a signed-out wall or cancellation.
+   *
+   * A site whose driver declares a `loginCookie` renders its composer for a
+   * guest too, so a visible input alone is a false sign-in; the wait reports
+   * ready only once that cookie is also present, which is what makes the
+   * login window's poll wait for the QR scan to actually land the session.
+   * @param driver - site facts: input selector, wall selector, session cookie.
+   * @param timeoutMs - longest wait for the signed-in composer.
    * @param pollMs - delay between visibility checks.
    * @param signal - cancels the wait.
-   * @returns `true` when the chat input is visible before the deadline.
+   * @returns `true` when the composer is visible — and the session cookie is
+   * present when the site declares one — before the deadline.
    */
   async waitForInput(
-    input: string,
-    loginWall: string | undefined,
+    driver: SiteDriverConfig,
     timeoutMs: number,
     pollMs: number,
     signal?: AbortSignal,
@@ -74,8 +78,10 @@ export class PlaywrightPage implements ChatPageHandle {
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {
       if (signal?.aborted === true) return false
-      if (await this.visible(input)) return true
-      if (loginWall !== undefined && await this.visible(loginWall)) return false
+      if (await this.visible(driver.input)) {
+        if (driver.loginCookie === undefined || await this.cookiePresent(driver.loginCookie)) return true
+      }
+      if (driver.loginWall !== undefined && await this.visible(driver.loginWall)) return false
       if (this.page.isClosed()) {
         throw new BrowserTransportError('chathub-signed-out', `${this.key}: page closed while waiting for input`)
       }
@@ -89,6 +95,21 @@ export class PlaywrightPage implements ChatPageHandle {
       }
     }
     return false
+  }
+
+  /**
+   * @param name - cookie name the driver declares as its session proof.
+   * @returns Whether the page's context carries that cookie.
+   */
+  async cookiePresent(name: string): Promise<boolean> {
+    try {
+      const cookies = await this.page.context().cookies()
+      return cookies.some(cookie => cookie.name === name)
+    } catch {
+      // A context that cannot be queried cannot prove a session either; the
+      // wall checks own the failure if the page is really unusable.
+      return false
+    }
   }
 
   /**
@@ -189,6 +210,9 @@ export class PlaywrightPage implements ChatPageHandle {
         // A send the site silently drops is most often its signed-out gate
         // (a login modal over the composer); report that cause when the site
         // declares one, so the turn asks for login instead of a vague drift.
+        if (driver.loginCookie !== undefined && !(await this.cookiePresent(driver.loginCookie))) {
+          throw new BrowserTransportError('chathub-signed-out', `${this.key}: the send was dropped and the session cookie is absent`)
+        }
         if (driver.loginWall !== undefined && await this.visible(driver.loginWall)) {
           throw new BrowserTransportError('chathub-signed-out', `${this.key}: the send was blocked by the site's signed-out wall`)
         }

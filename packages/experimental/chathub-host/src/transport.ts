@@ -68,12 +68,7 @@ export class PlaywrightWebChatTransport implements WebChatTransport {
     await this.pacing.admit(providerId)
     const key = sessionKey ?? providerId
     const page = await this.runtime.acquire(key, driver)
-    const signedIn = await page.waitForInput(
-      driver.input,
-      driver.loginWall,
-      this.config.loginTimeoutMs,
-      this.config.pollMs,
-    )
+    const signedIn = await page.waitForInput(driver, this.config.loginTimeoutMs, this.config.pollMs)
     if (!signedIn) {
       await this.runtime.release(key)
       return { closed: true, reason: 'not-signed-in' }
