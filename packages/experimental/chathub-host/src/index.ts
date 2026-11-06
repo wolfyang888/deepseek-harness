@@ -36,7 +36,7 @@ export { DEFAULT_SITE_DRIVERS, assertEveryAdapterHasDriver, resolveSiteDrivers }
 export { PACING_PRESETS, PacingGovernor, resolvePacing } from './pacing.ts'
 export { PlaywrightPage } from './page.ts'
 export { PlaywrightBrowserRuntime } from './runtime.ts'
-export { PlaywrightChatSession, answerTextOf, answerMarkupText } from './session.ts'
+export { PlaywrightChatSession, answerMarkupText, answerMessageText, answerTextOf } from './session.ts'
 export { PlaywrightWebChatTransport, WEB_TRANSPORT_FAILURE_RULES } from './transport.ts'
 export { ChatHubController, type ChatHubControllerOptions } from './controller.ts'
 export {

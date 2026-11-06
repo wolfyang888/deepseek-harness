@@ -72,6 +72,99 @@ export function answerMarkupText(html: string): string {
 }
 
 /**
+ * Convert one answer markup into the Markdown message the loop delivers.
+ *
+ * The site already rendered the reply's Markdown, so its structure survives
+ * only in the DOM: paragraphs are `<p>`, headings `<h2>`, bullets `<li>`, and
+ * code `<pre>`. Flattening those into one line of text — which is what the
+ * JSON-preserving conversions do — leaves a wall of prose in the transcript,
+ * where {@link answerMarkupText} collapses the blank lines Markdown needs
+ * between blocks. This conversion restores the blocks the model wrote, and
+ * keeps code verbatim so a call block or an `old_string` read from an answer
+ * still matches the file byte for byte.
+ * @param html - answer container markup.
+ * @returns The reply as Markdown, with its paragraphs, headings, lists, and
+ * fenced code restored.
+ */
+export function answerMessageText(html: string): string {
+  const clean = html.replace(/<(?:script|style|noscript)\b[^>]*>[\s\S]*?<\/(?:script|style|noscript)>/giu, '')
+  const pieces: string[] = []
+  const pre = /<pre\b([^>]*)>([\s\S]*?)<\/pre>/giu
+  let at = 0
+  for (let match = pre.exec(clean); match !== null; match = pre.exec(clean)) {
+    pieces.push(proseOf(clean.slice(at, match.index)))
+    pieces.push(fenceOf(match[1] ?? '', match[2] ?? ''))
+    at = match.index + match[0].length
+  }
+  pieces.push(proseOf(clean.slice(at)))
+  return pieces.join('')
+    .replace(/\r\n?/gu, '\n')
+    .replace(/[ \t]+$/gmu, '')
+    // Markdown needs one blank line between blocks; more is the site's padding.
+    .replace(/\n{3,}/gu, '\n\n')
+    .replace(/^\n+|\n+$/gu, '')
+}
+
+/**
+ * Decode the entities a site's serializer writes into markup.
+ * @param text - text carrying `&name;` or `&#num;` entities.
+ * @returns Text with the entities the answer can carry decoded.
+ */
+function decodeEntities(text: string): string {
+  return text.replace(/&([#0-9a-z]+);/giu, (match: string, name: string) => {
+    const key = name.toLowerCase()
+    const named = ANSWER_ENTITIES[key]
+    if (named !== undefined) return named
+    const numeric = key.startsWith('#x') ? Number.parseInt(key.slice(2), 16) : key.startsWith('#') ? Number.parseInt(key.slice(1), 10) : Number.NaN
+    if (!Number.isFinite(numeric)) return match
+    try {
+      return String.fromCodePoint(numeric)
+    } catch {
+      return match
+    }
+  })
+}
+
+/**
+ * Render one block-level run of markup as Markdown prose.
+ * @param html - markup outside a code block.
+ * @returns Paragraphs, headings, and bullets as Markdown lines.
+ */
+function proseOf(html: string): string {
+  const withBlocks = html
+    .replace(/<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1>/giu, (_match: string, level: string, inner: string) => {
+      return `\n\n${'#'.repeat(Number(level))} ${inlineText(inner)}\n\n`
+    })
+    .replace(/<li\b[^>]*>([\s\S]*?)<\/li>/giu, (_match: string, inner: string) => `\n- ${inlineText(inner)}`)
+    .replace(/<(?:br|hr)\s*\/?>/giu, '\n')
+    .replace(/<\/(?:p|div|section|article|blockquote|ul|ol|table|thead|tbody|tr|h[1-6])\s*>/giu, '\n\n')
+    .replace(/<[^>]*>/gu, '')
+  return decodeEntities(withBlocks)
+}
+
+/**
+ * Render one `<pre>` as a fenced code block.
+ * @param attributes - the `<pre>` tag's attributes, for its language hint.
+ * @param inner - the code's markup.
+ * @returns The block, fenced, with the code's own spacing untouched.
+ */
+function fenceOf(attributes: string, inner: string): string {
+  // The hint sits on the tag or on the `<code>` inside it, depending on site.
+  const language = /language-([\w+#.-]+)/iu.exec(attributes)?.[1] ?? /language-([\w+#.-]+)/iu.exec(inner)?.[1] ?? ''
+  const code = decodeEntities(inner.replace(/<br\s*\/?>/giu, '\n').replace(/<[^>]*>/gu, '')).replace(/\n+$/u, '')
+  return `\n\n\`\`\`${language}\n${code}\n\`\`\`\n\n`
+}
+
+/**
+ * Visible text of one inline run of markup, on a single line.
+ * @param html - markup that carries no block structure.
+ * @returns Its text with whitespace collapsed.
+ */
+function inlineText(html: string): string {
+  return decodeEntities(html.replace(/<[^>]*>/gu, ' ')).replace(/\s+/gu, ' ').trim()
+}
+
+/**
  * Consume an answer stream without exposing its deltas.
  * @param stream - deltas produced while an answer stabilizes.
  * @returns Resolves when the stream completes.

@@ -5,6 +5,15 @@ import { BrowserTransportError, classifyPageError, isOperationTimeout } from './
 import type { BrowserInputLike, BrowserPageLike, ChatPageHandle, SiteDriverConfig } from './types.ts'
 
 /**
+ * How long one submitted composer gets to clear before the send reads as dropped.
+ *
+ * A site clears its composer with an animation, and Doubao's editor keeps the
+ * text for a beat after the message is already on its way; judging the send at
+ * a single fixed moment read that ordinary latency as a dropped message.
+ */
+const SEND_SETTLE_MS = 3_000
+
+/**
  * One browser page bound to a key and its operation timeout.
  *
  * Visibility and completion use explicit polling rather than Playwright's
@@ -196,30 +205,74 @@ export class PlaywrightPage implements ChatPageHandle {
         // silent length cap: sending would ask the model to answer half a task.
         throw new BrowserTransportError('chathub-ui-drift', `${this.key}: the composer truncated the prompt; it kept the opening but not the closing text`)
       }
+      // What the conversation showed before this prompt: a site that keeps the
+      // text in the composer while the answer already streams has advanced
+      // here, and that advance is the send's real receipt.
+      const before = await this.answerSignature(driver)
+      // A page-operation cap smaller than the settle window is a harness in a
+      // hurry (or a test); waiting longer than one operation budget there
+      // would stall the suite without teaching it anything.
+      const settleMs = Math.min(SEND_SETTLE_MS, this.actionTimeoutMs)
       await this.submitPrompt(driver)
-      await sleep(Math.max(typeDelayMs, 600))
-      if (typed === undefined) return
-      const after = await this.readComposer(composer)
-      // Empty means the site took it; any change means the site reacted (a
-      // kept draft with a newline, a rendered message). Only a composer that
-      // is identical to what was typed shows the submit was dropped.
-      if (after === undefined || after !== typed) return
+      if (typed === undefined || await this.composerCleared(composer, typed, settleMs)) return
       await this.submitPrompt(driver)
-      await sleep(Math.max(typeDelayMs, 600))
-      if (await this.readComposer(composer) === typed) {
-        // A send the site silently drops is most often its signed-out gate
-        // (a login modal over the composer); report that cause when the site
-        // declares one, so the turn asks for login instead of a vague drift.
-        if (driver.loginCookie !== undefined && !(await this.cookiePresent(driver.loginCookie))) {
-          throw new BrowserTransportError('chathub-signed-out', `${this.key}: the send was dropped and the session cookie is absent`)
-        }
-        if (driver.loginWall !== undefined && await this.visible(driver.loginWall)) {
-          throw new BrowserTransportError('chathub-signed-out', `${this.key}: the send was blocked by the site's signed-out wall`)
-        }
-        throw new BrowserTransportError('chathub-ui-drift', `${this.key}: the input kept the prompt; the message was not sent`)
+      if (await this.composerCleared(composer, typed, settleMs * 2)) return
+      if (await this.answerSignature(driver) !== before) return
+      // A send the site silently drops is most often its signed-out gate
+      // (a login modal over the composer); report that cause when the site
+      // declares one, so the turn asks for login instead of a vague drift.
+      if (driver.loginCookie !== undefined && !(await this.cookiePresent(driver.loginCookie))) {
+        throw new BrowserTransportError('chathub-signed-out', `${this.key}: the send was dropped and the session cookie is absent`)
       }
+      if (driver.loginWall !== undefined && await this.visible(driver.loginWall)) {
+        throw new BrowserTransportError('chathub-signed-out', `${this.key}: the send was blocked by the site's signed-out wall`)
+      }
+      throw new BrowserTransportError('chathub-ui-drift', `${this.key}: the input kept the prompt; the message was not sent`)
     } catch (error) {
       throw classifyPageError(error, `${this.key}: submitting the prompt`)
+    }
+  }
+
+  /**
+   * Wait for a submitted composer to stop holding the prompt.
+   *
+   * Empty means the site took the text; any change means it reacted (a kept
+   * draft with a newline, a rendered message). Only a composer that still
+   * holds exactly what was typed through the whole window shows a dropped
+   * send — checking once, moments after the key press, accused sites that
+   * clear their editor with a transition.
+   * @param composer - the input element the prompt was typed into.
+   * @param typed - the composer text confirmed before submission.
+   * @param waitMs - longest wait for the text to leave.
+   * @returns `true` once the composer no longer holds the prompt.
+   */
+  private async composerCleared(composer: BrowserInputLike, typed: string, waitMs: number): Promise<boolean> {
+    const deadline = Date.now() + waitMs
+    for (;;) {
+      const after = await this.readComposer(composer)
+      if (after === undefined || after !== typed) return true
+      const remaining = deadline - Date.now()
+      if (remaining <= 0) return false
+      await sleep(Math.min(250, remaining))
+    }
+  }
+
+  /**
+   * Read the conversation's current answer container as a change marker.
+   *
+   * The container is not this turn's answer yet, only the text it held when
+   * the prompt arrived: any later change proves the site accepted the send,
+   * even when its composer keeps the text on screen.
+   * @param driver - site facts carrying the answer selectors.
+   * @returns The last answer container's markup, or an empty string.
+   */
+  private async answerSignature(driver: SiteDriverConfig): Promise<string> {
+    try {
+      return await this.answerHtml(driver.answer, driver.answerBody)
+    } catch {
+      // An unreadable container is no evidence either way; the send checks
+      // below still guard the turn.
+      return ''
     }
   }
 

@@ -1,7 +1,7 @@
 /** Session submission, completion polling, deltas, timeout, and page invalidation. */
 
 import { expect, it } from 'vitest'
-import { PlaywrightChatSession, answerMarkupText, answerTextOf } from '../src/session.ts'
+import { PlaywrightChatSession, answerMarkupText, answerMessageText, answerTextOf } from '../src/session.ts'
 import type { SiteDriverConfig, TransportConfig, TurnGate, TurnPage } from '../src/types.ts'
 import type { WebChatPayload } from '@deepseek-ai/dsh-experimental-chathub'
 
@@ -322,4 +322,39 @@ it('keeps line structure and inner spacing for the protocol text', () => {
 it('unescapes the tool-call delimiters a DOM serializes', () => {
   expect(answerMarkupText('<p>&lt;&lt;&lt;TOOL_CALL</p><p>{"a":1}</p><p>TOOL_CALL&gt;&gt;&gt;</p>'))
     .toBe('<<<TOOL_CALL\n{"a":1}\nTOOL_CALL>>>')
+})
+
+it('restores the blocks a reply was written in', () => {
+  // A real answer (doubao.com) arrived as one paragraph in the transcript:
+  // the site had rendered the Markdown, and the protocol conversion collapsed
+  // the blank lines that carry its headings, bullets, and code.
+  const html = [
+    '<h2>Main problems</h2>',
+    '<p>Two dispatchers exist.</p>',
+    '<ul><li>execute_hook cannot chain</li><li>load order is undefined</li></ul>',
+    '<pre><code class="language-lua">local a = 1\n  local b = 2</code></pre>',
+    '<p>Do you want me to refactor it?</p>',
+  ].join('')
+  expect(answerMessageText(html)).toBe([
+    '## Main problems',
+    '',
+    'Two dispatchers exist.',
+    '',
+    '- execute_hook cannot chain',
+    '- load order is undefined',
+    '',
+    '```lua',
+    'local a = 1',
+    '  local b = 2',
+    '```',
+    '',
+    'Do you want me to refactor it?',
+  ].join('\n'))
+})
+
+it('reads a call block out of the message text the site rendered', () => {
+  // The message conversion feeds the protocol parser too, so its escaping has
+  // to leave the delimiters and the JSON body untouched.
+  expect(answerMessageText('<p>&lt;&lt;&lt;TOOL_CALL</p><p>{"name":"read","arguments":{"file_path":"a.ts"}}</p><p>TOOL_CALL&gt;&gt;&gt;</p>'))
+    .toBe('<<<TOOL_CALL\n\n{"name":"read","arguments":{"file_path":"a.ts"}}\n\nTOOL_CALL>>>')
 })

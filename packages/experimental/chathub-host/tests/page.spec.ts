@@ -186,6 +186,23 @@ it('reports a composer that keeps the prompt as UI drift', async () => {
   expect(fake.keys).toEqual(['Enter', 'Enter'])
 })
 
+it('accepts a send whose composer lingers while the conversation advanced', async () => {
+  // A real subject (doubao.com) clears its editor with a transition and had
+  // already started answering; reading the composer once accused the send of
+  // being dropped. The answer container moving is the send's real receipt.
+  const { wrapper, fake } = page()
+  fake.boxes[DRIVER.input] = { x: 0, y: 0, width: 10, height: 10 }
+  fake.texts[DRIVER.input] = '<p>hello world</p>'
+  fake.counts[DRIVER.answer] = 1
+  fake.texts[DRIVER.answer] = '<p>previous answer</p>'
+  const press = fake.keyboard.press
+  fake.keyboard.press = async (key: string): Promise<void> => {
+    await press(key)
+    fake.texts[DRIVER.answer] = '<p>thinking</p>'
+  }
+  await expect(wrapper.submit('hello world', DRIVER, 1)).resolves.toBeUndefined()
+})
+
 it('reports a dropped send on a cookie-gated site as signed-out, not drift', async () => {
   // Doubao's guest gate swallows the send while the QR wall is up; the absent
   // session cookie is what names the cause.

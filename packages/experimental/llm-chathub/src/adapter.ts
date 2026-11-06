@@ -21,7 +21,7 @@ import {
   type StreamChunk,
 } from '@deepseek-ai/dsh-llm'
 import { appendFile } from 'node:fs/promises'
-import { answerMarkupText } from '@deepseek-ai/dsh-experimental-chathub-host'
+import { answerMessageText } from '@deepseek-ai/dsh-experimental-chathub-host'
 import { parseAnswer } from './protocol.ts'
 import { renderRequest } from './render.ts'
 import { SiteRouter } from './router.ts'
@@ -442,10 +442,12 @@ export class ChatHubLlmAdapter extends LlmAdapter {
       this.assertNotAborted(site, signal)
       // The transport carries answers as markup for the panel; the protocol
       // here parses plain text, and the conversion also unescapes the
-      // `&lt;&lt;&lt;TOOL_CALL` delimiters a site's DOM serializes. It must
-      // keep line structure: a JSON argument's indentation is part of the text
-      // an `edit` will search for.
-      return answerMarkupText(answer.content)
+      // `&lt;&lt;&lt;TOOL_CALL` delimiters a site's DOM serializes. It restores
+      // the reply's own blocks — paragraphs, headings, lists, fenced code —
+      // because this text is also the answer the transcript shows; code is
+      // left verbatim so a JSON argument read from the block still matches the
+      // bytes an `edit` searches for.
+      return answerMessageText(answer.content)
     } catch (error) {
       throw transportFailure(error, site)
     } finally {
