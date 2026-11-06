@@ -266,6 +266,49 @@ it('keeps the headful login window for later turns on a headless service', async
   await browser.dispose()
 })
 
+it('opens a second sign-in as a tab in the window that is already open', async () => {
+  const dir = await profileDir()
+  const launcher = new FakeLauncher()
+  const contexts: FakeContext[] = []
+  launcher.contextFactory = () => {
+    const context = new FakeContext()
+    context.pageFactory = () => {
+      const page = new FakePage()
+      page.visible.add(DRIVER.input)
+      return page
+    }
+    contexts.push(context)
+    return context
+  }
+  const { runtime: browser } = await runtime(managed(dir), launcher)
+  await browser.acquire('deepseek-web', DRIVER)
+  await browser.login('deepseek-web', DRIVER, 20, new AbortController().signal)
+  // The first site's session lives in that window, so signing into a second
+  // one opens another tab there instead of replacing the browser.
+  await expect(browser.login('qianwen-web', DRIVER, 20, new AbortController().signal)).resolves.toBe(true)
+  expect(launcher.launched.map(entry => entry.options.headless)).toEqual([true, false])
+  expect(contexts).toHaveLength(2)
+  expect(contexts[1]?.pagesList).toHaveLength(2)
+  await browser.dispose()
+})
+
+it('keeps the login window and its other pages when a later sign-in is cancelled', async () => {
+  const dir = await profileDir()
+  const launcher = new FakeLauncher()
+  signedInContext(launcher)
+  const { runtime: browser } = await runtime(managed(dir), launcher)
+  await browser.login('deepseek-web', DRIVER, 20, new AbortController().signal)
+  const controller = new AbortController()
+  controller.abort()
+  await expect(browser.login('qianwen-web', DRIVER, 20, controller.signal)).resolves.toBe(false)
+  // Cancelling one sign-in closes only its own tab: the window, and the
+  // session it holds for the site that already signed in, stay alive.
+  expect(launcher.launched.map(entry => entry.options.headless)).toEqual([false])
+  await expect(browser.acquire('deepseek-web', DRIVER)).resolves.toBeDefined()
+  expect(launcher.launched).toHaveLength(1)
+  await browser.dispose()
+})
+
 it('closes the headful login window when sign-in fails', async () => {
   const dir = await profileDir()
   const launcher = new FakeLauncher()

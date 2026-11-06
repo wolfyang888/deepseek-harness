@@ -77,7 +77,7 @@ The layer mounts one `chathub-host` row with environment-driven defaults: `DSH_C
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-experimental-chathub-host) is the exhaustive source for every accepted field. A `drivers` key must name a shipped provider, and an empty selector, a poll bound below one, or a `signedOutPath` that does not compile fails at load.
 
-`login` opens a visible page even when `browser.headless` is true, waits up to `loginTimeoutMs` for the chat input, keeps the cookies in the profile, and reopens the provider. `reauthenticate` closes the provider session and opens it again under the current sign-in state. Both report `ProviderHealth`; a cancelled sign-in or a page that closes before the input appears leaves the provider `needs-auth`.
+`login` shows a visible window even when `browser.headless` is true, waits up to `loginTimeoutMs` for the chat input, keeps the cookies in the profile, and reopens the provider. A window that is already open is reused — a second sign-in opens a tab in it rather than replacing a browser that holds another site's session — and it keeps serving later turns, because sites that bind state to the browser session treat a relaunched browser as a new device. `reauthenticate` closes the provider session and opens it again under the current sign-in state. Both report `ProviderHealth`; a cancelled sign-in or a page that closes before the input appears leaves the provider `needs-auth`.
 
 -----
 

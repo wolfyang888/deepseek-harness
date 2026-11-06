@@ -113,6 +113,8 @@ export class PlaywrightBrowserRuntime implements TransportRuntime {
   private context: BrowserContextLike | undefined
   private browser: ConnectedBrowserLike | undefined
   private ownsContext = false
+  /** Whether the live context has a window, so a sign-in can reuse it. */
+  private headful = false
   private lockPath: string | undefined
   private disposed = false
   private readonly pages = new Map<string, ChatPageHandle>()
@@ -149,15 +151,17 @@ export class PlaywrightBrowserRuntime implements TransportRuntime {
   }
 
   /**
-   * Open a headful page for manual sign-in and keep it afterwards.
+   * Show a window for manual sign-in and keep it afterwards.
    *
-   * A `managed` headless service cannot show a login window, so this call
-   * replaces the context with a headful one. On a successful sign-in that
-   * context stays: sites bind part of their session to the browser session
-   * (non-persistent cookies, device tokens), so closing the login window and
-   * reopening headless reads as a new device and the very next turn hits the
-   * login wall again. Later turns reuse the same window through
-   * `ensureContext`; a cancelled or failed sign-in closes it.
+   * A window already open is reused: a second sign-in opens another tab in it
+   * instead of closing the browser that holds the first site's session. Only a
+   * `managed` headless service with no window yet has to launch one, because a
+   * headless browser cannot show a login page. That window then stays: sites
+   * bind part of their session to the browser session (non-persistent cookies,
+   * device tokens), so closing it and reopening headless reads as a new device
+   * and the very next turn hits the login wall again. Later turns reuse the
+   * same window through `ensureContext`; a failed sign-in that had to launch
+   * the window closes it again.
    * @param providerId - provider whose site page the user signs in on.
    * @param driver - site facts for the entry URL and login wall.
    * @param timeoutMs - longest wait for the chat input.
@@ -172,7 +176,7 @@ export class PlaywrightBrowserRuntime implements TransportRuntime {
     signal: AbortSignal,
   ): Promise<boolean> {
     this.assertUsable()
-    if (this.config.mode !== 'managed' || !this.config.headless) {
+    if (this.config.mode !== 'managed' || !this.config.headless || this.headful) {
       const page = await this.acquire(providerId, driver)
       const signedIn = await page.waitForInput(
         driver.input,
@@ -187,6 +191,7 @@ export class PlaywrightBrowserRuntime implements TransportRuntime {
     await this.dropContext()
     const context = await this.openContext(false)
     this.context = context
+    this.headful = true
     try {
       const page = await this.createPage(providerId, driver)
       this.pages.set(providerId, page)
@@ -306,7 +311,9 @@ export class PlaywrightBrowserRuntime implements TransportRuntime {
   /** @returns The shared context, opening one when the runtime has none. */
   private async ensureContext(): Promise<BrowserContextLike> {
     if (this.context !== undefined) return this.context
-    this.context = await this.openContext(this.config.mode === 'managed' && this.config.headless)
+    // Once a window exists, keep opening one: a headless relaunch would drop
+    // the session state that made the sign-in stick.
+    this.context = await this.openContext(this.config.mode === 'managed' && this.config.headless && !this.headful)
     return this.context
   }
 
@@ -383,6 +390,7 @@ export class PlaywrightBrowserRuntime implements TransportRuntime {
     const browser = this.browser
     this.context = undefined
     this.ownsContext = false
+    this.headful = false
     this.browser = undefined
     if (context !== undefined && ownsContext) {
       try {
