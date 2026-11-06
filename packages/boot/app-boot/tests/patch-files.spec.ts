@@ -60,7 +60,7 @@ describe('shipped cordis.patch.yml files parse with the boot loader dialect', ()
         // Compile only: a `vm.Script` rejects a syntax error without running
         // the body, so no environment and no site is ever touched here. This
         // is the same compile step the Loader performs at entry activation.
-        expect(() => new Script(`return ${expression}`), expression.slice(0, 120)).not.toThrow()
+        expect(() => new Script(expression), expression.slice(0, 120)).not.toThrow()
       }
     })
   }
