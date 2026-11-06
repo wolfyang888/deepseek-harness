@@ -51,6 +51,9 @@ export function parseAnswer(raw: string, policy: ChatHubParsePolicy): ChatHubPar
   }
   const body = raw.slice(open + TOOL_CALL_OPEN.length, close)
   const decoded = decodeBlock(body)
+  if (decoded.repaired === true) {
+    warnings.push('repaired the call block before parsing: quotes or backslashes the site damaged were folded back')
+  }
   if (decoded.parsed === undefined) {
     return {
       text,
@@ -152,22 +155,79 @@ const QUOTE_FOLDS: Readonly<Record<string, string>> = {
  * Decode the JSON object a block body carries.
  *
  * A reply typed through a Chinese IME arrives with curly quotes — a real
- * subject wrote `{“name”:“grep”}` — which JSON rejects. The literal text is
- * tried first so a well-formed block is never rewritten, and only a failed
- * attempt falls back to folding quote characters back to ASCII.
+ * subject wrote `{“name”:“grep”}` — and a site's render pass can also halve
+ * the backslashes of a Windows path, so `"path":"D:\work"` reaches this parser
+ * with `\w`, which JSON rejects. The literal text is tried first so a
+ * well-formed block is never rewritten, and only failed attempts fall back to
+ * folding quote characters and repairing stray escapes back to valid JSON.
  * @param body - text between the block delimiters.
  * @returns Whether an object was found, and its value when it parsed.
  */
-function decodeBlock(body: string): { found: boolean; parsed?: Record<string, unknown> } {
+function decodeBlock(body: string): { found: boolean; parsed?: Record<string, unknown>; repaired?: boolean } {
   let found = false
-  for (const source of [body, body.replace(QUOTE_FOLD, char => QUOTE_FOLDS[char] ?? char)]) {
+  for (const [index, source] of candidatesOf(body).entries()) {
     const json = jsonObjectAt(source)
     if (json === undefined) continue
     found = true
     const parsed = parseObject(json)
-    if (parsed !== undefined) return { found: true, parsed }
+    if (parsed !== undefined) return { found: true, parsed, ...index > 0 ? { repaired: true } : {} }
   }
   return { found }
+}
+
+/**
+ * Every reading of a JSON-carrying text, literal first, then each repair.
+ * @param text - block body, or an `arguments` value that arrived as a string.
+ * @returns Sources to try in order; a well-formed one is never rewritten.
+ */
+function candidatesOf(text: string): readonly string[] {
+  const foldQuotes = text.replace(QUOTE_FOLD, char => QUOTE_FOLDS[char] ?? char)
+  return [text, foldQuotes, repairEscapes(text), repairEscapes(foldQuotes)]
+}
+
+/**
+ * Decode the first JSON object a text carries, through every repair channel.
+ * @param text - block body, or an `arguments` value that arrived as a string.
+ * @returns The decoded object, or `undefined` when no repair yields one.
+ */
+function decodeJsonObject(text: string): Record<string, unknown> | undefined {
+  for (const source of candidatesOf(text)) {
+    const json = jsonObjectAt(source)
+    if (json === undefined) continue
+    const parsed = parseObject(json)
+    if (parsed !== undefined) return parsed
+  }
+  return undefined
+}
+
+/** One character class JSON permits after a backslash inside a string. */
+const JSON_ESCAPE_NEXT = /^["\\/bfnrtu]$/u
+
+/**
+ * Repair backslashes a site's render pass halved: a Windows path arrives as
+ * `D:\work` where `\w` is not a JSON escape. Every backslash that does not
+ * open a valid escape is doubled, so valid JSON is never rewritten — the
+ * literal source is always tried before its repaired form.
+ * @param source - candidate JSON text.
+ * @returns The source with stray backslashes escaped.
+ */
+function repairEscapes(source: string): string {
+  let out = ''
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source.charAt(index)
+    if (char !== '\\') {
+      out += char
+      continue
+    }
+    const next = source.charAt(index + 1)
+    if (JSON_ESCAPE_NEXT.test(next)) {
+      out += char + next
+      index += 1
+    } else {
+      out += '\\\\'
+    }
+  }
+  return out
 }
 
 /**
@@ -229,9 +289,13 @@ function readCall(parsed: Record<string, unknown>, policy: ChatHubParsePolicy): 
     return `tool "${clip(name)}" is not allowed; allowed tools: ${policy.allowTools.join(', ')}`
   }
   const args = parsed['arguments']
-  if (!isRecord(args)) return `tool "${clip(name)}" carries no arguments object`
-  const path = firstRejectedPath(args, policy)
-  return path === undefined ? { name, arguments: args } : path
+  // A site that serializes tools itself sends `arguments` as a JSON string —
+  // `{"name":"glob","arguments":"{\"pattern\":…}"}` — so a string is decoded
+  // through the same repair channels before it is rejected.
+  const decoded = isRecord(args) ? args : typeof args === 'string' ? decodeJsonObject(args) : undefined
+  if (!isRecord(decoded)) return `tool "${clip(name)}" carries no arguments object`
+  const path = firstRejectedPath(decoded, policy)
+  return path === undefined ? { name, arguments: decoded } : path
 }
 
 /**

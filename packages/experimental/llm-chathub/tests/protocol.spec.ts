@@ -60,6 +60,49 @@ describe('parseAnswer', () => {
     expect(parsed.call).toEqual({ name: 'read', arguments: { file_path: 'src/main.ts' } })
   })
 
+  it('accepts a block whose Windows path backslashes the site halved', () => {
+    // A real subject (doubao.com) sent exactly this shape: the rendered DOM
+    // collapsed "D:\\work" to "D:\work", and \w is not a JSON escape.
+    const policy = { ...POLICY, workspaceRoot: 'D:/work' }
+    const parsed = parseAnswer(
+      reply(String.raw`{"name":"read","arguments":{"file_path":"D:\work\src\a.ts"}}`),
+      policy,
+    )
+    expect(parsed.invalid).toBeUndefined()
+    expect(parsed.call).toEqual({ name: 'read', arguments: { file_path: 'D:\\work\\src\\a.ts' } })
+    expect(parsed.warnings.join('\n')).toMatch(/repaired the call block/u)
+  })
+
+  it('accepts a block whose arguments arrived as a JSON string', () => {
+    // The same subject also serialized "arguments" as a string, not an object.
+    const parsed = parseAnswer(
+      reply('{"name":"read","arguments":"{\\"file_path\\":\\"src/main.ts\\"}"}'),
+      POLICY,
+    )
+    expect(parsed.invalid).toBeUndefined()
+    expect(parsed.call).toEqual({ name: 'read', arguments: { file_path: 'src/main.ts' } })
+  })
+
+  it('accepts a block with both damages: stringified arguments and halved backslashes', () => {
+    const policy = { ...POLICY, workspaceRoot: 'D:/work' }
+    const parsed = parseAnswer(
+      reply(String.raw`{"name":"read","arguments":"{\"file_path\":\"D:\work\src\a.ts\"}"}`),
+      policy,
+    )
+    expect(parsed.invalid).toBeUndefined()
+    expect(parsed.call).toEqual({ name: 'read', arguments: { file_path: 'D:\\work\\src\\a.ts' } })
+  })
+
+  it('never rewrites a block that is already valid JSON', () => {
+    const parsed = parseAnswer(
+      reply('{"name":"read","arguments":{"file_path":"D:\\\\work\\\\src\\\\a.ts"}}'),
+      { ...POLICY, workspaceRoot: 'D:/work' },
+    )
+    expect(parsed.invalid).toBeUndefined()
+    expect(parsed.call).toEqual({ name: 'read', arguments: { file_path: 'D:\\work\\src\\a.ts' } })
+    expect(parsed.warnings).toEqual([])
+  })
+
   it('keeps rejecting text that only looks like a quoted object', () => {
     expect(parseAnswer(reply('“name”:“read”'), POLICY).invalid)
       .toBe('the tool call block carries no JSON object')

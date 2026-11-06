@@ -1,6 +1,12 @@
 /** Adapter: one loop step per site turn, with the repair and failure policy. */
 
-import { LlmError, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import {
+  createAssistantMessage,
+  LlmError,
+  ToolCallId,
+  type GenerateOptions,
+  type StreamChunk,
+} from '@deepseek-ai/dsh-llm'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -644,10 +650,10 @@ describe('ChatHubLlmAdapter site selection', () => {
       ...history,
       // A final summary only happens after tools have run; prose here is the
       // caller's answer, never a replay trigger.
-      messages: [...history.messages, {
-        role: 'assistant',
-        content: [{ type: 'tool-call', id: 'c1', name: 'read', arguments: '{}' }],
-      } as GenerateOptions['messages'][number]],
+      messages: [...history.messages, createAssistantMessage({
+        content: [{ type: 'tool-call', id: ToolCallId('c1'), name: 'read', arguments: '{}' }],
+        source: { provider: 'deepseek-web-chathub', model: 'web-model' },
+      })],
     }
     await collect(adapter(source, AUTO).stream(done))
     expect(source.sites).toEqual(['deepseek-web'])
