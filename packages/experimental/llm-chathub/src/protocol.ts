@@ -52,7 +52,7 @@ export function parseAnswer(raw: string, policy: ChatHubParsePolicy): ChatHubPar
   const body = raw.slice(open + TOOL_CALL_OPEN.length, close)
   const decoded = decodeBlock(body)
   if (decoded.repaired === true) {
-    warnings.push('repaired the call block before parsing: quotes or backslashes the site damaged were folded back')
+    warnings.push('repaired the call block before parsing: quotes, backslashes, or line breaks the site damaged were folded back')
   }
   if (decoded.parsed === undefined) {
     return {
@@ -155,11 +155,12 @@ const QUOTE_FOLDS: Readonly<Record<string, string>> = {
  * Decode the JSON object a block body carries.
  *
  * A reply typed through a Chinese IME arrives with curly quotes — a real
- * subject wrote `{“name”:“grep”}` — and a site's render pass can also halve
- * the backslashes of a Windows path, so `"path":"D:\work"` reaches this parser
- * with `\w`, which JSON rejects. The literal text is tried first so a
- * well-formed block is never rewritten, and only failed attempts fall back to
- * folding quote characters and repairing stray escapes back to valid JSON.
+ * subject wrote `{“name”:“grep”}` — a site's render pass can halve the
+ * backslashes of a Windows path, and an argument that carries file text spans
+ * real lines with the copied code's own quotes, so the body needs every one
+ * of these repairs before strict JSON accepts it. The literal text is tried
+ * first so a well-formed block is never rewritten, and each repair is only
+ * accepted when its output parses.
  * @param body - text between the block delimiters.
  * @returns Whether an object was found, and its value when it parsed.
  */
@@ -182,7 +183,15 @@ function decodeBlock(body: string): { found: boolean; parsed?: Record<string, un
  */
 function candidatesOf(text: string): readonly string[] {
   const foldQuotes = text.replace(QUOTE_FOLD, char => QUOTE_FOLDS[char] ?? char)
-  return [text, foldQuotes, repairEscapes(text), repairEscapes(foldQuotes)]
+  const escaped = [repairEscapes(text), repairEscapes(foldQuotes)]
+  const rawString = [repairRawStrings(text), repairRawStrings(foldQuotes)]
+  return [
+    text,
+    foldQuotes,
+    ...escaped,
+    ...rawString,
+    ...rawString.map(repairEscapes),
+  ]
 }
 
 /**
@@ -226,6 +235,70 @@ function repairEscapes(source: string): string {
     } else {
       out += '\\\\'
     }
+  }
+  return out
+}
+
+/**
+ * Escape the raw characters a multi-line block body carries inside strings.
+ *
+ * A model that pastes file text into an argument writes the JSON the way a
+ * human would: the string spans real lines and the quoted fragments of the
+ * copied code keep their own double quotes — `Logger:warn("[PluginManager] …")`
+ * — and both are illegal inside a JSON string, so strict parsing rejects a
+ * block whose intent is perfectly clear. Every newline inside a string becomes
+ * `\n`, and a quote becomes `\"` unless what follows it (whitespace skipped)
+ * is a JSON structural character, which reads as the string's real end.
+ * The candidate is only accepted when it parses, so a mis-guessed quote can
+ * never corrupt an otherwise valid reading.
+ * @param source - candidate JSON text.
+ * @returns The source with raw line breaks and interior quotes escaped.
+ */
+function repairRawStrings(source: string): string {
+  let out = ''
+  let inString = false
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source.charAt(index)
+    if (!inString) {
+      if (char === '"') inString = true
+      out += char
+      continue
+    }
+    if (char === '\\') {
+      const next = source.charAt(index + 1)
+      if (next === '') {
+        out += '\\\\'
+        continue
+      }
+      out += char + next
+      index += 1
+      continue
+    }
+    if (char === '"') {
+      let ahead = index + 1
+      while (ahead < source.length && /\s/u.test(source.charAt(ahead))) ahead += 1
+      const following = ahead < source.length ? source.charAt(ahead) : ''
+      if (following === '' || ',:}]'.includes(following)) {
+        inString = false
+        out += char
+      } else {
+        out += '\\"'
+      }
+      continue
+    }
+    if (char === '\n') {
+      out += '\\n'
+      continue
+    }
+    if (char === '\r') {
+      out += '\\r'
+      continue
+    }
+    if (char === '\t') {
+      out += '\\t'
+      continue
+    }
+    out += char
   }
   return out
 }

@@ -51,6 +51,7 @@ const PROTOCOL_TEXT = [
   'Put any explanation outside the block. Never invent tool output: you only see what the tools returned.',
   'Write "arguments" as one JSON object, never as a quoted string.',
   'Use forward slashes in file paths (D:/work/code), not backslashes; a stray backslash breaks the JSON.',
+  'Inside a JSON string value, escape every line break as \\n and every double quote as \\"; a raw line break or a bare quote ends the JSON.',
   'Copy file text byte for byte: inside "arguments", indentation, spaces, and ASCII punctuation',
   '(--, ", \', ...) must match the tool result exactly; a retyped line will not match the file.',
   'When the task is complete, or when you need the user to decide, reply without a block.',

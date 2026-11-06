@@ -83,6 +83,30 @@ describe('parseAnswer', () => {
     expect(parsed.call).toEqual({ name: 'read', arguments: { file_path: 'src/main.ts' } })
   })
 
+  it('accepts a block whose string values span real lines and keep copied quotes', () => {
+    // A real subject (doubao.com) sent exactly this shape for an edit: the
+    // old_string carried the file's own lines and its quoted log prefix, and
+    // neither the line breaks nor the interior quotes were JSON-escaped.
+    const body = [
+      '{"name":"edit","arguments":{"file_path":"lua/plugin/service/plugin_manager.lua",',
+      '"old_string":"function PluginManager:execute_hook(hook_name, ctx, ...)',
+      'local hooks = self.hooks[hook_name]',
+      'if not hooks then',
+      'Logger:warn("[PluginManager] Unknown hook: " .. hook_name)',
+      'return',
+      'end",',
+      '"new_string":"function PluginManager:execute_hook(hook_name, ctx, ...)',
+      'local index = 1"}}',
+    ].join('\n')
+    const parsed = parseAnswer(reply(body), POLICY)
+    expect(parsed.invalid).toBeUndefined()
+    expect(parsed.call?.name).toBe('edit')
+    const arguments_ = parsed.call?.arguments as { old_string: string; new_string: string }
+    expect(arguments_.old_string).toContain('Logger:warn("[PluginManager] Unknown hook: " .. hook_name)')
+    expect(arguments_.old_string).toContain('\nlocal hooks = self.hooks[hook_name]')
+    expect(parsed.warnings.join('\n')).toMatch(/repaired the call block/u)
+  })
+
   it('accepts a block with both damages: stringified arguments and halved backslashes', () => {
     const policy = { ...POLICY, workspaceRoot: 'D:/work' }
     const parsed = parseAnswer(
