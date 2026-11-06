@@ -60,6 +60,11 @@
 #                            has run on the topic replays on the next site
 #                            (default `true`); the last prose is still
 #                            delivered when every site declines
+#   DSH_CHATHUB_LLM_CONTEXT_WINDOW  declared context window in tokens used by
+#                            harness compaction (default 128000). Must stay
+#                            above the session compaction headroom — 65536 by
+#                            default — or every model switch fails with
+#                            `leaving no pressure budget`.
 - insert:
     - id: llm-chathub
       name: '@deepseek-ai/dsh-experimental-llm-chathub'
@@ -67,6 +72,7 @@
         site: !!js process.env.DSH_CHATHUB_LLM_SITE ?? 'deepseek-web'
         sites: !!js (process.env.DSH_CHATHUB_LLM_SITES ?? '').split(',').filter(Boolean)
         model: !!js process.env.DSH_CHATHUB_LLM_MODEL ?? 'web-model'
+        contextWindow: !!js Number(process.env.DSH_CHATHUB_LLM_CONTEXT_WINDOW ?? 128000)
         workspaceRoot: !!js process.env.DSH_CHATHUB_LLM_ROOT ?? process.cwd()
         allowTools: !!js (process.env.DSH_CHATHUB_LLM_TOOLS ?? 'read,grep,glob,edit,write').split(',')
         verifyCommands: !!js (process.env.DSH_CHATHUB_LLM_VERIFY ?? 'pnpm run typecheck').split(',')
@@ -91,32 +97,10 @@
           )
         proseReplay: !!js process.env.DSH_CHATHUB_LLM_PROSE_REPLAY !== 'false'
 
-# The compaction engine prices every routed model against its declared context
-# window. These routes declare 32k — below the 64k default compaction headroom —
-# so without a per-route policy every model switch fails with
-# MODEL_SWITCH_COMPACTION_FAILED. Pin a small-headroom policy per mounted site
-# and for the aggregate route, which declares the same 32k window:
-# the engine ignores policies for routes that do not exist, and this override
-# replaces any earlier `compaction-basic` config (patch overrides replace the
-# whole config object). A separate top-level patch entry so it targets the
-# bundle's mounted row instead of inserting a new one.
-- id: compaction-basic
-  config:
-    modelPolicies: !!js |
-      (() => {
-        const sites = (process.env.DSH_CHATHUB_LLM_SITES ?? process.env.DSH_CHATHUB_LLM_SITE ?? 'deepseek-web')
-          .split(',')
-          .map((site) => site.trim())
-          .filter(Boolean)
-        const model = process.env.DSH_CHATHUB_LLM_MODEL ?? 'web-model'
-        const routes = sites.map((site) => `${site}-chathub`)
-        if ((process.env.DSH_CHATHUB_LLM_SELECTION ?? 'auto') === 'auto' && sites.length > 1) {
-          routes.push(process.env.DSH_CHATHUB_LLM_AUTO_ROUTE ?? 'web-auto-chathub')
-        }
-        return routes.map((provider) => ({
-          provider,
-          model,
-          headroomTokens: 8192,
-          maxTokens: 8192,
-        }))
-      })()
+# Compaction policy note: the compaction-basic row this layer once patched here
+# is the host-plane row the web bundle disables (`disabled: true`). The instance
+# that actually serves a session is instantiated from the agent preset
+# (`preset-standard` and friends) at session time, and profile overlays cannot
+# reach it. Compaction headroom therefore stays at the preset default (65536),
+# and the adapter keeps its declared context window above it instead — see
+# DSH_CHATHUB_LLM_CONTEXT_WINDOW above.

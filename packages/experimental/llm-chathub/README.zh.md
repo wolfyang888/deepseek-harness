@@ -61,7 +61,7 @@ pnpm dsh web --patch packages/experimental/chathub-host/cordis.patch.yml --patch
     site: deepseek-web
     route: deepseek-web-chathub
     model: web-model
-    contextWindow: 32000
+    contextWindow: 128000
     maxPromptChars: 48000
     maxToolResultChars: 6000
     maxSystemChars: 4000
@@ -79,7 +79,7 @@ pnpm dsh web --patch packages/experimental/chathub-host/cordis.patch.yml --patch
 | `site` | `deepseek-web` | ChatHub 宿主层随包提供的站点提供方 id |
 | `route` | `<site>-chathub` | 本行注册的 LLM 提供方路由 |
 | `model` | `web-model` | 该路由声明的模型 id |
-| `contextWindow` | `32000` | 声明的 token 容量，harness 压缩按它规划 |
+| `contextWindow` | `128000` | 声明的 token 容量，harness 压缩按它规划。必须高于会话压缩的 headroom（默认 65536，归 agent 预设所有），否则每次切换模型都会报 `leaving no pressure budget` |
 | `maxPromptChars` | `48000` | 一段渲染提示的硬上限 |
 | `maxToolResultChars` | `6000` | 提示内单个工具结果的上限 |
 | `maxSystemChars` | `4000` | 带入提示的 harness 系统提示上限 |

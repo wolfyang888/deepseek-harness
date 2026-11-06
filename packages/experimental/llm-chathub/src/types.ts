@@ -338,7 +338,12 @@ export class ChatHubPromptOverflowError extends Error {
 /** Shipped defaults; a mount supplies only what differs. */
 export const DEFAULT_CHATHUB_LLM_CONFIG = {
   model: 'web-model',
-  contextWindow: 32_000,
+  // Compaction prices every routed model against this window and subtracts the
+  // session compaction service's headroom — 65,536 by default, owned by the
+  // agent-preset plane that profile overlays cannot reach. Stay above it, or
+  // every model switch fails with `leaving no pressure budget`. The web
+  // backends host 128k-class models, so the shipped value matches them.
+  contextWindow: 128_000,
   maxPromptChars: 48_000,
   maxToolResultChars: 6_000,
   maxSystemChars: 4_000,

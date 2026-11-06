@@ -61,7 +61,7 @@ The layer mounts one `llm-chathub` row with environment-driven defaults: `DSH_CH
     site: deepseek-web
     route: deepseek-web-chathub
     model: web-model
-    contextWindow: 32000
+    contextWindow: 128000
     maxPromptChars: 48000
     maxToolResultChars: 6000
     maxSystemChars: 4000
@@ -79,7 +79,7 @@ The layer mounts one `llm-chathub` row with environment-driven defaults: `DSH_CH
 | `site` | `deepseek-web` | Site provider id the ChatHub host layer ships |
 | `route` | `<site>-chathub` | LLM provider route this row registers |
 | `model` | `web-model` | Model id advertised on that route |
-| `contextWindow` | `32000` | Declared capacity in tokens; harness compaction plans against it |
+| `contextWindow` | `128000` | Declared capacity in tokens; harness compaction plans against it. Keep it above the session compaction headroom (65536 by default, owned by the agent preset), or every model switch fails with `leaving no pressure budget` |
 | `maxPromptChars` | `48000` | Hard ceiling of one rendered prompt |
 | `maxToolResultChars` | `6000` | Ceiling of one tool result inside the prompt |
 | `maxSystemChars` | `4000` | Ceiling of the harness system prompt carried into the prompt |
