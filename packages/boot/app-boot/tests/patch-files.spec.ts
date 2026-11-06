@@ -10,6 +10,7 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { Script } from 'node:vm'
 import { describe, expect, it } from 'vitest'
 import * as yaml from 'js-yaml'
 import { entryListSchema } from '@deepseek-ai/cordis-plugin-include'
@@ -56,10 +57,10 @@ describe('shipped cordis.patch.yml files parse with the boot loader dialect', ()
     it(`${label} holds only compilable !!js expressions`, () => {
       const parsed = yaml.load(readFileSync(file, 'utf8'), { schema: entryListSchema })
       for (const expression of expressionNodes(parsed)) {
-        // Compile only: `new Function` rejects a syntax error without running
-        // the body, so no environment and no site is ever touched here.
-        // eslint-disable-next-line @typescript-eslint/no-implied-eval -- compiling is exactly what the Loader does with these nodes
-        expect(() => new Function(`return ${expression}`), expression.slice(0, 120)).not.toThrow()
+        // Compile only: a `vm.Script` rejects a syntax error without running
+        // the body, so no environment and no site is ever touched here. This
+        // is the same compile step the Loader performs at entry activation.
+        expect(() => new Script(`return ${expression}`), expression.slice(0, 120)).not.toThrow()
       }
     })
   }
