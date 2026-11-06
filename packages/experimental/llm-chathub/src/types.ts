@@ -16,6 +16,8 @@ import type { WebChatPayload } from '@deepseek-ai/dsh-experimental-chathub'
 export const CHATHUB_LLM_AUTH_CODE = 'AUTH'
 /** The page answered, but the reply could not be parsed into a legal answer. */
 export const CHATHUB_LLM_MALFORMED_CODE = 'MALFORMED_RESPONSE'
+/** The page answered in plain prose before any tool has run on the topic. */
+export const CHATHUB_LLM_PROSE_CODE = 'PROSE_ANSWER'
 /** The rendered request cannot fit the declared prompt budget. */
 export const CHATHUB_LLM_OVERFLOW_CODE = 'CONTEXT_WINDOW_EXCEEDED'
 /** The site answered with a status the transport classifies as transport/UI failure. */
@@ -69,6 +71,13 @@ export interface SiteRoutingPolicy {
   readonly demoteMs: number
   /** Capability rank per site; a higher rank is a stronger model. */
   readonly siteRank: Readonly<Record<string, number>>
+  /**
+   * Whether a plain-prose reply before any tool has run on the topic replays
+   * on the next site. Web models that miss the tool protocol answer with a
+   * refusal question; replaying once is usually enough to get a real call.
+   * The last prose answer is still delivered when every site declines.
+   */
+  readonly proseReplay: boolean
 }
 
 /** Default text head so a prompt always names the task even when budgets bite. */
@@ -378,4 +387,8 @@ export const DEFAULT_SITE_ROUTING: SiteRoutingPolicy = {
   escalateAfterFailures: 2,
   demoteMs: 1_800_000,
   siteRank: DEFAULT_SITE_RANK,
+  // Web models miss the tool protocol often enough that the first prose reply
+  // on a fresh topic is worth one replay elsewhere; a real final summary only
+  // happens after tools have run, so it is never replayed.
+  proseReplay: true,
 }

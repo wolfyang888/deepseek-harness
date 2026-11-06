@@ -42,6 +42,15 @@ export class PlaywrightPage implements ChatPageHandle {
     try {
       await this.page.goto(url, { timeout: this.actionTimeoutMs, waitUntil: 'domcontentloaded' })
     } catch (error) {
+      if (isOperationTimeout(error)) {
+        // A slow portal page says nothing about the DOM we expect; blaming the
+        // UI would mask a reachable-but-slow site as drift.
+        throw new BrowserTransportError(
+          'chathub-turn-timeout',
+          `${this.key}: navigating to "${url}" did not settle within ${this.actionTimeoutMs}ms`,
+          { cause: error },
+        )
+      }
       throw classifyPageError(error, `${this.key}: navigating to "${url}"`)
     }
   }

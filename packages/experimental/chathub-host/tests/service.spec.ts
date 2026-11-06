@@ -147,7 +147,9 @@ describe('WebChatTransportService', () => {
     const { service } = await harness()
     const health = await service.login('deepseek-web', new AbortController().signal)
     expect(health).toMatchObject({ providerId: 'deepseek-web', ready: true, status: 'ready' })
-    expect(sharedLauncher.launched.map(launch => launch.options.headless)).toEqual([false, true])
+    // The headful login window stays: reopening headless reads as a new device
+    // and would hit the login wall again on the very next turn.
+    expect(sharedLauncher.launched.map(launch => launch.options.headless)).toEqual([false])
     const views = await service.providers()
     expect(views.find(view => view.id === 'deepseek-web')?.health.status).toBe('ready')
   })

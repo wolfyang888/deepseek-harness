@@ -39,7 +39,16 @@
         stablePolls: !!js Number(process.env.DSH_CHATHUB_STABLE_POLLS ?? 3)
         maxQueuedTurns: !!js Number(process.env.DSH_CHATHUB_MAX_QUEUED_TURNS ?? 2)
         typeDelayMs: !!js Number(process.env.DSH_CHATHUB_TYPE_DELAY_MS ?? 0)
-        pacing: !!js ({ profile: process.env.DSH_CHATHUB_PACING ?? 'conservative', ...(process.env.DSH_CHATHUB_MIN_TURN_GAP_MS !== undefined ? { minTurnGapMs: Number(process.env.DSH_CHATHUB_MIN_TURN_GAP_MS) } : {}), ...(process.env.DSH_CHATHUB_MAX_TURNS_PER_HOUR !== undefined ? { maxTurnsPerHour: Number(process.env.DSH_CHATHUB_MAX_TURNS_PER_HOUR) } : {}), ...(process.env.DSH_CHATHUB_PACING_MAX_WAIT_MS !== undefined ? { maxWaitMs: Number(process.env.DSH_CHATHUB_PACING_MAX_WAIT_MS) } : {}) })
+        pacing: !!js >-
+          ({
+            profile: process.env.DSH_CHATHUB_PACING ?? 'conservative',
+            ...(process.env.DSH_CHATHUB_MIN_TURN_GAP_MS !== undefined
+              ? { minTurnGapMs: Number(process.env.DSH_CHATHUB_MIN_TURN_GAP_MS) } : {}),
+            ...(process.env.DSH_CHATHUB_MAX_TURNS_PER_HOUR !== undefined
+              ? { maxTurnsPerHour: Number(process.env.DSH_CHATHUB_MAX_TURNS_PER_HOUR) } : {}),
+            ...(process.env.DSH_CHATHUB_PACING_MAX_WAIT_MS !== undefined
+              ? { maxWaitMs: Number(process.env.DSH_CHATHUB_PACING_MAX_WAIT_MS) } : {}),
+          })
         drivers: {}
     - id: ui-chathub
       name: '@deepseek-ai/dsh-experimental-client-ui-chathub'

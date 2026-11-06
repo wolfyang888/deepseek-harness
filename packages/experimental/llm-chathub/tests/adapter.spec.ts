@@ -551,7 +551,13 @@ function autoRequest(session: string): GenerateOptions {
 describe('ChatHubLlmAdapter site selection', () => {
   it('keeps one topic on one site and starts a new topic on the other', async () => {
     const source = new FakeSource()
-    source.answers = ['first', 'second', 'third']
+    // Legal call blocks, so the prose-replay rule stays out of the way: this
+    // test is about placement, not about protocol compliance.
+    source.answers = [
+      call('{"name":"read","arguments":{"file_path":"a.ts"}}'),
+      call('{"name":"read","arguments":{"file_path":"b.ts"}}'),
+      call('{"name":"read","arguments":{"file_path":"c.ts"}}'),
+    ]
     const subject = adapter(source, AUTO)
     await collect(subject.stream(autoRequest('session-a')))
     await collect(subject.stream(autoRequest('session-a')))
@@ -580,7 +586,7 @@ describe('ChatHubLlmAdapter site selection', () => {
 
   it('reports the site that served an auto turn', async () => {
     const source = new FakeSource()
-    source.answers = ['ok']
+    source.answers = [call('{"name":"read","arguments":{"file_path":"a.ts"}}')]
     const records: ChatHubTurnObservation[] = []
     await collect(adapter(source, { ...AUTO, onTurn: record => records.push(record) })
       .stream(autoRequest('session-a')))
@@ -604,6 +610,57 @@ describe('ChatHubLlmAdapter site selection', () => {
     // site by site instead of only as its final answer.
     expect(records.map(record => record.failure ?? null)).toEqual(['MALFORMED_RESPONSE', null])
     expect(records.map(record => record.site)).toEqual(['deepseek-web', 'qianwen-web'])
+  })
+
+  it('replays a prose answer that dodges the tool protocol', async () => {
+    const source = new FakeSource()
+    const records: ChatHubTurnObservation[] = []
+    // A fresh topic answered with a refusal question instead of a call block
+    // is a protocol miss, not a finished task: another site deserves the turn.
+    source.answers = [
+      '目前我这边无法访问本地文件系统，请补充仓库路径与改进方向',
+      call('{"name":"read","arguments":{"file_path":"src/main.ts"}}'),
+    ]
+    const chunks = await collect(adapter(source, { ...AUTO, onTurn: record => records.push(record) })
+      .stream(autoRequest('session-a')))
+    expect(source.sites).toEqual(['deepseek-web', 'qianwen-web'])
+    expect(records.map(record => record.failure ?? null)).toEqual(['PROSE_ANSWER', null])
+    expect(chunks.some(chunk => chunk.type === 'tool-call-delta')).toBe(true)
+  })
+
+  it('delivers the last prose answer when every site declines', async () => {
+    const source = new FakeSource()
+    source.answers = ['我无法访问文件', '请直接贴出关键文件']
+    const chunks = await collect(adapter(source, AUTO).stream(autoRequest('session-a')))
+    expect(source.sites).toEqual(['deepseek-web', 'qianwen-web'])
+    expect(chunks.some(chunk => chunk.type === 'text-delta')).toBe(true)
+  })
+
+  it('keeps a prose answer that follows executed tool calls', async () => {
+    const source = new FakeSource()
+    source.answers = ['the build is fixed']
+    const history = request('summarize the fix')
+    const done: GenerateOptions = {
+      ...history,
+      // A final summary only happens after tools have run; prose here is the
+      // caller's answer, never a replay trigger.
+      messages: [...history.messages, {
+        role: 'assistant',
+        content: [{ type: 'tool-call', id: 'c1', name: 'read', arguments: '{}' }],
+      } as GenerateOptions['messages'][number]],
+    }
+    await collect(adapter(source, AUTO).stream(done))
+    expect(source.sites).toEqual(['deepseek-web'])
+  })
+
+  it('answers a pinned route with the prose it got', async () => {
+    const source = new FakeSource()
+    source.answers = ['我无法访问文件']
+    const chunks = await collect(adapter(source).stream(request()))
+    // The user picked this model; replaying its words elsewhere is a silent
+    // substitute, so a pinned prose answer is delivered as-is.
+    expect(source.sites).toEqual(['deepseek-web'])
+    expect(chunks.some(chunk => chunk.type === 'text-delta')).toBe(true)
   })
 
   it('names the transport code when the page throws no structured failure', async () => {

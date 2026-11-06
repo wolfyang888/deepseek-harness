@@ -92,6 +92,30 @@ export class SiteRouter {
   }
 
   /**
+   * Record that a site answered off-protocol without penalizing the account.
+   *
+   * A prose reply before any tool has run is the model dodging the block
+   * format, not a page or sign-in failure: the site served the turn and its
+   * answer may still be delivered when nothing stronger exists. Only the
+   * topic's escalation counter moves, so repeated misses steer the topic to a
+   * stronger site while the account keeps serving other topics.
+   * @param key - topic key.
+   * @param site - site whose reply missed the protocol.
+   */
+  miss(key: string, site: string): void {
+    const pair = topicSite(key, site)
+    const forTopic = (this.topicFailures.get(pair) ?? 0) + 1
+    this.topicFailures.set(pair, forTopic)
+    const limit = this.policy.escalateAfterFailures
+    if (limit > 0 && forTopic >= limit) {
+      this.topicFailures.delete(pair)
+      this.floors.set(key, Math.max(this.floors.get(key) ?? Number.NEGATIVE_INFINITY, this.rankOf(site)))
+    }
+    // The topic must not stick to a site that dodges the protocol.
+    this.affinities.delete(key)
+  }
+
+  /**
    * Record that a turn on this site succeeded; the topic stays where it ran.
    *
    * A success is also the only thing that clears a failure streak: one working

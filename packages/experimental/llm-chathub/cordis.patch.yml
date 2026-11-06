@@ -56,6 +56,10 @@
 #   DSH_CHATHUB_LLM_SITE_RANK  capability order used for escalation, as
 #                            `site:rank` pairs (default ships qianwen 10,
 #                            deepseek/glm/doubao 20, chatgpt/gemini 30)
+#   DSH_CHATHUB_LLM_PROSE_REPLAY  whether a plain-prose reply before any tool
+#                            has run on the topic replays on the next site
+#                            (default `true`); the last prose is still
+#                            delivered when every site declines
 - insert:
     - id: llm-chathub
       name: '@deepseek-ai/dsh-experimental-llm-chathub'
@@ -85,6 +89,7 @@
                 return [site.trim(), Number(rank)]
               }),
           )
+        proseReplay: !!js process.env.DSH_CHATHUB_LLM_PROSE_REPLAY !== 'false'
 
 # The compaction engine prices every routed model against its declared context
 # window. These routes declare 32k — below the 64k default compaction headroom —

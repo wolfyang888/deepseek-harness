@@ -80,6 +80,8 @@ export type Config = Omit<
   siteDemoteMs?: number
   /** Capability rank per site, e.g. `{ 'chatgpt-web': 30 }`. */
   siteRank?: Readonly<Record<string, number>>
+  /** Whether a prose reply before any tool run replays on the next site. */
+  proseReplay?: boolean
 }
 
 /** Schema of the mounting row; every field is optional except the site. */
@@ -110,6 +112,7 @@ export const Config = z.object({
   escalateAfterFailures: z.natural().default(DEFAULT_SITE_ROUTING.escalateAfterFailures),
   siteDemoteMs: z.natural().default(DEFAULT_SITE_ROUTING.demoteMs),
   siteRank: z.dict(z.natural()).default({}),
+  proseReplay: z.boolean().default(DEFAULT_SITE_ROUTING.proseReplay),
 })
 
 export const name = 'llm-chathub'
@@ -148,6 +151,7 @@ export function resolveConfig(
     // otherwise an unranked chatgpt would rank below a ranked qianwen and the
     // escalation would never reach it.
     siteRank: { ...DEFAULT_SITE_RANK, ...config.siteRank },
+    proseReplay: config.proseReplay ?? DEFAULT_SITE_ROUTING.proseReplay,
   }
   return {
     site: config.site,

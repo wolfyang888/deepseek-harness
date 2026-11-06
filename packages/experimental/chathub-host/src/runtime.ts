@@ -149,11 +149,15 @@ export class PlaywrightBrowserRuntime implements TransportRuntime {
   }
 
   /**
-   * Open a headful page for manual sign-in and close it afterwards.
+   * Open a headful page for manual sign-in and keep it afterwards.
    *
    * A `managed` headless service cannot show a login window, so this call
-   * replaces the context with a temporary headful one and restores a closed
-   * state afterwards; the profile keeps the cookies the user established.
+   * replaces the context with a headful one. On a successful sign-in that
+   * context stays: sites bind part of their session to the browser session
+   * (non-persistent cookies, device tokens), so closing the login window and
+   * reopening headless reads as a new device and the very next turn hits the
+   * login wall again. Later turns reuse the same window through
+   * `ensureContext`; a cancelled or failed sign-in closes it.
    * @param providerId - provider whose site page the user signs in on.
    * @param driver - site facts for the entry URL and login wall.
    * @param timeoutMs - longest wait for the chat input.
@@ -181,20 +185,23 @@ export class PlaywrightBrowserRuntime implements TransportRuntime {
       return signedIn
     }
     await this.dropContext()
+    const context = await this.openContext(false)
+    this.context = context
     try {
-      const context = await this.openContext(false)
-      this.context = context
       const page = await this.createPage(providerId, driver)
       this.pages.set(providerId, page)
-      return await page.waitForInput(
+      const signedIn = await page.waitForInput(
         driver.input,
         driver.loginWall,
         timeoutMs,
         this.timings.pollMs,
         signal,
       )
-    } finally {
+      if (!signedIn) await this.dropContext()
+      return signedIn
+    } catch (error) {
       await this.dropContext()
+      throw error
     }
   }
 

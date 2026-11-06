@@ -250,7 +250,7 @@ it('waits for an in-flight turn before closing everything', async () => {
   await expect(browser.dispose()).resolves.toBeUndefined()
 })
 
-it('opens a temporary headful window for login on a headless service', async () => {
+it('keeps the headful login window for later turns on a headless service', async () => {
   const dir = await profileDir()
   const launcher = new FakeLauncher()
   signedInContext(launcher)
@@ -258,10 +258,22 @@ it('opens a temporary headful window for login on a headless service', async () 
   await browser.acquire('deepseek-web', DRIVER)
   await expect(browser.login('deepseek-web', DRIVER, 20, new AbortController().signal)).resolves.toBe(true)
   expect(launcher.launched.map(entry => entry.options.headless)).toEqual([true, false])
-  expect(launcher.launched[0]?.options.headless).toBe(true)
-  expect(launcher.launched[1]?.options.headless).toBe(false)
+  // Sites bind part of their session to the browser session, so the login
+  // window stays and the next turn reuses it instead of relaunching headless —
+  // a fresh headless context reads as a new device and hits the login wall.
   await expect(browser.acquire('deepseek-web', DRIVER)).resolves.toBeDefined()
-  expect(launcher.launched[2]?.options.headless).toBe(true)
+  expect(launcher.launched).toHaveLength(2)
+  await browser.dispose()
+})
+
+it('closes the headful login window when sign-in fails', async () => {
+  const dir = await profileDir()
+  const launcher = new FakeLauncher()
+  const { runtime: browser } = await runtime(managed(dir), launcher)
+  await expect(browser.login('deepseek-web', DRIVER, 5, new AbortController().signal)).resolves.toBe(false)
+  expect(launcher.launched.map(entry => entry.options.headless)).toEqual([false])
+  await expect(browser.acquire('deepseek-web', DRIVER)).resolves.toBeDefined()
+  expect(launcher.launched.map(entry => entry.options.headless)).toEqual([false, true])
   await browser.dispose()
 })
 

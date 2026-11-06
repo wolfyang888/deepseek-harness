@@ -28,6 +28,7 @@ import { SiteRouter } from './router.ts'
 import {
   CHATHUB_LLM_AUTH_CODE,
   CHATHUB_LLM_MALFORMED_CODE,
+  CHATHUB_LLM_PROSE_CODE,
   CHATHUB_LLM_TRANSPORT_CODE,
   DEFAULT_SITE_ROUTING,
   type ChatHubLlmConfig,
@@ -198,13 +199,22 @@ export class ChatHubLlmAdapter extends LlmAdapter {
     const routing = this.config.routing ?? DEFAULT_SITE_ROUTING
     let candidates = await this.candidateSites(pinned)
     let failures = 0
+    // The last prose answer, kept until a later attempt beats it: a replay
+    // that finds no site left still delivers something.
+    let lastProse: { site: string; rendered: { prompt: string; droppedEntries: number }; parsed: Awaited<ReturnType<ChatHubLlmAdapter['askUntilLegal']>> } | undefined
     for (;;) {
-      const site = this.router.choose({
-        key,
-        candidates,
-        ...pinned === undefined ? {} : { pinned },
-        waitOf: candidate => this.transport().waitForTurnMs?.(candidate) ?? 0,
-      })
+      let site: string
+      try {
+        site = this.router.choose({
+          key,
+          candidates,
+          ...pinned === undefined ? {} : { pinned },
+          waitOf: candidate => this.transport().waitForTurnMs?.(candidate) ?? 0,
+        })
+      } catch (error) {
+        if (lastProse !== undefined) return lastProse
+        throw error
+      }
       const rendered = this.render(options, site)
       await this.recordPrompt(site, rendered.prompt)
       let parsed: Awaited<ReturnType<ChatHubLlmAdapter['askUntilLegal']>>
@@ -228,6 +238,29 @@ export class ChatHubLlmAdapter extends LlmAdapter {
         }
         failures += 1
         this.router.fail(key, site)
+        candidates = candidates.filter(candidate => candidate !== site)
+        continue
+      }
+      if (
+        parsed.call === undefined
+        && parsed.text.length > 0
+        && routing.proseReplay
+        && pinned === undefined
+        && failures < routing.failoverAttempts
+        && candidates.length > 1
+        && !hadToolActivity(options)
+        && (options.purpose as string | undefined) !== 'compaction'
+      ) {
+        // A prose reply before any tool has run is a protocol miss, not a
+        // finished task: the loop asked for file work and got a refusal
+        // question instead. Replay it on the next site — the prompt is fixed,
+        // the model is what varies. The miss counts toward escalation without
+        // benching the account, and when no other site is left this prose
+        // still reaches the caller, so nothing is lost.
+        lastProse = { site, rendered, parsed }
+        this.reportAttempt(options, site, rendered, failures + 1, started, CHATHUB_LLM_PROSE_CODE)
+        failures += 1
+        this.router.miss(key, site)
         candidates = candidates.filter(candidate => candidate !== site)
         continue
       }
@@ -610,6 +643,21 @@ const SITE_FAILURE_CODES: ReadonlySet<string> = new Set([
 function failoverEligible(error: unknown): boolean {
   if (!(error instanceof LlmError)) return false
   return SITE_FAILURE_CODES.has(error.code)
+}
+
+/**
+ * Whether the conversation already carries a tool call the loop executed.
+ *
+ * This is what separates a protocol miss from a finished task: a final summary
+ * only happens after tools have run, so prose once tools have run is the
+ * caller's answer, while prose on a fresh topic is a model dodging the block
+ * format.
+ * @param options - the assembled request.
+ * @returns Whether any message carries an executed tool call.
+ */
+function hadToolActivity(options: GenerateOptions): boolean {
+  return options.messages.some(message => Array.isArray(message.content)
+    && message.content.some((block: { type?: string }) => block.type === 'tool-call'))
 }
 
 /**

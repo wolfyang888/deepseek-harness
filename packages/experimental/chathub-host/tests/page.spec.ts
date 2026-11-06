@@ -24,6 +24,12 @@ it('maps navigation failures to network errors', async () => {
   await expect(wrapper.goto(DRIVER.url)).rejects.toMatchObject({ token: 'chathub-network' })
 })
 
+it('maps a navigation timeout to a turn timeout, not UI drift', async () => {
+  const { wrapper, fake } = page()
+  fake.errors.goto = Object.assign(new Error('Timeout 10ms exceeded'), { name: 'TimeoutError' })
+  await expect(wrapper.goto(DRIVER.url)).rejects.toMatchObject({ token: 'chathub-turn-timeout' })
+})
+
 it('waits for a visible chat input', async () => {
   const { wrapper, fake } = page()
   fake.visible.add(DRIVER.input)
