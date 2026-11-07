@@ -335,8 +335,7 @@ export class PlaywrightBrowserRuntime implements TransportRuntime {
       throw new BrowserTransportError(
         'chathub-browser-unavailable',
         `launching Chrome failed: ${reason}`
-          + ' — install the Playwright browser (`pnpm exec playwright install chromium`)'
-          + ' or point DSH_CHATHUB_EXECUTABLE_PATH at an existing chrome.exe',
+          + ' — set DSH_CHATHUB_EXECUTABLE_PATH to an installed Chrome/Chromium binary',
         { cause: error },
       )
     }

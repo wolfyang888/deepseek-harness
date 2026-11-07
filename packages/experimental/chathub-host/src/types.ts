@@ -85,7 +85,7 @@ export type BrowserRuntimeConfig =
     mode: 'managed'
     /** Persistent Chrome profile directory; required and never defaulted. */
     profileDir: string
-    /** Chrome binary to launch; omitted uses Playwright's registry. */
+    /** Chrome binary to launch; omitted searches the platform's well-known Chrome/Chromium locations. */
     executablePath?: string
     /** Run without a visible window. */
     headless: boolean

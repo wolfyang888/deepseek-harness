@@ -16,6 +16,7 @@ import {
   type WebChatTransport,
 } from '@deepseek-ai/dsh-experimental-chathub'
 import { BrowserTransportError } from './errors.ts'
+import { discoverChromeExecutable } from './executable.ts'
 import { assertEveryAdapterHasDriver, resolveSiteDrivers } from './drivers.ts'
 import { PlaywrightBrowserRuntime } from './runtime.ts'
 import { PlaywrightWebChatTransport, WEB_TRANSPORT_FAILURE_RULES } from './transport.ts'
@@ -23,6 +24,7 @@ import { ChatHubController } from './controller.ts'
 import { resolvePacing } from './pacing.ts'
 import type {
   BrowserContextLike,
+  BrowserRuntimeConfig,
   ChromiumLauncher,
   Config,
   ConnectedBrowserLike,
@@ -65,6 +67,22 @@ declare module '@deepseek-ai/cordis' {
     /** ChatHub session orchestration Remote controller. */
     chatHub: ChatHubController
   }
+}
+
+/**
+ * Fill the launch binary a managed browser config leaves out.
+ *
+ * `playwright-core` carries no browser binaries, so an omitted path would
+ * otherwise fail on every host that has not installed its registry. A
+ * discovered system Chrome keeps the same configuration working on Windows
+ * and Linux; an explicit `executablePath` is never replaced.
+ * @param browser - Configured browser ownership and launch inputs.
+ * @returns The same config, with `executablePath` filled when one was found.
+ */
+function resolveBrowserConfig(browser: BrowserRuntimeConfig): BrowserRuntimeConfig {
+  if (browser.mode !== 'managed' || browser.executablePath !== undefined) return browser
+  const executablePath = discoverChromeExecutable()
+  return executablePath === undefined ? browser : { ...browser, executablePath }
 }
 
 /** Shipped adapter ids; every one has a driver, checked at load. */
@@ -174,7 +192,7 @@ export class WebChatTransportService extends TypertRemoteService {
       pacing: resolvePacing(config.pacing),
     }
     this.runtime = new PlaywrightBrowserRuntime(
-      config.browser,
+      resolveBrowserConfig(config.browser),
       { actionTimeoutMs: config.actionTimeoutMs, pollMs: config.pollMs },
       lazyChromiumLauncher(),
     )

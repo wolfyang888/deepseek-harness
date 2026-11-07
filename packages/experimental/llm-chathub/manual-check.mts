@@ -8,6 +8,7 @@
    Delete the profile directory when done. */
 import { chromium } from 'playwright-core'
 import type { StreamChunk } from '@deepseek-ai/dsh-llm'
+import { discoverChromeExecutable } from '../chathub-host/src/executable.ts'
 import { PlaywrightBrowserRuntime } from '../chathub-host/src/runtime.ts'
 import { PlaywrightWebChatTransport } from '../chathub-host/src/transport.ts'
 import { resolveSiteDrivers } from '../chathub-host/src/drivers.ts'
@@ -24,18 +25,24 @@ if (sites.length === 0) throw new Error('name at least one site')
 const profileDir = process.env.DSH_CHATHUB_PROFILE_DIR
   ?? `${process.env.HOME ?? process.env.USERPROFILE ?? '.'}/.dsh/chathub-profile`
 const executablePath = process.env.DSH_CHATHUB_EXECUTABLE_PATH
-  ?? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
+  ?? discoverChromeExecutable()
+const browserConfig = {
+  mode: 'managed' as const,
+  profileDir,
+  headless: false,
+  ...executablePath === undefined ? {} : { executablePath },
+}
 
 const drivers = resolveSiteDrivers({})
 const runtime = new PlaywrightBrowserRuntime(
-  { mode: 'managed', profileDir, executablePath, headless: false },
+  browserConfig,
   { actionTimeoutMs: 15_000, pollMs: 500 },
   chromium,
 )
 const transport = new PlaywrightWebChatTransport(
   runtime,
   {
-    browser: { mode: 'managed', profileDir, executablePath, headless: false },
+    browser: browserConfig,
     loginTimeoutMs: 300_000,
     turnTimeoutMs: 180_000,
     actionTimeoutMs: 15_000,
