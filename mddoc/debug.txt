@@ -9,6 +9,12 @@ PS D:\work\code\github\deepseek-harness>
 >> cd D:\work\code\github\deepseek-harness
 dsh web: http://127.0.0.1:3080/?token=psMeO-mdUsxS-kKAf3c04WjaSyJjP7Z9Fil0uTqjrTw
 
+linux:
+export DSH_CHATHUB_HEADLESS="false"
+(base) ywf@ywf-ubuntu:~/work/code/github/deepseek-harness$ export DSH_CHATHUB_LLM_SITES="doubao-web,qianwen-web,glm-web,chatgpt-web"
+(base) ywf@ywf-ubuntu:~/work/code/github/deepseek-harness$ export DSH_CHATHUB_ACTION_TIMEOUT_MS="45000"
+(base) ywf@ywf-ubuntu:~/work/code/github/deepseek-harness$ export DSH_CHATHUB_LLM_ROOT="/home/ywf/work/code/gitee/lua_device"
+(base) ywf@ywf-ubuntu:~/work/code/github/deepseek-harness$ pnpm dsh web --patch packages/experimental/chathub-host/cordis.patch.yml --patch packages/experimental/llm-chathub/cordis.patch.yml
 
 ## 1. 启动可调试的 Web / Host
 
