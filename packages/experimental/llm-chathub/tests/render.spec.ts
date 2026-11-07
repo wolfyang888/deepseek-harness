@@ -51,10 +51,14 @@ describe('renderRequest', () => {
     expect(prompt).toContain('"name":"read"')
     expect(prompt).toContain('# PROTOCOL')
     expect(prompt).toContain('<<<TOOL_CALL')
+    expect(prompt).toContain('must start with the call block')
+    expect(prompt).toContain('end it with a line reading exactly <<<END')
     expect(prompt).toContain('root: /work/repo')
     expect(prompt).toContain('verify: pnpm run typecheck')
     expect(prompt).toContain('# CONVERSATION\n(none)')
     expect(prompt).toContain('# NOW\nuser: fix the build')
+    // The protocol reminder closes the prompt, where the model's eye lands last.
+    expect(prompt).toMatch(/Need a tool\? Reply with the <<<TOOL_CALL block first\. Final answer\? End it with <<<END$/u)
     // No system prompt means no SYSTEM section at all.
     expect(prompt).not.toContain('# SYSTEM')
   })
@@ -155,6 +159,27 @@ describe('renderRequest', () => {
     expect(prompt).toContain('[omitted 1100 chars;')
   })
 
+  it('names the omitted line range when a clamped read result is numbered', () => {
+    const callId = ToolCallId('call-4')
+    // The fs read envelope: `NNN: text` lines the model can page through with
+    // the read tool's own offset/limit window.
+    const envelope = [
+      '<path>src/big.ts</path>',
+      '<type>file</type>',
+      '<content>',
+      ...Array.from({ length: 300 }, (_unused, index) => `${String(index + 1)}: ${'x'.repeat(20)}`),
+      '(End of file - total 300 lines)',
+      '</content>',
+    ].join('\n')
+    const { prompt } = renderRequest(request(
+      user('go'),
+      createToolResultMessage({ callId, content: [{ type: 'text', text: envelope }], isError: false }),
+    ), { ...POLICY, maxToolResultChars: 1_000 })
+    // The marker states the exact window to resume from instead of a bare
+    // character count the model cannot act on.
+    expect(prompt).toMatch(/\[omitted \d+ chars, file lines \d+-\d+; call read again with offset=\d+ and a limit to see them\]/u)
+  })
+
   it('notes attachments this channel cannot carry', () => {
     // Only the block tags matter here: the adapter never reads attachment refs.
     const attachment = {} as never
@@ -198,11 +223,11 @@ describe('renderRequest', () => {
   it('drops the oldest entries until the prompt fits, and says how many', () => {
     const messages = Array.from({ length: 6 }, (_unused, index) => user(`${'x'.repeat(300)} step ${String(index)}`))
     const full = renderRequest(request(...messages), POLICY)
-    expect(full.prompt).toMatch(/# NOW\nuser: x+ step 5$/u)
+    expect(full.prompt).toMatch(/# NOW\nuser: x+ step 5\n\nNeed a tool\?/u)
     const squeezed = renderRequest(request(...messages), { ...POLICY, maxPromptChars: full.prompt.length - 40 })
     expect(squeezed.droppedEntries).toBeGreaterThan(0)
     expect(squeezed.prompt).toContain('entries omitted]')
-    expect(squeezed.prompt).toMatch(/# NOW\nuser: x+ step 5$/u)
+    expect(squeezed.prompt).toMatch(/# NOW\nuser: x+ step 5\n\nNeed a tool\?/u)
     expect(squeezed.prompt.length).toBeLessThanOrEqual(full.prompt.length - 40)
   })
 

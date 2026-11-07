@@ -30,14 +30,14 @@
   en: 99d834634d122792
   zh: 5808563d25fc92b9
 /deepseek-ai-dsh-experimental-llm-chathub/use-this-package/one-step-through-the-adapter:
-  en: d1574894ced4b530
-  zh: 170bc42ea992c970
+  en: 01bd496ba8c0208c
+  zh: 7f19eae631b83779
 /deepseek-ai-dsh-experimental-llm-chathub/use-this-package/failure-codes:
   en: e09e99b28218b170
   zh: 82a8887f258a3bdd
 /deepseek-ai-dsh-experimental-llm-chathub/understand-the-implementation:
-  en: 883334a46f7ec0fe
-  zh: 86b47c44adbb5245
+  en: ea2ff4463fe1045f
+  zh: 8141c891184f212b
 /deepseek-ai-dsh-experimental-llm-chathub/further-exploration:
   en: 8b7e2c3f98325684
   zh: daee81ae5b5389e6
@@ -54,8 +54,8 @@
   en: a11ec7c2a36ceb6d
   zh: f680f7d68725194e
 /deepseek-ai-dsh-experimental-llm-chathub/model-experience/rendered-step-prompt/token-effect:
-  en: 9dc2b8a557489fc4
-  zh: fa426e1c0b3d50f5
+  en: f8acf1d790c6ca75
+  zh: 1dc33860b96c1509
 /deepseek-ai-dsh-experimental-llm-chathub/model-experience/rendered-step-prompt/kv-cache-effect:
   en: 4fc15c7c0689425c
   zh: 6b8190736ffc9d62
@@ -63,8 +63,8 @@
   en: 8a840e2259135628
   zh: 6cee829aa25bf29b
 /deepseek-ai-dsh-experimental-llm-chathub/model-experience/correction-round/what-the-model-sees:
-  en: 41fa93412b7ffd8b
-  zh: df09c970776ecd79
+  en: 59fc53656c8c21a0
+  zh: 32b26cefed523fcc
 /deepseek-ai-dsh-experimental-llm-chathub/model-experience/correction-round/token-effect:
   en: a774f8438e2eb9a0
   zh: 9bad94f51259069d

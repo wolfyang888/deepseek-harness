@@ -114,7 +114,7 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 | 4 | `transport.open(site, <site>:<n>)` opens a fresh page, so a retry never appends to the previous attempt's conversation |
 | 5 | The page inserts the prompt as one text insertion, submits, and polls until the answer stops changing |
 | 6 | `parseAnswer` returns display text plus the single call it accepted, or the reason it rejected the reply |
-| 7 | A rejected reply earns one `# CORRECTION` round inside a new page; a second rejection ends the step as a failure |
+| 7 | An illegal reply, a call narrated in prose, or a tool-using final answer missing `<<<END` earns one `# CORRECTION` round inside a new page; a second failure ends the step as a failure |
 | 8 | The adapter yields a text block, then a tool-call block and `finish: tool-calls`, so the loop runs the tool itself |
 
 ### Failure codes
@@ -140,9 +140,9 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 
 `render.ts` is the whole context contract: `# ROLE`, an optional `# SYSTEM`, `# TOOLS` with one compact JSON object per whitelisted schema, `# PROTOCOL`, `# PROJECT` (root and verification commands), `# CONVERSATION`, and `# NOW`. Rendering is pure, so a snapshot pins the shape. History is dropped oldest-first and collapses to `[earlier: N entries omitted]`; when even a history-free prompt exceeds `maxPromptChars`, `ChatHubPromptOverflowError` carries `CONTEXT_WINDOW_EXCEEDED` so the loop compacts instead of retrying the same text. Image and file blocks become a one-line placeholder rather than being sent.
 
-`protocol.ts` reads one reply: it finds the `<<<TOOL_CALL` … `TOOL_CALL>>>` delimiters, cuts the first balanced JSON object out of the body while tolerating surrounding prose, and validates the result against the mount's policy. A name outside `allowTools`, arguments that are not an object, an unterminated block, unparseable JSON, or a path argument carrying `..`, a NUL byte, a denied segment, or an absolute location outside `workspaceRoot` are all rejections — returned as a reason, never thrown. A Markdown fence would be the obvious carrier and is deliberately not used: sites re-render fences, add copy buttons, and sometimes keep line numbers, while an unknown token survives as plain text.
+`protocol.ts` reads one reply: it finds the `<<<TOOL_CALL` … `TOOL_CALL>>>` delimiters, cuts the first balanced JSON object out of the body while tolerating surrounding prose, and validates the result against the mount's policy. A name outside `allowTools`, arguments that are not an object, an unterminated block, unparseable JSON, or a path argument carrying `..`, a NUL byte, a denied segment, or an absolute location outside `workspaceRoot` are all rejections — returned as a reason, never thrown. A Markdown fence would be the obvious carrier and is deliberately not used: sites re-render fences, add copy buttons, and sometimes keep line numbers, while an unknown token survives as plain text. A blockless reply also reports whether it ended with `<<<END` and whether it narrates a call in prose; both are findings the caller decides to enforce, not rejections.
 
-`budget.ts` clamps one text by keeping its head and tail and stating the omitted count, because a file's header names it and its tail usually holds the change under review; a budget too small for head, marker, and tail degrades to a plain cut.
+`budget.ts` clamps one text by keeping its head and tail and stating the omitted count, because a file's header names it and its tail usually holds the change under review; a budget too small for head, marker, and tail degrades to a plain cut. A tool result that carries numbered lines instead states the omitted line range and the `offset` to resume from, so the model can page a long file with `read`.
 
 `adapter.ts` owns the step: it declares one provider and one model, renders, asks until the reply is legal or `repairAttempts` runs out, reports one observation per step, and emits `block-start`, `text-delta`, `block-end`, then either `finish: stop` or the tool-call block with `finish: tool-calls`. Each attempt allocates a new page key, closes the page in a `finally`, and aborts through the caller's `AbortSignal`. `index.ts` resolves the row into configuration, registers the route through `ctx.llm.registerAdapter`, and emits `chathub-llm/turn` per step — lengths, tool name, rejection reason, duration, dropped entries — never prompt or answer text.
 
@@ -151,7 +151,7 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 | [`src/types.ts`](src/types.ts) | Configuration, transport contract, parse and render policy, failure codes |
 | [`src/render.ts`](src/render.ts) | `GenerateOptions` into one self-contained prompt |
 | [`src/protocol.ts`](src/protocol.ts) | Call-block delimiters, JSON extraction, whitelist and path validation |
-| [`src/budget.ts`](src/budget.ts) | Head-and-tail text clamping that states the omitted count |
+| [`src/budget.ts`](src/budget.ts) | Head-and-tail text clamping that states the omitted count or line range |
 | [`src/adapter.ts`](src/adapter.ts) | `LlmAdapter` implementation, transport turn, chunk sequence, failure mapping |
 | [`src/index.ts`](src/index.ts) | Cordis plugin, configuration schema, route registration, turn event |
 
@@ -185,13 +185,16 @@ To act, reply with exactly one block and nothing else inside it:
 <<<TOOL_CALL
 {"name":"<tool>","arguments":{...}}
 TOOL_CALL>>>
+When you need a tool, your reply must start with the call block; any explanation goes after the block, because a long reply can be cut off before it ends.
 Put any explanation outside the block. Never invent tool output: you only see what the tools returned.
-When the task is complete, or when you need the user to decide, reply without a block.
+Prose that describes a call — "[asked for read …]", "tool(read) -> …", or a bare {"name":…,"arguments":…} JSON — does nothing: only the block calls a tool.
+Never claim you read a file or ran a tool whose result this conversation does not show; call read again with offset and limit to see more of a long file.
+When the task is complete, or when you need the user to decide, reply without a block, and end that reply with a line reading exactly <<<END
 ```
 
 #### Token effect
 
-Conditional and capped. The role, protocol, and project text are fixed per mount; tool schemas add one line per whitelisted tool; conversation entries add at most `historyTurns` verbatim lines, because every earlier entry collapses into a single omission line. Each tool result is clamped to `maxToolResultChars` with the omitted count stated, and display text is clamped to 2000 characters per reply. The whole prompt must fit `maxPromptChars` or the request is refused with `CONTEXT_WINDOW_EXCEEDED` instead of being silently truncated.
+Conditional and capped. The role, protocol, and project text are fixed per mount; tool schemas add one line per whitelisted tool; conversation entries add at most `historyTurns` verbatim lines, because every earlier entry collapses into a single omission line. Each tool result is clamped to `maxToolResultChars` with the omitted count stated, or the omitted line range and resume offset when it carries numbered lines, and display text is clamped to 2000 characters per reply. The whole prompt must fit `maxPromptChars` or the request is refused with `CONTEXT_WINDOW_EXCEEDED` instead of being silently truncated.
 
 #### KV Cache effect
 
@@ -201,7 +204,7 @@ Independent per step. Each attempt opens a new site conversation and sends a com
 
 #### What the model sees
 
-Only after a rejection with `repairAttempts` remaining: the same rendered prompt plus a `# CORRECTION` section naming the rejection reason, such as an unclosed block, an unknown tool name, or a path the policy forbids, and asking for a reply in the documented format.
+Only after a rejection or an enforced finding with `repairAttempts` remaining: the same rendered prompt plus a `# CORRECTION` section naming the reason, such as an unclosed block, an unknown tool name, a path the policy forbids, a call narrated in prose, or a final answer missing `<<<END`, and asking for a reply in the documented format.
 
 #### Token effect
 

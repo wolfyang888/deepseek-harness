@@ -49,6 +49,7 @@
     "@deepseek-ai/cordis": "workspace:~",
     "@deepseek-ai/dsh-experimental-chathub": "workspace:*",
     "@deepseek-ai/dsh-experimental-chathub-host": "workspace:*",
-    "@deepseek-ai/dsh-llm": "workspace:*"
+    "@deepseek-ai/dsh-llm": "workspace:*",
+    "playwright-core": "^1.61.1"
   }
 }

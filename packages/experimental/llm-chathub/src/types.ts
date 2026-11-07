@@ -240,12 +240,24 @@ export interface ChatHubToolCall {
 
 /** Outcome of interpreting one reply. */
 export interface ChatHubParsedAnswer {
-  /** Human-facing text with the call block removed. */
+  /** Human-facing text with the call block and the END marker removed. */
   readonly text: string
   /** The single accepted call, when the reply asked for one. */
   readonly call?: ChatHubToolCall
   /** Why the reply was rejected; present means no call may run. */
   readonly invalid?: string
+  /**
+   * Why a blockless reply looks cut off: it ends without the `<<<END`
+   * completion marker. Enforcement is the caller's decision — a fresh topic
+   * may legitimately answer in prose — so this is a finding, not a rejection.
+   */
+  readonly cutOff?: string
+  /**
+   * Why a blockless reply looks like a tool call narrated in prose — the
+   * `[asked for …]`/`tool(…) ->` echo shapes, or a bare call JSON — instead of
+   * the block format. Also a finding: the caller decides whether to repair.
+   */
+  readonly suspected?: string
   /** Non-fatal findings, such as a dropped second call block. */
   readonly warnings: readonly string[]
 }

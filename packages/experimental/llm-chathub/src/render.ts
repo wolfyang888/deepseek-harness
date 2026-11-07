@@ -11,7 +11,7 @@
  */
 
 import type { ContentBlock, GenerateOptions, RequestMessage } from '@deepseek-ai/dsh-llm'
-import { clampText } from './budget.ts'
+import { clampText, clampToolResult } from './budget.ts'
 import {
   ChatHubPromptOverflowError,
   DEFAULT_MAX_TOOL_DESCRIPTION_CHARS,
@@ -48,14 +48,20 @@ const PROTOCOL_TEXT = [
   '<<<TOOL_CALL',
   '{"name":"<tool>","arguments":{...}}',
   'TOOL_CALL>>>',
+  'When you need a tool, your reply must start with the call block; any explanation goes after the block, because a long reply can be cut off before it ends.',
   'Put any explanation outside the block. Never invent tool output: you only see what the tools returned.',
+  'Prose that describes a call — "[asked for read …]", "tool(read) -> …", or a bare {"name":…,"arguments":…} JSON — does nothing: only the block calls a tool.',
+  'Never claim you read a file or ran a tool whose result this conversation does not show; call read again with offset and limit to see more of a long file.',
   'Write "arguments" as one JSON object, never as a quoted string.',
   'Use forward slashes in file paths (D:/work/code), not backslashes; a stray backslash breaks the JSON.',
   'Inside a JSON string value, escape every line break as \\n and every double quote as \\"; a raw line break or a bare quote ends the JSON.',
   'Copy file text byte for byte: inside "arguments", indentation, spaces, and ASCII punctuation',
   '(--, ", \', ...) must match the tool result exactly; a retyped line will not match the file.',
-  'When the task is complete, or when you need the user to decide, reply without a block.',
+  'When the task is complete, or when you need the user to decide, reply without a block; that reply is your final answer, so make it complete and end it with a line reading exactly <<<END',
 ].join('\n')
+
+/** One-line protocol reminder closing every prompt, where the model's eye lands last. */
+const TAIL_REMINDER = 'Need a tool? Reply with the <<<TOOL_CALL block first. Final answer? End it with <<<END'
 
 /**
  * Render one request into a single prompt.
@@ -85,7 +91,7 @@ export function renderRequest(options: GenerateOptions, policy: ChatHubRenderPol
     '# PROJECT', projectSection(policy), '',
     '# CONVERSATION',
   ]
-  const tail = ['', '# NOW', now === undefined ? '(no message)' : renderEntry(now)]
+  const tail = ['', '# NOW', now === undefined ? '(no message)' : renderEntry(now), '', TAIL_REMINDER]
   let smallest = ''
   for (let keep = Math.min(history.length, Math.max(0, policy.historyTurns)); keep >= 0; keep -= 1) {
     const dropped = history.length - keep
@@ -117,7 +123,7 @@ function conversationEntries(messages: readonly RequestMessage[], maxToolResultC
     if (role === 'tool') {
       const name = names.get(message.toolCallId) ?? 'tool'
       const flag = message.isError === true ? ' [error]' : ''
-      entries.push({ role: 'tool', text: `tool(${name}) ->${flag} ${clampText(text, maxToolResultChars)}` })
+      entries.push({ role: 'tool', text: `tool(${name}) ->${flag} ${clampToolResult(text, maxToolResultChars)}` })
       continue
     }
     if (text.length === 0) continue

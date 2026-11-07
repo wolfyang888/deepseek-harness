@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { ChatHubLlmAdapter } from '../src/adapter.ts'
-import { TOOL_CALL_CLOSE, TOOL_CALL_OPEN } from '../src/protocol.ts'
+import { END_MARKER, TOOL_CALL_CLOSE, TOOL_CALL_OPEN } from '../src/protocol.ts'
 import type {
   ChatHubLlmConfig,
   ChatHubTransport,
@@ -535,6 +535,84 @@ describe('ChatHubLlmAdapter answer text', () => {
   })
 })
 
+/**
+ * @param text - the task text of the request.
+ * @returns A request whose conversation already carries one executed tool call,
+ *   so a blockless reply is a final answer the END-marker rule governs.
+ */
+function requestAfterTools(text: string): GenerateOptions {
+  return {
+    ...request(text),
+    messages: [...request(text).messages, createAssistantMessage({
+      content: [{ type: 'tool-call', id: ToolCallId('c1'), name: 'read', arguments: '{}' }],
+      source: { provider: 'deepseek-web-chathub', model: 'web-model' },
+    })],
+  }
+}
+
+describe('ChatHubLlmAdapter reply-shape repairs', () => {
+  it('repairs a final answer that lacks the END marker', async () => {
+    const source = new FakeSource()
+    source.answers = ['the build is fixed', `the build is fixed\n${END_MARKER}`]
+    const chunks = await collect(adapter(source).stream(requestAfterTools('summarize the fix')))
+    expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'stop' } })
+    expect(source.keys).toEqual(['deepseek-web:1', 'deepseek-web:2'])
+    // The correction names the missing marker and the shape to reply in.
+    expect(source.prompts[1]).toContain('# CORRECTION')
+    expect(source.prompts[1]).toContain(END_MARKER)
+  })
+
+  it('fails a final answer that never ends with the marker', async () => {
+    const source = new FakeSource()
+    source.answers = ['the build is fixed']
+    await expect(collect(adapter(source, { repairAttempts: 0 }).stream(requestAfterTools('summarize the fix'))))
+      .rejects.toMatchObject({ code: 'MALFORMED_RESPONSE' })
+    expect(source.keys).toEqual(['deepseek-web:1'])
+  })
+
+  it('does not require the marker before any tool has run', async () => {
+    const source = new FakeSource()
+    source.answers = ['nothing to change']
+    await collect(adapter(source).stream(request()))
+    // A fresh topic may answer in prose; the marker rule starts with the first
+    // executed tool call.
+    expect(source.keys).toEqual(['deepseek-web:1'])
+  })
+
+  it('repairs a narrated tool call into a real block', async () => {
+    const source = new FakeSource()
+    // A real subject answered exactly this shape: the read it never ran was
+    // narrated as the prompt's history echoes, and the reply was cut off.
+    source.answers = [
+      '已读：service/condition_evaluator.lua（全文）\n[asked for read {"file_path":"service/rule_engine_service.lua"}]\n先把剩余部分读完：',
+      call('{"name":"read","arguments":{"file_path":"service/rule_engine_service.lua"}}'),
+    ]
+    const chunks = await collect(adapter(source).stream(request('读完 rule_engine 目录')))
+    expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'tool-calls' } })
+    expect(source.keys).toEqual(['deepseek-web:1', 'deepseek-web:2'])
+    expect(source.prompts[1]).toContain('# CORRECTION')
+    expect(source.prompts[1]).toContain('TOOL_CALL>>>')
+  })
+
+  it('fails a reply that keeps narrating after the repair budget', async () => {
+    const source = new FakeSource()
+    source.answers = ['[asked for read {"file_path":"a.ts"}] 已读完']
+    await expect(collect(adapter(source, { repairAttempts: 0 }).stream(request('读完'))))
+      .rejects.toMatchObject({ code: 'MALFORMED_RESPONSE' })
+  })
+
+  it('exempts a compaction summary from the marker and narrative rules', async () => {
+    const source = new FakeSource()
+    // A checkpoint is machine-consumed on a web-only mount with no fallback
+    // route, and it legitimately recounts the conversation's tool events.
+    const checkpoint = '## Primary Request and Intent\n- fix the build\n- ran tool(read) -> src/main.ts'.repeat(20)
+    source.answers = [checkpoint]
+    const chunks = await collect(adapter(source).stream({ ...request(), purpose: 'compaction' }))
+    expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'stop' } })
+    expect(source.keys).toEqual(['deepseek-web:1'])
+  })
+})
+
 /** Mount with the aggregate route on: both sites, plus auto selection. */
 const AUTO: Partial<ChatHubLlmConfig> = {
   sites: ['deepseek-web', 'qianwen-web'],
@@ -644,7 +722,9 @@ describe('ChatHubLlmAdapter site selection', () => {
 
   it('keeps a prose answer that follows executed tool calls', async () => {
     const source = new FakeSource()
-    source.answers = ['the build is fixed']
+    // A final summary ends with the completion marker; the marker itself never
+    // reaches the caller's text.
+    source.answers = ['the build is fixed\n<<<END']
     const history = request('summarize the fix')
     const done: GenerateOptions = {
       ...history,
@@ -655,8 +735,9 @@ describe('ChatHubLlmAdapter site selection', () => {
         source: { provider: 'deepseek-web-chathub', model: 'web-model' },
       })],
     }
-    await collect(adapter(source, AUTO).stream(done))
+    const chunks = await collect(adapter(source, AUTO).stream(done))
     expect(source.sites).toEqual(['deepseek-web'])
+    expect(chunks.flatMap(chunk => (chunk.type === 'text-delta' ? [chunk.text] : [])).join('')).toBe('the build is fixed')
   })
 
   it('answers a pinned route with the prose it got', async () => {

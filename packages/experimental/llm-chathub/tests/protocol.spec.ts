@@ -1,7 +1,7 @@
 /** Protocol: one delimiter block per reply, validated before anything runs. */
 
 import { describe, expect, it } from 'vitest'
-import { formatToolCall, parseAnswer, TOOL_CALL_CLOSE, TOOL_CALL_OPEN } from '../src/protocol.ts'
+import { END_MARKER, formatToolCall, parseAnswer, TOOL_CALL_CLOSE, TOOL_CALL_OPEN } from '../src/protocol.ts'
 import type { ChatHubParsePolicy } from '../src/types.ts'
 
 const POLICY: ChatHubParsePolicy = {
@@ -23,9 +23,13 @@ function reply(body: string): string {
 describe('parseAnswer', () => {
   it('returns plain prose unchanged when the reply carries no block', () => {
     const parsed = parseAnswer('  done, nothing to change  ', POLICY)
-    expect(parsed).toEqual({ text: 'done, nothing to change', warnings: [] })
+    expect(parsed.text).toBe('done, nothing to change')
     expect(parsed.call).toBeUndefined()
     expect(parsed.invalid).toBeUndefined()
+    expect(parsed.suspected).toBeUndefined()
+    // Without the marker the reply may be cut off; enforcing that is the
+    // caller's decision, so it is reported rather than rejected.
+    expect(parsed.cutOff).toContain(END_MARKER)
   })
 
   it('ellipsizes prose beyond the text budget', () => {
@@ -295,5 +299,76 @@ describe('parseAnswer typographic repair', () => {
     )
     expect(parsed.call?.arguments['offset']).toBe(3)
     expect(parsed.call?.arguments['old_string']).toBe('x -- y')
+  })
+})
+
+describe('parseAnswer completion marker', () => {
+  it('strips the END marker from a final answer', () => {
+    const parsed = parseAnswer(`done, nothing to change\n${END_MARKER}\n`, POLICY)
+    expect(parsed.text).toBe('done, nothing to change')
+    expect(parsed.cutOff).toBeUndefined()
+    expect(parsed.suspected).toBeUndefined()
+  })
+
+  it('accepts the marker on the same line as the answer', () => {
+    const parsed = parseAnswer(`done. ${END_MARKER}`, POLICY)
+    expect(parsed.text).toBe('done.')
+    expect(parsed.cutOff).toBeUndefined()
+  })
+
+  it('flags a blockless reply that ends without the marker', () => {
+    const parsed = parseAnswer('把 descr', POLICY)
+    expect(parsed.cutOff).toContain(END_MARKER)
+    // A cut-off reply is a finding, not a rejection: the caller decides.
+    expect(parsed.invalid).toBeUndefined()
+  })
+
+  it('does not flag a reply that carries a call block', () => {
+    const parsed = parseAnswer(reply('{"name":"read","arguments":{"file_path":"a.ts"}}'), POLICY)
+    expect(parsed.cutOff).toBeUndefined()
+    expect(parsed.call).toBeDefined()
+  })
+})
+
+describe('parseAnswer suspected tool narrative', () => {
+  it('flags a narrated call copied from the history echoes', () => {
+    // A real subject (chatglm.cn) answered a coding turn exactly this way: the
+    // read it never ran was narrated as the prompt's own echo format.
+    const narrative = [
+      '已读：service/condition_evaluator.lua（全文）',
+      '[asked for read {"file_path":"service/rule_engine_service.lua"}]',
+      'tool(read) -> local log = logger.new(...)',
+      '已确认一个实锤 bug，先把 descriptor 翻译部分读完：',
+    ].join('\n')
+    const parsed = parseAnswer(narrative, POLICY)
+    expect(parsed.suspected).toMatch(/asked for/u)
+    expect(parsed.cutOff).toContain(END_MARKER)
+  })
+
+  it('flags invented tool output rendered with a typographic arrow', () => {
+    const parsed = parseAnswer('我先读取 core/rule_engine.lua\ntool(read) → (文件内容省略)', POLICY)
+    expect(parsed.suspected).toMatch(/tool\(…\)/u)
+  })
+
+  it('flags a bare call JSON outside the block, curly quotes included', () => {
+    const parsed = parseAnswer('我来读取配置：{“name”:“read”,“arguments”:{“file_path”:“src/main.ts”}}', POLICY)
+    expect(parsed.suspected).toMatch(/bare JSON/u)
+  })
+
+  it('leaves a clean prose reply unflagged', () => {
+    const parsed = parseAnswer('已读完所有文件，未发现问题。', POLICY)
+    expect(parsed.suspected).toBeUndefined()
+    expect(parsed.invalid).toBeUndefined()
+  })
+
+  it('does not read suspicion into a reply that carries a legal block', () => {
+    // The narrative patterns describe how a blockless reply dodges the block;
+    // a reply with a valid block has already made its call.
+    const parsed = parseAnswer(
+      `I will read the file now.\n${formatToolCall({ name: 'read', arguments: { file_path: 'a.ts' } })}`,
+      POLICY,
+    )
+    expect(parsed.suspected).toBeUndefined()
+    expect(parsed.call?.name).toBe('read')
   })
 })

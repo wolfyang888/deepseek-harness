@@ -26,10 +26,10 @@ import {
 } from './types.ts'
 
 export { ChatHubLlmAdapter } from './adapter.ts'
-export { parseAnswer, formatToolCall, TOOL_CALL_CLOSE, TOOL_CALL_OPEN } from './protocol.ts'
+export { parseAnswer, formatToolCall, TOOL_CALL_CLOSE, TOOL_CALL_OPEN, END_MARKER } from './protocol.ts'
 export { renderRequest } from './render.ts'
 export { SiteRouter, type SiteChoiceRequest } from './router.ts'
-export { clampText } from './budget.ts'
+export { clampText, clampToolResult } from './budget.ts'
 export * from './types.ts'
 
 declare module '@deepseek-ai/cordis' {

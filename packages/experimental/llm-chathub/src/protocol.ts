@@ -15,11 +15,24 @@ import type { ChatHubParsePolicy, ChatHubParsedAnswer, ChatHubToolCall } from '.
 export const TOOL_CALL_OPEN = '<<<TOOL_CALL'
 /** Closing delimiter of that block. */
 export const TOOL_CALL_CLOSE = 'TOOL_CALL>>>'
+/**
+ * Completion marker a blockless reply must end with, so a reply the site cut
+ * off mid-stream is distinguishable from one the model finished.
+ */
+export const END_MARKER = '<<<END'
 
-/** Argument keys whose string value addresses the filesystem. */
-const PATH_KEY = /(?:^|_)(?:path|paths|file|files|dir|directory|glob|pattern|cwd)$/iu
-/** Longest echoed path in a rejection message. */
-const MAX_ECHO_CHARS = 80
+/**
+ * Narrative tool-call shapes a reply uses to dodge the block format, each with
+ * the repair reason it yields. Every shape was a real subject's answer: the
+ * history echoes the prompt renders (`[asked for …]`, `tool(…) ->`) copied into
+ * a reply as if they executed, and a whole call written as bare JSON.
+ */
+const SUSPECTED_NARRATIVE: readonly (readonly [RegExp, string])[] = [
+  [/\[asked for \w+[ \]]/u, 'the reply narrates a tool call as "[asked for …]" instead of using the block'],
+  [/\btool\(\w+\)\s*(?:->|→)/u, 'the reply invents tool output as "tool(…) ->" instead of using the block'],
+  [/\{\s*[“"]name[”"]\s*:\s*[“"][\w-]+[”"]\s*,\s*[“"]arguments[”"]/u,
+    'the reply writes a tool call as bare JSON outside the block'],
+]
 
 /**
  * Read one reply into display text plus an optional validated call.
@@ -27,7 +40,10 @@ const MAX_ECHO_CHARS = 80
  * A reply is rejected rather than repaired when its block is unterminated, its
  * JSON does not parse, its name is outside the whitelist, or an argument
  * addresses a path the policy forbids. Rejection never throws: the caller
- * decides whether a rejection ends the turn or earns a repair round.
+ * decides whether a rejection ends the turn or earns a repair round. A
+ * blockless reply additionally reports whether it ended with the
+ * {@link END_MARKER} and whether it narrates a tool call in prose; both are
+ * findings the caller may enforce, not rejections.
  * @param raw - the site's answer text.
  * @param policy - whitelist, path policy, and text budget of this mount.
  * @returns Display text, the accepted call, and any non-fatal findings.
@@ -35,7 +51,16 @@ const MAX_ECHO_CHARS = 80
 export function parseAnswer(raw: string, policy: ChatHubParsePolicy): ChatHubParsedAnswer {
   const warnings: string[] = []
   const open = raw.indexOf(TOOL_CALL_OPEN)
-  if (open < 0) return { text: boundText(raw, policy.maxTextChars), warnings }
+  if (open < 0) {
+    const suspicion = suspectedToolNarrative(raw)
+    const { text, ended } = finalTextOf(raw)
+    return {
+      text: boundText(text, policy.maxTextChars),
+      warnings,
+      ...suspicion === undefined ? {} : { suspected: suspicion },
+      ...ended ? {} : { cutOff: `the reply ends without the ${END_MARKER} completion marker, so it may be cut off` },
+    }
+  }
   const close = raw.indexOf(TOOL_CALL_CLOSE, open + TOOL_CALL_OPEN.length)
   if (close < 0) {
     return {
@@ -67,6 +92,34 @@ export function parseAnswer(raw: string, policy: ChatHubParsePolicy): ChatHubPar
   if (typeof call === 'string') return { text, invalid: call, warnings }
   return { text, call: repairArguments(call, warnings), warnings }
 }
+
+/**
+ * Strip the completion marker from a blockless reply.
+ * @param raw - the site's answer text.
+ * @returns The text without its trailing marker, and whether the marker was there.
+ */
+function finalTextOf(raw: string): { text: string; ended: boolean } {
+  const trimmed = raw.trimEnd()
+  if (!trimmed.endsWith(END_MARKER)) return { text: raw, ended: false }
+  return { text: trimmed.slice(0, trimmed.length - END_MARKER.length).trimEnd(), ended: true }
+}
+
+/**
+ * Read the narrative tool-call shapes a reply carries.
+ * @param text - the site's answer text.
+ * @returns The first matching reason, or `undefined` for a clean reply.
+ */
+function suspectedToolNarrative(text: string): string | undefined {
+  for (const [pattern, reason] of SUSPECTED_NARRATIVE) {
+    if (pattern.test(text)) return reason
+  }
+  return undefined
+}
+
+/** Argument keys whose string value addresses the filesystem. */
+const PATH_KEY = /(?:^|_)(?:path|paths|file|files|dir|directory|glob|pattern|cwd)$/iu
+/** Longest echoed path in a rejection message. */
+const MAX_ECHO_CHARS = 80
 
 /** Tools whose string arguments are file text, where ASCII spelling matters. */
 const TEXT_TOOLS: ReadonlySet<string> = new Set(['edit', 'write'])

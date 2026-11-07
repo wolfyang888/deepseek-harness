@@ -33,6 +33,7 @@ import {
   DEFAULT_SITE_ROUTING,
   type ChatHubLlmConfig,
   type ChatHubParsePolicy,
+  type ChatHubParsedAnswer,
   type ChatHubRenderPolicy,
   type ChatHubToolCall,
   type ChatHubTransport,
@@ -219,7 +220,10 @@ export class ChatHubLlmAdapter extends LlmAdapter {
       await this.recordPrompt(site, rendered.prompt)
       let parsed: Awaited<ReturnType<ChatHubLlmAdapter['askUntilLegal']>>
       try {
-        parsed = await this.askUntilLegal(rendered.prompt, site, options.signal, answerBudget)
+        parsed = await this.askUntilLegal(rendered.prompt, site, options.signal, answerBudget, {
+          narrative: (options.purpose as string | undefined) !== 'compaction',
+          endMarker: (options.purpose as string | undefined) !== 'compaction' && hadToolActivity(options),
+        })
       } catch (error) {
         this.reportAttempt(options, site, rendered, failures + 1, started, failureCodeOf(error))
         if (pinned !== undefined || failures >= routing.failoverAttempts || !failoverEligible(error)) throw error
@@ -384,13 +388,28 @@ export class ChatHubLlmAdapter extends LlmAdapter {
 
   /**
    * Ask the site until the reply is legal, or the repair budget runs out.
+   *
+   * Beyond a rejected call block, two reply shapes earn a repair round: a
+   * narrated tool call (history echoes or bare JSON where the block belongs)
+   * and, once tools have run, a final answer missing the `<<<END` marker —
+   * the one signal that separates a finished reply from one the site cut off.
+   * A finding the caller does not enforce is ignored, and a still-failing
+   * reply after the budget ends the step as `MALFORMED_RESPONSE` rather than
+   * delivering an answer that cannot be trusted as complete.
    * @param prompt - the rendered prompt.
    * @param site - site provider the route selected.
    * @param signal - caller cancellation.
    * @param maxTextChars - answer-text budget; compaction turns raise it.
+   * @param repairs - which reply findings this request enforces.
    * @returns The last reply with its attempt count and answer length.
    */
-  private async askUntilLegal(prompt: string, site: string, signal?: AbortSignal, maxTextChars = ANSWER_CHARS): Promise<{
+  private async askUntilLegal(
+    prompt: string,
+    site: string,
+    signal?: AbortSignal,
+    maxTextChars = ANSWER_CHARS,
+    repairs: Repairs = { narrative: true, endMarker: false },
+  ): Promise<{
     text: string
     call?: ChatHubToolCall
     invalid?: string
@@ -405,12 +424,18 @@ export class ChatHubLlmAdapter extends LlmAdapter {
       this.assertNotAborted(site, signal)
       const answer = await this.ask(question, site, signal)
       const parsed = parseAnswer(answer, { ...this.parsePolicy(), maxTextChars })
-      if (parsed.invalid === undefined || attempt > this.config.repairAttempts) {
-        return { ...parsed, attempt, answerChars: answer.length }
+      const repair = repairOf(parsed, repairs)
+      if (repair === undefined || attempt > this.config.repairAttempts) {
+        return {
+          ...parsed,
+          ...repair === undefined ? {} : { invalid: parsed.invalid ?? repair.reason },
+          attempt,
+          answerChars: answer.length,
+        }
       }
       // The site cannot be told "that was wrong" in its own vocabulary, so the
       // correction rides the next prompt inside a fresh conversation.
-      question = `${prompt}\n\n# CORRECTION\nThe previous reply was rejected: ${parsed.invalid}\nReply again using only the block format above.`
+      question = `${prompt}\n\n# CORRECTION\nThe previous reply was rejected: ${repair.reason}\n${repair.advice}`
     }
   }
 
@@ -660,6 +685,44 @@ function failoverEligible(error: unknown): boolean {
 function hadToolActivity(options: GenerateOptions): boolean {
   return options.messages.some(message => Array.isArray(message.content)
     && message.content.some((block: { type?: string }) => block.type === 'tool-call'))
+}
+
+/** Which reply findings one request enforces with a repair round. */
+interface Repairs {
+  /** Repair replies that narrate a tool call instead of using the block. */
+  readonly narrative: boolean
+  /**
+   * Repair blockless replies missing the END marker. Only a final answer —
+   * one that follows executed tool calls — must end with it; a fresh topic may
+   * answer in prose, and compaction turns are exempt because their checkpoint
+   * has no fallback route on a web-only mount.
+   */
+  readonly endMarker: boolean
+}
+
+/**
+ * The repair one reply earns, with the advice that corrects it.
+ * @param parsed - the parsed reply.
+ * @param repairs - which findings this request enforces.
+ * @returns The rejection reason and advice, or `undefined` when the reply stands.
+ */
+function repairOf(parsed: ChatHubParsedAnswer, repairs: Repairs): { reason: string; advice: string } | undefined {
+  if (parsed.invalid !== undefined) {
+    return { reason: parsed.invalid, advice: 'Reply again using only the block format above.' }
+  }
+  if (repairs.narrative && parsed.suspected !== undefined) {
+    return {
+      reason: parsed.suspected,
+      advice: 'Reply again with the call inside the <<<TOOL_CALL ... TOOL_CALL>>> block, or with a final answer that mentions no tool.',
+    }
+  }
+  if (repairs.endMarker && parsed.cutOff !== undefined) {
+    return {
+      reason: parsed.cutOff,
+      advice: 'Reply again: either ask for one tool with the block, or give the complete final answer ending with the <<<END line.',
+    }
+  }
+  return undefined
 }
 
 /**

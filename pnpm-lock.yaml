@@ -10748,6 +10748,9 @@ importers:
       '@deepseek-ai/dsh-llm':
         specifier: workspace:*
         version: link:../../llm/llm
+      playwright-core:
+        specifier: ^1.61.1
+        version: 1.61.1
 
   packages/experimental/personalized-recommendations:
     dependencies:

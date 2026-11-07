@@ -114,7 +114,7 @@ pnpm dsh web --patch packages/experimental/chathub-host/cordis.patch.yml --patch
 | 4 | `transport.open(site, <site>:<n>)` 打开新页面，因此重试不会追加到上一次的会话 |
 | 5 | 页面把提示作为一次文本插入并提交，然后轮询到回答不再变化 |
 | 6 | `parseAnswer` 返回展示文本加它唯一接受的调用，或返回拒绝原因 |
-| 7 | 被拒回答在新页面里获得一轮 `# CORRECTION`；第二次仍被拒则该步以失败结束 |
+| 7 | 非法回答、用叙述文字假装调用、或使用过工具后的最终回答缺少 `<<<END` 时，在新页面里获得一轮 `# CORRECTION`；再次失败则该步以失败结束 |
 | 8 | 适配器先产出文本块，再产出工具调用块与 `finish: tool-calls`，由循环自己执行工具 |
 
 ### 失败码
@@ -140,9 +140,9 @@ pnpm dsh web --patch packages/experimental/chathub-host/cordis.patch.yml --patch
 
 `render.ts` 就是全部上下文契约：`# ROLE`、可选的 `# SYSTEM`、每个白名单 schema 一行紧凑 JSON 的 `# TOOLS`、`# PROTOCOL`、含根目录与校验命令的 `# PROJECT`、`# CONVERSATION`、以及 `# NOW`。渲染是纯函数，因此快照能钉住它的形状。历史从旧到新丢弃并折叠成 `[earlier: N entries omitted]`；当连无历史的提示都超过 `maxPromptChars` 时，`ChatHubPromptOverflowError` 带上 `CONTEXT_WINDOW_EXCEEDED`，让循环去压缩而不是拿同一段文本重试。图片与文件块会变成一行占位说明，不会被发送。
 
-`protocol.ts` 读一段回答：先找 `<<<TOOL_CALL` … `TOOL_CALL>>>` 定界符，再从块体里切出第一个配平的 JSON 对象并容忍前后噪声，然后按本挂载的策略校验。工具名不在 `allowTools` 内、参数不是对象、块没有闭合、JSON 解析失败，或路径参数带 `..`、NUL 字节、被拒片段、或落在 `workspaceRoot` 之外的绝对位置，都属于拒绝——以原因返回，从不抛错。用 Markdown 围栏做载体是最直观的做法，这里刻意不用：站点会重排围栏、加复制按钮、有时保留行号，而未知名 token 会原样存活成普通文本。
+`protocol.ts` 读一段回答：先找 `<<<TOOL_CALL` … `TOOL_CALL>>>` 定界符，再从块体里切出第一个配平的 JSON 对象并容忍前后噪声，然后按本挂载的策略校验。工具名不在 `allowTools` 内、参数不是对象、块没有闭合、JSON 解析失败，或路径参数带 `..`、NUL 字节、被拒片段、或落在 `workspaceRoot` 之外的绝对位置，都属于拒绝——以原因返回，从不抛错。用 Markdown 围栏做载体是最直观的做法，这里刻意不用：站点会重排围栏、加复制按钮、有时保留行号，而未知名 token 会原样存活成普通文本。无块回答还会报告它是否以 `<<<END` 结束、是否用叙述文字假装调用；两者都是发现项，由调用方决定是否强制。
 
-`budget.ts` 夹紧单段文本时保留头尾并写明省略字数，因为文件头能说明它是谁、尾部通常正是被审阅的改动；预算小到放不下头、标记与尾时退化成直接截断。
+`budget.ts` 夹紧单段文本时保留头尾并写明省略字数，因为文件头能说明它是谁、尾部通常正是被审阅的改动；预算小到放不下头、标记与尾时退化成直接截断。带行号的工具结果则写明省略的行号区间与续读所需的 `offset`，模型可用 `read` 翻页。
 
 `adapter.ts` 拥有「一步」：声明一个提供方与一个模型、渲染、在自纠预算内反复提问直到回答合法、每步上报一条观测记录，并产出 `block-start`、`text-delta`、`block-end`，随后是 `finish: stop` 或带 `finish: tool-calls` 的工具调用块。每次尝试分配新的页面键，在 `finally` 里关闭页面，并通过调用方的 `AbortSignal` 中止。`index.ts` 把行解析成配置、通过 `ctx.llm.registerAdapter` 注册路由，并按步发出 `chathub-llm/turn`——长度、工具名、拒绝原因、耗时、丢弃条目——从不包含提示或回答原文。
 
@@ -151,7 +151,7 @@ pnpm dsh web --patch packages/experimental/chathub-host/cordis.patch.yml --patch
 | [`src/types.ts`](src/types.ts) | 配置、传输契约、解析与渲染策略、失败码 |
 | [`src/render.ts`](src/render.ts) | `GenerateOptions` 变成一段自包含提示 |
 | [`src/protocol.ts`](src/protocol.ts) | 调用块定界符、JSON 提取、白名单与路径校验 |
-| [`src/budget.ts`](src/budget.ts) | 保留头尾并写明省略字数的文本夹紧 |
+| [`src/budget.ts`](src/budget.ts) | 保留头尾并写明省略字数或行号区间的文本夹紧 |
 | [`src/adapter.ts`](src/adapter.ts) | `LlmAdapter` 实现、传输轮次、chunk 序列、失败映射 |
 | [`src/index.ts`](src/index.ts) | Cordis 插件、配置 schema、路由注册、轮次事件 |
 
@@ -185,13 +185,16 @@ To act, reply with exactly one block and nothing else inside it:
 <<<TOOL_CALL
 {"name":"<tool>","arguments":{...}}
 TOOL_CALL>>>
+When you need a tool, your reply must start with the call block; any explanation goes after the block, because a long reply can be cut off before it ends.
 Put any explanation outside the block. Never invent tool output: you only see what the tools returned.
-When the task is complete, or when you need the user to decide, reply without a block.
+Prose that describes a call — "[asked for read …]", "tool(read) -> …", or a bare {"name":…,"arguments":…} JSON — does nothing: only the block calls a tool.
+Never claim you read a file or ran a tool whose result this conversation does not show; call read again with offset and limit to see more of a long file.
+When the task is complete, or when you need the user to decide, reply without a block, and end that reply with a line reading exactly <<<END
 ```
 
 #### Token 影响
 
-有条件且受上限约束。角色、协议与项目三段文本按挂载固定；工具 schema 每个白名单工具加一行；对话条目最多逐字保留 `historyTurns` 行，更早的条目全部折叠成一行省略说明。每个工具结果夹到 `maxToolResultChars` 并写明省略字数，展示文本每次回答夹到 2000 字符。整段提示必须不超过 `maxPromptChars`，否则请求以 `CONTEXT_WINDOW_EXCEEDED` 被拒，而不是被静默截断。
+有条件且受上限约束。角色、协议与项目三段文本按挂载固定；工具 schema 每个白名单工具加一行；对话条目最多逐字保留 `historyTurns` 行，更早的条目全部折叠成一行省略说明。每个工具结果夹到 `maxToolResultChars`：写明省略字数，带行号的结果则写明省略行号区间与续读 `offset`；展示文本每次回答夹到 2000 字符。整段提示必须不超过 `maxPromptChars`，否则请求以 `CONTEXT_WINDOW_EXCEEDED` 被拒，而不是被静默截断。
 
 #### KV Cache 影响
 
@@ -201,7 +204,7 @@ When the task is complete, or when you need the user to decide, reply without a 
 
 #### 模型看到什么
 
-只在回答被拒且 `repairAttempts` 仍有余额时出现：同一段渲染提示加上一段 `# CORRECTION`，点明拒绝原因——例如块未闭合、工具名未知、路径被策略禁止——并要求按文档格式重新回答。
+只在回答被拒或被强制的发现项命中、且 `repairAttempts` 仍有余额时出现：同一段渲染提示加上一段 `# CORRECTION`，点明原因——例如块未闭合、工具名未知、路径被策略禁止、用叙述文字假装调用、或最终回答缺少 `<<<END`——并要求按文档格式重新回答。
 
 #### Token 影响
 
