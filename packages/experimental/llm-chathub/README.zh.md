@@ -144,7 +144,7 @@ pnpm dsh web --patch packages/experimental/chathub-host/cordis.patch.yml --patch
 
 `budget.ts` 夹紧单段文本时保留头尾并写明省略字数，因为文件头能说明它是谁、尾部通常正是被审阅的改动；预算小到放不下头、标记与尾时退化成直接截断。带行号的工具结果则写明省略的行号区间与续读所需的 `offset`，模型可用 `read` 翻页。
 
-`adapter.ts` 拥有「一步」：声明一个提供方与一个模型、渲染、在自纠预算内反复提问直到回答合法、每步上报一条观测记录，并产出 `block-start`、`text-delta`、`block-end`，随后是 `finish: stop` 或带 `finish: tool-calls` 的工具调用块。每次尝试分配新的页面键，在 `finally` 里关闭页面，并通过调用方的 `AbortSignal` 中止。`index.ts` 把行解析成配置、通过 `ctx.llm.registerAdapter` 注册路由，并按步发出 `chathub-llm/turn`——长度、工具名、拒绝原因、耗时、丢弃条目——从不包含提示或回答原文。
+`adapter.ts` 拥有「一步」：声明一个提供方与一个模型、渲染、在自纠预算内反复提问直到回答合法、每步上报一条观测记录，并产出 `block-start`、`text-delta`、`block-end`，随后是 `finish: stop` 或带 `finish: tool-calls` 的工具调用块。模型解析把标准 reasoning effort 声明为「接受并忽略」：站点输入框没有推理控制，会话级默认模型带进本路由请求的 effort 会直接通过解析，而不是在浏览器打开前让轮次失败，站点也永远看不到该值。每次尝试分配新的页面键，在 `finally` 里关闭页面，并通过调用方的 `AbortSignal` 中止。`index.ts` 把行解析成配置、通过 `ctx.llm.registerAdapter` 注册路由，并按步发出 `chathub-llm/turn`——长度、工具名、拒绝原因、耗时、丢弃条目——从不包含提示或回答原文。
 
 | 文件 | 作用 |
 |---|---|

@@ -184,7 +184,27 @@ describe('ChatHubLlmAdapter metadata', () => {
       id: 'web-model',
       name: 'web-model',
       context: { contextWindow: 32_000 },
+      reasoning: {
+        efforts: [
+          { id: 'off', name: 'Off' },
+          { id: 'low', name: 'Low' },
+          { id: 'medium', name: 'Medium' },
+          { id: 'high', name: 'High' },
+          { id: 'max', name: 'Max' },
+        ],
+      },
     })
+  })
+
+  it('declares the standard reasoning efforts so a leaked default effort resolves', async () => {
+    // A session-level default model carries its effort into requests routed to
+    // a site model; without declared efforts the turn fails before the
+    // browser opens with UNSUPPORTED_REASONING_EFFORT. The value is accepted
+    // and ignored, and no default effort is materialized for callers that
+    // send none.
+    const info = await adapter(new FakeSource()).resolveModel('deepseek-web-chathub', 'web-model')
+    expect(info.reasoning?.efforts.map(effort => effort.id)).toContain('high')
+    expect(info.reasoning?.defaultEffort).toBeUndefined()
   })
 
   it('names each mounted site behind its own route', () => {

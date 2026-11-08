@@ -13,9 +13,11 @@
 import {
   LlmAdapter,
   LlmError,
+  ReasoningEffortId,
   ToolCallId,
   type GenerateOptions,
   type LlmModelInfo,
+  type LlmModelReasoningInfo,
   type LlmProviderInfo,
   type LlmResolvedModelInfo,
   type StreamChunk,
@@ -41,6 +43,24 @@ import {
   type ChatHubTransportSource,
   type ChatHubTurnObservation,
 } from './types.ts'
+
+/**
+ * Reasoning efforts the route accepts and ignores. A site composer exposes no
+ * reasoning control, but a session-level default model can still carry an
+ * effort into a request routed here; without declared efforts the loop fails
+ * the turn with `UNSUPPORTED_REASONING_EFFORT` before the browser ever opens.
+ * The value is dropped: the site never sees it, and no default effort is
+ * materialized. An id outside this list still fails resolution loudly.
+ */
+const ACCEPTED_REASONING: LlmModelReasoningInfo = {
+  efforts: [
+    { id: ReasoningEffortId('off'), name: 'Off' },
+    { id: ReasoningEffortId('low'), name: 'Low' },
+    { id: ReasoningEffortId('medium'), name: 'Medium' },
+    { id: ReasoningEffortId('high'), name: 'High' },
+    { id: ReasoningEffortId('max'), name: 'Max' },
+  ],
+}
 
 /** Site token to harness failure code; unmatched tokens are transport failures. */
 const TRANSPORT_CODES: Readonly<Record<string, string>> = {
@@ -120,7 +140,9 @@ export class ChatHubLlmAdapter extends LlmAdapter {
   /**
    * @param provider - the registered route.
    * @param model - configured model id.
-   * @returns Identity plus the declared context capacity.
+   * @returns Identity, the declared context capacity, and the
+   *   accepted-and-ignored reasoning efforts; no default effort is
+   *   materialized because the site never sees the value.
    */
   override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
     return Promise.resolve({
@@ -128,6 +150,7 @@ export class ChatHubLlmAdapter extends LlmAdapter {
       id: model,
       name: this.config.model,
       context: { contextWindow: this.config.contextWindow },
+      reasoning: ACCEPTED_REASONING,
     })
   }
 

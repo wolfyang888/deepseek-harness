@@ -63,6 +63,14 @@ describe('renderRequest', () => {
     expect(prompt).not.toContain('# SYSTEM')
   })
 
+  it('denies a per-turn tool-call quota in the fixed role block', () => {
+    // A site model once invented an "8/8 calls reached" quota to justify
+    // ending a turn early; the role text states the real rule, and every
+    // prompt carries it because the block is fixed.
+    const { prompt } = renderRequest(request(user('fix the build')), POLICY)
+    expect(prompt).toContain('A turn may run any number of tool calls; there is no per-turn call quota')
+  })
+
   it('carries the one-shot system prompt', () => {
     const { prompt } = renderRequest({ ...request(user('go')), system: 'be terse' }, POLICY)
     expect(prompt).toContain('# SYSTEM\nbe terse')

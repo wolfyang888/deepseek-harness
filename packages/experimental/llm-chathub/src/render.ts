@@ -39,6 +39,7 @@ const SHELL_TOOL = 'bash'
 const ROLE_TEXT = [
   'You operate a coding task one step at a time through tools.',
   'Each reply may ask for at most one tool call, and only through the block format below.',
+  'A turn may run any number of tool calls; there is no per-turn call quota, so never claim a limit was reached.',
   'You cannot see the filesystem: everything you know about the project arrives in this prompt.',
 ].join('\n')
 
