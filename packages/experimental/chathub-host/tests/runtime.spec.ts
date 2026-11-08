@@ -205,6 +205,47 @@ it('reuses a live page and replaces a closed one', async () => {
   await browser.dispose()
 })
 
+it('relaunches after the browser window closed', async () => {
+  const dir = await profileDir()
+  const launcher = new FakeLauncher()
+  const first = new FakeContext()
+  const second = new FakeContext()
+  launcher.contextFactory = () => (launcher.launched.length === 1 ? first : second)
+  const { runtime: browser } = await runtime(managed(dir), launcher)
+  const page = await browser.acquire('deepseek-web', DRIVER)
+  expect(launcher.launched).toHaveLength(1)
+  // Closing the window ends the browser; the dead context must not keep
+  // serving pages, or every later turn would fail until the host restarts.
+  first.browserConnected = false
+  const replacement = await browser.acquire('deepseek-web', DRIVER)
+  expect(replacement).not.toBe(page)
+  expect(launcher.launched).toHaveLength(2)
+  expect(first.closeCount).toBe(1)
+  await browser.dispose()
+  expect(second.closeCount).toBe(1)
+})
+
+it('waits for an in-flight turn before a login swaps the context', async () => {
+  const dir = await profileDir()
+  const launcher = new FakeLauncher()
+  const first = new FakeContext()
+  const second = new FakeContext()
+  launcher.contextFactory = () => (launcher.launched.length === 1 ? first : second)
+  const { runtime: browser } = await runtime(managed(dir), launcher)
+  await browser.acquire('glm-web', DRIVER)
+  const lease = await browser.acquireTurn('glm-web:1', 1)
+  // A login on another provider swaps the shared context; while the glm turn
+  // is in flight the swap must wait, or the turn's page is closed mid-turn.
+  const login = browser.login('doubao-web', DRIVER, 60, new AbortController().signal)
+  await new Promise(resolve => setTimeout(resolve, 10))
+  expect(first.closeCount).toBe(0)
+  lease()
+  await expect(login).resolves.toBe(false)
+  expect(first.closeCount).toBe(1)
+  expect(second.closeCount).toBe(1)
+  await browser.dispose()
+})
+
 it('serializes turns per key and rejects a full queue', async () => {
   const { runtime: browser } = await runtime(managed(await profileDir()))
   const order: string[] = []

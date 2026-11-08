@@ -514,6 +514,17 @@ describe('ChatHubLlmAdapter transport failures', () => {
     source.sendError = 'boom'
     await expect(collect(adapter(source).stream(request()))).rejects.toBe('boom')
   })
+
+  it('classifies a transport failure that escapes open', async () => {
+    // A page that closes while open waits reports the browser token; without
+    // the mapping the raw BrowserTransportError bypasses the site-failure
+    // codes and the loop cannot fail over.
+    const source = new FakeSource()
+    const err = new Error('glm-web:9: page closed while waiting for input')
+    Object.assign(err, { token: 'chathub-browser-unavailable' })
+    source.openError = err
+    await expect(collect(adapter(source).stream(request()))).rejects.toMatchObject({ code: 'SERVER' })
+  })
 })
 
 describe('ChatHubLlmAdapter answer text', () => {

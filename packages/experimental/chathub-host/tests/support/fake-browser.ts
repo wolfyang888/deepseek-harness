@@ -204,10 +204,17 @@ export class FakeContext implements BrowserContextLike {
   pageFactory: () => FakePage = () => new FakePage()
   /** Cookie names the fake context reports; tests flip this to simulate sign-in. */
   cookieNames: string[] = []
+  /** Connection state the fake browser reports; tests flip this to simulate a closed window. */
+  browserConnected = true
 
   /** @returns Pages opened through this context. */
   pages(): FakePage[] {
     return this.pagesList
+  }
+
+  /** @returns The owning browser's connection state. */
+  browser(): { isConnected(): boolean } {
+    return { isConnected: () => this.browserConnected }
   }
 
   /** @returns A new fake page wired to this context. */

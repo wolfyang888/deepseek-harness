@@ -448,7 +448,15 @@ export class ChatHubLlmAdapter extends LlmAdapter {
    */
   private async ask(prompt: string, site: string, signal?: AbortSignal): Promise<string> {
     await this.assertHealthy(site)
-    const opened = await this.transport().open(site, this.nextPageKey(site))
+    let opened: Awaited<ReturnType<ChatHubTransport['open']>>
+    try {
+      opened = await this.transport().open(site, this.nextPageKey(site))
+    } catch (error) {
+      // Opening hits the same transport tokens `send` does (a closed page, a
+      // locked profile, a disposed browser); without this mapping those
+      // bypass the site-failure codes and reach the loop unclassified.
+      throw transportFailure(error, site)
+    }
     if (opened === undefined) {
       throw new LlmError(`chathub-llm: ${site} is waiting for sign-in`, CHATHUB_LLM_AUTH_CODE)
     }

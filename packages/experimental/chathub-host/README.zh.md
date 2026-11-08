@@ -102,7 +102,7 @@ pnpm dsh web --patch packages/experimental/chathub-host/cordis.patch.yml
 | `chathub-busy` | `rate-limited` | 该键的轮次队列已满 |
 | `chathub-network` | `network-error` | 请求或页面加载失败 |
 | `chathub-profile-locked` | `provider-unavailable` | 另一进程占用该 profile |
-| `chathub-browser-unavailable` | `provider-unavailable` | Chrome 缺失、页面打开失败或运行时已销毁 |
+| `chathub-browser-unavailable` | `provider-unavailable` | Chrome 缺失、页面打开失败、轮次中页面或浏览器被关闭、运行时已销毁 |
 
 `index.ts` 构建运行时与传输层，注册六个适配器，并在首次使用浏览器时才加载 `playwright-core`，因此从不打开浏览器的组合无需安装它。
 

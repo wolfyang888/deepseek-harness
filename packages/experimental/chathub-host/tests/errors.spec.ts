@@ -11,14 +11,14 @@ it('keeps an existing transport failure unchanged', () => {
   expect(error.name).toBe('BrowserTransportError')
 })
 
-it('classifies lost pages as signed-out', () => {
+it('classifies lost pages as browser-unavailable, not signed-out', () => {
   for (const message of [
     'Target page, context or browser has been closed',
     'browser has been closed',
     'page has been closed',
     'Execution context was destroyed',
   ]) {
-    expect(classifyPageError(new Error(message), 'poll').token).toBe('chathub-signed-out')
+    expect(classifyPageError(new Error(message), 'poll').token).toBe('chathub-browser-unavailable')
   }
 })
 

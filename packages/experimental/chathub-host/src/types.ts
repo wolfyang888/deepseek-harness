@@ -291,6 +291,11 @@ export interface BrowserContextLike {
   /** @returns Resolves when the context is closed. */
   close(): Promise<void>
   /**
+   * @returns The browser that owns this context, or null when none is attached;
+   * callers use its connection state to judge whether pages can still be opened.
+   */
+  browser?(): { isConnected(): boolean } | null
+  /**
    * @param timeout - default timeout for page operations.
    */
   setDefaultTimeout(timeout: number): void

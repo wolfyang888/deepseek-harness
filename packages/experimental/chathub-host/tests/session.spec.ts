@@ -233,7 +233,9 @@ it('fails when the page closes mid-turn', async () => {
   const { session: chat, page } = session()
   page.answers = ['answer']
   page.closed = true
-  await expect(chat.send(payload())).rejects.toMatchObject({ token: 'chathub-signed-out' })
+  // A closed page is a browser lifecycle failure, not a sign-out: the token
+  // keeps the provider off `needs-auth` and lets the route fail over.
+  await expect(chat.send(payload())).rejects.toMatchObject({ token: 'chathub-browser-unavailable' })
 })
 
 it('fails when the site redirects to a login path', async () => {

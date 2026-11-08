@@ -307,13 +307,15 @@ export class PlaywrightChatSession implements WebChatTransportSession {
   }
 
   /**
-   * Reject a page that closed, navigated to a login path, or showed the
-   * site's signed-out wall mid-turn.
-   * @throws BrowserTransportError with `chathub-signed-out`.
+   * Reject a page that navigated to a login path or showed the site's
+   * signed-out wall mid-turn. A page that merely closed is a browser
+   * lifecycle failure, not a sign-out, so it carries the browser token.
+   * @throws BrowserTransportError with `chathub-signed-out` or
+   * `chathub-browser-unavailable`.
    */
   private async assertNotSignedOut(): Promise<void> {
     if (this.page.isClosed()) {
-      throw new BrowserTransportError('chathub-signed-out', `${this.key}: page closed during the turn`)
+      throw new BrowserTransportError('chathub-browser-unavailable', `${this.key}: page closed during the turn`)
     }
     if (this.driver.signedOutPath !== undefined) {
       let path = ''

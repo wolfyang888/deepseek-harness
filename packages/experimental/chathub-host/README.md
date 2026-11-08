@@ -102,7 +102,7 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 | `chathub-busy` | `rate-limited` | The turn queue for this key is full |
 | `chathub-network` | `network-error` | The request or page load failed |
 | `chathub-profile-locked` | `provider-unavailable` | Another process owns the profile |
-| `chathub-browser-unavailable` | `provider-unavailable` | Chrome missing, a page failed to open, or the runtime is disposed |
+| `chathub-browser-unavailable` | `provider-unavailable` | Chrome missing, a page failed to open, a page or browser closed mid-turn, or the runtime is disposed |
 
 `index.ts` builds the runtime and transport, registers the six adapters, and loads `playwright-core` on the first browser use, so a composition that never opens a browser does not need it installed.
 

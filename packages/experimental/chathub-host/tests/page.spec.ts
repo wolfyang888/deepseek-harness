@@ -95,7 +95,7 @@ it('rejects a page that closes while waiting', async () => {
   const { wrapper, fake } = page()
   fake.closed = true
   await expect(wrapper.waitForInput(DRIVER, 20, 1))
-    .rejects.toMatchObject({ token: 'chathub-signed-out' })
+    .rejects.toMatchObject({ token: 'chathub-browser-unavailable' })
 })
 
 it('classifies a thrown visibility check', async () => {
@@ -149,7 +149,7 @@ it('classifies other answer read failures', async () => {
   await expect(wrapper.answerHtml(DRIVER.answer)).rejects.toMatchObject({ token: 'chathub-ui-drift' })
   fake.errors.innerHTML = undefined
   fake.errors.count = new Error('browser has been closed')
-  await expect(wrapper.answerHtml(DRIVER.answer)).rejects.toMatchObject({ token: 'chathub-signed-out' })
+  await expect(wrapper.answerHtml(DRIVER.answer)).rejects.toMatchObject({ token: 'chathub-browser-unavailable' })
 })
 
 it('clicks the input, inserts the prompt as one text insertion, and submits', async () => {

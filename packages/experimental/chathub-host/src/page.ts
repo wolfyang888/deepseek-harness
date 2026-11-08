@@ -92,7 +92,7 @@ export class PlaywrightPage implements ChatPageHandle {
       }
       if (driver.loginWall !== undefined && await this.visible(driver.loginWall)) return false
       if (this.page.isClosed()) {
-        throw new BrowserTransportError('chathub-signed-out', `${this.key}: page closed while waiting for input`)
+        throw new BrowserTransportError('chathub-browser-unavailable', `${this.key}: page closed while waiting for input`)
       }
       const remaining = deadline - Date.now()
       if (remaining <= 0) break

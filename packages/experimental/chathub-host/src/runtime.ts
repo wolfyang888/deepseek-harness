@@ -138,9 +138,11 @@ export class PlaywrightBrowserRuntime implements TransportRuntime {
    */
   async acquire(key: string, driver: SiteDriverConfig): Promise<ChatPageHandle> {
     this.assertUsable()
+    // A page whose browser is gone reports nothing usable; opening on the
+    // dead context fails, so the page is dropped and the context replaced.
     const existing = this.pages.get(key)
     if (existing !== undefined) {
-      if (!existing.isClosed()) return existing
+      if (!existing.isClosed() && this.contextAlive()) return existing
       this.pages.delete(key)
     }
     const page = await this.createPage(key, driver)
@@ -157,7 +159,9 @@ export class PlaywrightBrowserRuntime implements TransportRuntime {
    * (non-persistent cookies, device tokens), so closing the login window and
    * reopening headless reads as a new device and the very next turn hits the
    * login wall again. Later turns reuse the same window through
-   * `ensureContext`; a cancelled or failed sign-in closes it.
+   * `ensureContext`; a cancelled or failed sign-in closes it. Each context
+   * swap waits for in-flight turns on every key first, so a login cannot
+   * close a page another provider's turn is still using.
    * @param providerId - provider whose site page the user signs in on.
    * @param driver - site facts for the entry URL and login wall.
    * @param timeoutMs - longest wait for the chat input.
@@ -174,31 +178,54 @@ export class PlaywrightBrowserRuntime implements TransportRuntime {
     this.assertUsable()
     if (this.config.mode !== 'managed' || !this.config.headless) {
       const page = await this.acquire(providerId, driver)
-      const signedIn = await page.waitForInput(
-        driver,
-        timeoutMs,
-        this.timings.pollMs,
-        signal,
-      )
+      const signedIn = await this.waitForSignIn(page, driver, timeoutMs, signal)
       if (!signedIn) await this.release(providerId)
       return signedIn
     }
+    await this.settleChains()
     await this.dropContext()
     const context = await this.openContext(false)
     this.context = context
     try {
       const page = await this.createPage(providerId, driver)
       this.pages.set(providerId, page)
-      const signedIn = await page.waitForInput(
-        driver,
-        timeoutMs,
-        this.timings.pollMs,
-        signal,
-      )
-      if (!signedIn) await this.dropContext()
+      const signedIn = await this.waitForSignIn(page, driver, timeoutMs, signal)
+      if (!signedIn) {
+        await this.settleChains()
+        await this.dropContext()
+      }
       return signedIn
     } catch (error) {
+      await this.settleChains()
       await this.dropContext()
+      throw error
+    }
+  }
+
+  /**
+   * Wait for the login to land, treating a page the user closes as the end
+   * of the attempt rather than a transport failure.
+   * @param page - login page wrapper.
+   * @param driver - site facts for the input and login wall.
+   * @param timeoutMs - longest wait for the chat input.
+   * @param signal - cancels the wait.
+   * @returns Whether the site reported a signed-in session.
+   * @throws BrowserTransportError for failures other than the closed page.
+   */
+  private async waitForSignIn(
+    page: ChatPageHandle,
+    driver: SiteDriverConfig,
+    timeoutMs: number,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    try {
+      return await page.waitForInput(driver, timeoutMs, this.timings.pollMs, signal)
+    } catch (error) {
+      if (error instanceof BrowserTransportError && error.token === 'chathub-browser-unavailable') {
+        // The user closing the login page or the browser ends the attempt,
+        // like a cancellation; the caller reports the provider's health.
+        return false
+      }
       throw error
     }
   }
@@ -257,13 +284,22 @@ export class PlaywrightBrowserRuntime implements TransportRuntime {
   async dispose(): Promise<void> {
     if (this.disposed) return
     this.disposed = true
-    await Promise.all([...this.chains.values()].map(chain => chain.tail))
+    await this.settleChains()
     await this.dropContext()
     if (this.lockPath !== undefined) {
       const lockPath = this.lockPath
       this.lockPath = undefined
       await rm(lockPath, { force: true })
     }
+  }
+
+  /**
+   * Wait for every in-flight turn across keys. Callers that replace or drop
+   * the shared browser use this so a live turn's page is not closed mid-turn.
+   * @returns Resolves when no turn chain is still running.
+   */
+  private async settleChains(): Promise<void> {
+    await Promise.all([...this.chains.values()].map(chain => chain.tail))
   }
 
   /**
@@ -301,11 +337,24 @@ export class PlaywrightBrowserRuntime implements TransportRuntime {
     return page
   }
 
-  /** @returns The shared context, opening one when the runtime has none. */
+  /** @returns The shared context, opening one when the runtime has none or the last one died. */
   private async ensureContext(): Promise<BrowserContextLike> {
-    if (this.context !== undefined) return this.context
+    if (this.context !== undefined) {
+      if (this.contextAlive()) return this.context
+      // Closing the browser window ends its browser and every page in it. A
+      // dead context cannot open pages, so the next turn launches a fresh one.
+      await this.dropContext()
+    }
     this.context = await this.openContext(this.config.mode === 'managed' && this.config.headless)
     return this.context
+  }
+
+  /** @returns Whether pages can still be opened on the recorded context. */
+  private contextAlive(): boolean {
+    const browser = this.context?.browser?.()
+    if (browser === undefined) return true
+    if (browser === null) return false
+    return browser.isConnected()
   }
 
   /**

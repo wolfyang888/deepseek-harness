@@ -41,7 +41,9 @@ export function classifyPageError(error: unknown, detail: string): BrowserTransp
   if (error instanceof BrowserTransportError) return error
   const message = errorMessage(error).toLowerCase()
   if (/target (page|context|browser)|browser has been closed|page has been closed|execution context was destroyed/.test(message)) {
-    return new BrowserTransportError('chathub-signed-out', detail, { cause: error })
+    // A closed or destroyed target is a browser lifecycle failure: the page
+    // can be reopened, and the login state is untouched.
+    return new BrowserTransportError('chathub-browser-unavailable', detail, { cause: error })
   }
   if (/(econn|enotfound|fetch failed|net::err|network|socket hang up)/.test(message)) {
     return new BrowserTransportError('chathub-network', detail, { cause: error })
