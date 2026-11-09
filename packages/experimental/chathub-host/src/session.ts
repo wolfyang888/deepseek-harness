@@ -255,7 +255,12 @@ export class PlaywrightChatSession implements WebChatTransportSession {
   ): AsyncIterable<string> {
     const pollMs = this.driver.pollMs ?? this.config.pollMs
     const stablePolls = this.driver.stablePolls ?? this.config.stablePolls
-    const deadline = Date.now() + this.config.turnTimeoutMs
+    // A site that thinks before it answers can hold its last non-thinking
+    // answer unchanged for longer than one turn's budget; a hard ceiling of
+    // twice the budget keeps such a turn alive without waiting forever on a
+    // site that truly hung.
+    const hardDeadline = Date.now() + this.config.turnTimeoutMs * 2
+    let deadline = Date.now() + this.config.turnTimeoutMs
     let lastText = baseline
     let stable = 0
     let emitted = ''
@@ -274,7 +279,21 @@ export class PlaywrightChatSession implements WebChatTransportSession {
         prompt,
       )
       // Unchanged means the site has not started this turn's answer yet.
+      // The answer selector keeps a thinking card out, so while a site works
+      // its last answer reads unchanged — the page still carries the site's
+      // status phrase then, and matching it means the site is busy, not
+      // stuck, so the turn gets another budget to let the answer land.
       if (current === baseline) {
+        const body = answerTextOf(await this.page.bodyMarkup())
+        // An empty body reads as pending only because the remainder is empty;
+        // require a non-empty body so a page that returned nothing does not
+        // reset the deadline forever.
+        if (body.length > 0
+          && this.driver.pending !== undefined
+          && Date.now() < hardDeadline
+          && this.isPending(body, this.driver.pending)) {
+          deadline = Date.now() + this.config.turnTimeoutMs
+        }
         stable = 0
         continue
       }

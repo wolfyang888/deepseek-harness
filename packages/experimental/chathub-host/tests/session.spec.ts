@@ -66,6 +66,20 @@ class ScriptedPage implements TurnPage {
   }
 
   /**
+   * @returns The body markup the page reports; mirrors the last answer read,
+   *   so a pending placeholder the answer selector keeps out is still visible.
+   */
+  async bodyMarkup(): Promise<string> {
+    if (this.body.length > 0) return this.body
+    if (this.submitted.length === 0) return this.before
+    const index = Math.min(Math.max(this.reads - 1, 0), this.answers.length - 1)
+    return this.answers[index] ?? ''
+  }
+
+  /** Whole-page markup to report; set to simulate a thinking card the answer selector excludes. */
+  body = ''
+
+  /**
    * @param _selector - signed-out wall selector.
    * @returns Always invisible; walls are exercised by the page-level specs.
    */
@@ -180,6 +194,22 @@ it('does not treat a stable thinking placeholder as the answer', async () => {
   const { session: chat, page } = session(new ScriptedPage(), new FakeGate(), driver)
   page.answers = ['<div>问题分析中</div>', '<div>问题分析中</div>', '<div>问题分析中</div>', '<div>问题分析中</div>', '<p>答案正文</p>', '<p>答案正文</p>', '<p>答案正文</p>']
   await expect(chat.send(payload())).resolves.toMatchObject({ content: '<p>答案正文</p>' })
+})
+
+it('waits while the answer reads unchanged but the page shows pending', async () => {
+  // GLM excludes its thinking card from the answer selector, so while it
+  // thinks the last non-thinking answer reads unchanged (current === baseline)
+  // though the page body still shows 思考中. The turn must outlast that wait
+  // instead of timing out on the stale answer.
+  const driver: SiteDriverConfig = { ...DRIVER, pending: '思考中' }
+  const { session: chat, page } = session(new ScriptedPage(), new FakeGate(), driver)
+  page.before = '<p>old answer</p>'
+  page.body = '<div>思考中</div>'
+  page.answers = [
+    '<p>old answer</p>', '<p>old answer</p>', '<p>old answer</p>',
+    '<p>real answer</p>', '<p>real answer</p>', '<p>real answer</p>',
+  ]
+  await expect(chat.send(payload())).resolves.toMatchObject({ content: '<p>real answer</p>' })
 })
 
 it('accepts an answer that only mentions the placeholder phrase', async () => {

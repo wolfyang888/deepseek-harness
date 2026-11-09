@@ -347,6 +347,11 @@ export interface TurnPage {
    */
   answerHtml(selector: string, body?: string): Promise<string>
   /**
+   * @returns The whole page body's markup, used to tell a site that is still
+   *   thinking from one that went quiet while its last answer reads unchanged.
+   */
+  bodyMarkup(): Promise<string>
+  /**
    * @param selector - signed-out wall selector.
    * @returns Whether the wall is currently visible.
    */

@@ -161,6 +161,25 @@ export class PlaywrightPage implements ChatPageHandle {
   }
 
   /**
+   * Read the whole page body's markup.
+   *
+   * The answer selector keeps a thinking card out of the answer read, so
+   * while a site works its last non-thinking answer stays put and reads as
+   * no change — indistinguishable from a site that went quiet. The page as
+   * a whole still carries the site's "thinking" status text then, and
+   * matching it tells a busy site from a stuck one.
+   * @returns The body markup, or an empty string when unreadable.
+   */
+  async bodyMarkup(): Promise<string> {
+    try {
+      return (await this.page.locator('body').innerHTML({ timeout: this.actionTimeoutMs })).trim()
+    } catch (error) {
+      if (isOperationTimeout(error)) return ''
+      throw classifyPageError(error, `${this.key}: reading page body`)
+    }
+  }
+
+  /**
    * Resolve the reply body inside one answer container.
    * @param container - the newest answer container.
    * @param body - reply-body selector.
