@@ -134,7 +134,11 @@ export class ChatHubLlmAdapter extends LlmAdapter {
    * @returns The single model this route advertises.
    */
   override listModels(provider: string): Promise<readonly LlmModelInfo[]> {
-    return Promise.resolve([{ provider, id: this.config.model, name: this.config.model }])
+    // The id stays the configured model (`web-model`): it is the selection key
+    // a saved session re-resolves against. The name is the site behind the
+    // route, so the panel lists `doubao-web` under `ChatHub doubao-web` instead
+    // of one indistinguishable `web-model` under every provider.
+    return Promise.resolve([{ provider, id: this.config.model, name: this.siteLabel(provider) }])
   }
 
   /**
@@ -148,10 +152,20 @@ export class ChatHubLlmAdapter extends LlmAdapter {
     return Promise.resolve({
       provider,
       id: model,
-      name: this.config.model,
+      name: this.siteLabel(provider),
       context: { contextWindow: this.config.contextWindow },
       reasoning: ACCEPTED_REASONING,
     })
+  }
+
+  /**
+   * Resolve the site label a route's model is listed under.
+   * @param provider - the registered route.
+   * @returns The site id for a per-site route, or `auto` for the aggregate one.
+   */
+  private siteLabel(provider: string): string {
+    if (this.isAutoRoute(provider)) return 'auto'
+    return this.siteOf(provider)
   }
 
   /**

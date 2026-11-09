@@ -177,12 +177,12 @@ describe('ChatHubLlmAdapter metadata', () => {
     const subject = adapter(source)
     expect(subject.providerInfo('deepseek-web-chathub')).toEqual({ id: 'deepseek-web-chathub', name: 'ChatHub deepseek-web' })
     expect(await subject.listModels('deepseek-web-chathub')).toEqual([
-      { provider: 'deepseek-web-chathub', id: 'web-model', name: 'web-model' },
+      { provider: 'deepseek-web-chathub', id: 'web-model', name: 'deepseek-web' },
     ])
     expect(await subject.resolveModel('deepseek-web-chathub', 'web-model')).toEqual({
       provider: 'deepseek-web-chathub',
       id: 'web-model',
-      name: 'web-model',
+      name: 'deepseek-web',
       context: { contextWindow: 32_000 },
       reasoning: {
         efforts: [
@@ -224,6 +224,17 @@ describe('ChatHubLlmAdapter metadata', () => {
     })
     expect(subject.providerInfo('web-auto-chathub'))
       .toEqual({ id: 'web-auto-chathub', name: 'ChatHub auto (deepseek-web, qianwen-web)' })
+  })
+
+  it('lists the site, not one shared model name, under each route', async () => {
+    const subject = adapter(new FakeSource(), {
+      sites: ['deepseek-web', 'qianwen-web'],
+      routes: ['deepseek-web-chathub', 'qianwen-web-chathub', 'web-auto-chathub'],
+      autoRoute: 'web-auto-chathub',
+    })
+    expect((await subject.listModels('deepseek-web-chathub'))[0]?.name).toBe('deepseek-web')
+    expect((await subject.listModels('qianwen-web-chathub'))[0]?.name).toBe('qianwen-web')
+    expect((await subject.listModels('web-auto-chathub'))[0]?.name).toBe('auto')
   })
 
   it('refuses a route outside the configured sites', async () => {
