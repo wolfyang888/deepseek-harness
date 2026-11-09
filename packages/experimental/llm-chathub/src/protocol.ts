@@ -53,7 +53,10 @@ export function parseAnswer(raw: string, policy: ChatHubParsePolicy): ChatHubPar
   const open = raw.indexOf(TOOL_CALL_OPEN)
   if (open < 0) {
     const suspicion = suspectedToolNarrative(raw)
-    const { text, ended } = finalTextOf(raw)
+    const { text, ended, damaged } = finalTextOf(raw)
+    if (damaged === true) {
+      warnings.push('accepted a damaged END marker: the reply ended with a mangled form of <<<END')
+    }
     return {
       text: boundText(text, policy.maxTextChars),
       warnings,
@@ -94,14 +97,40 @@ export function parseAnswer(raw: string, policy: ChatHubParsePolicy): ChatHubPar
 }
 
 /**
+ * END-marker tails a reply may still count as complete with.
+ *
+ * A subject types the marker from the protocol text, but the site between the
+ * model and the reader can mangle it: a DOM serializer eats one `<`, a
+ * renderer folds the spaces, or the model itself mistypes the run. Doubao
+ * ended a full, final answer with a bare `<<` — everything before it read as
+ * finished — so the tails below keep the marker's evidence while tolerating
+ * the damage a transport can do to three fixed characters. The bare-tail
+ * pattern only fires at the very end of a blockless reply: prose that merely
+ * contains `<` never matches, and an unterminated call block takes the
+ * block path before this runs.
+ */
+const END_TAILS: readonly RegExp[] = [
+  /<{2,3}\s*end\s*>+\s*$/iu,
+  /<{2,3}\s*end$/iu,
+  /<{2,3}\s*$/,
+]
+
+/**
  * Strip the completion marker from a blockless reply.
  * @param raw - the site's answer text.
- * @returns The text without its trailing marker, and whether the marker was there.
+ * @returns The text without its trailing marker, whether the marker counted,
+ *   and whether what matched was a damaged spelling rather than the exact
+ *   `<<<END`.
  */
-function finalTextOf(raw: string): { text: string; ended: boolean } {
+function finalTextOf(raw: string): { text: string; ended: boolean; damaged?: boolean } {
   const trimmed = raw.trimEnd()
-  if (!trimmed.endsWith(END_MARKER)) return { text: raw, ended: false }
-  return { text: trimmed.slice(0, trimmed.length - END_MARKER.length).trimEnd(), ended: true }
+  for (const tail of END_TAILS) {
+    const match = tail.exec(trimmed)
+    if (match === null) continue
+    const damaged = match[0] !== END_MARKER
+    return { text: trimmed.slice(0, match.index).trimEnd(), ended: true, ...damaged ? { damaged } : {} }
+  }
+  return { text: raw, ended: false }
 }
 
 /**

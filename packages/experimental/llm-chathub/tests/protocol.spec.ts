@@ -328,6 +328,44 @@ describe('parseAnswer completion marker', () => {
     expect(parsed.cutOff).toBeUndefined()
     expect(parsed.call).toBeDefined()
   })
+
+  it('accepts a final answer whose marker the site mangled to a bare tail', () => {
+    // A real subject (doubao.com) ended a complete final answer with `<<` —
+    // the reply read as finished, but three fixed characters had become two,
+    // and the strict match threw the whole analysis away as cut off.
+    const answer = [
+      'There is a bug: execute_hook runs a plain loop while process_request cascades.',
+      'Do you want me to refactor it?',
+      '<<',
+    ].join('\n')
+    const parsed = parseAnswer(answer, POLICY)
+    expect(parsed.cutOff).toBeUndefined()
+    expect(parsed.text).toBe([
+      'There is a bug: execute_hook runs a plain loop while process_request cascades.',
+      'Do you want me to refactor it?',
+    ].join('\n'))
+    expect(parsed.warnings.join('\n')).toMatch(/damaged END marker/u)
+  })
+
+  it('accepts a marker missing one bracket, with or without closing brackets', () => {
+    for (const tail of ['<<END', '<<<END>>>', '<<END>>', '<<< end', '<<<end']) {
+      const parsed = parseAnswer(`done.\n${tail}`, POLICY)
+      expect(parsed.cutOff, tail).toBeUndefined()
+      expect(parsed.text, tail).toBe('done.')
+      expect(parsed.warnings.join('\n'), tail).toMatch(/damaged END marker/u)
+    }
+  })
+
+  it('does not warn on the exact marker', () => {
+    const parsed = parseAnswer(`done.\n${END_MARKER}`, POLICY)
+    expect(parsed.cutOff).toBeUndefined()
+    expect(parsed.warnings).toHaveLength(0)
+  })
+
+  it('still flags a reply that ends with a single stray bracket', () => {
+    const parsed = parseAnswer('done. <', POLICY)
+    expect(parsed.cutOff).toContain(END_MARKER)
+  })
 })
 
 describe('parseAnswer suspected tool narrative', () => {
