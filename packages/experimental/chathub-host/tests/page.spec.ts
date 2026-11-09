@@ -175,6 +175,22 @@ it('presses submit again while the composer still holds the prompt', async () =>
   await wrapper.submit('hello world', DRIVER, 1)
   expect(fake.keys).toEqual(['Enter', 'Enter'])
   expect(fake.typed).toEqual(['hello world'])
+  // The retry refocuses the composer before pressing: a key press lands
+  // wherever the focus is.
+  expect(fake.clicks).toEqual([{ x: 5, y: 5 }, { x: 5, y: 5 }])
+})
+
+it('keeps submitting when the composer only wires up after a beat', async () => {
+  // Doubao.com hydration: the editor is in the DOM (and takes the text) well
+  // before its send handler answers a key press. Two presses left the turn to
+  // fail and open a fresh page; the third lands in the same page.
+  const { wrapper, fake } = page()
+  fake.boxes[DRIVER.input] = { x: 0, y: 0, width: 10, height: 10 }
+  fake.texts[DRIVER.input] = '<p>hello world</p>'
+  fake.clearAfterPresses = 3
+  await expect(wrapper.submit('hello world', DRIVER, 1)).resolves.toBeUndefined()
+  expect(fake.keys).toEqual(['Enter', 'Enter', 'Enter'])
+  expect(fake.typed).toEqual(['hello world'])
 })
 
 it('reports a composer that keeps the prompt as UI drift', async () => {
@@ -182,8 +198,8 @@ it('reports a composer that keeps the prompt as UI drift', async () => {
   fake.boxes[DRIVER.input] = { x: 0, y: 0, width: 10, height: 10 }
   fake.texts[DRIVER.input] = '<p>hello world</p>'
   await expect(wrapper.submit('hello world', DRIVER, 1)).rejects.toMatchObject({ token: 'chathub-ui-drift' })
-  // One submit plus the one retry, never an unbounded loop.
-  expect(fake.keys).toEqual(['Enter', 'Enter'])
+  // Every attempt at the send, never an unbounded loop.
+  expect(fake.keys).toEqual(['Enter', 'Enter', 'Enter'])
 })
 
 it('accepts a send whose composer lingers while the conversation advanced', async () => {
@@ -211,7 +227,7 @@ it('reports a dropped send on a cookie-gated site as signed-out, not drift', asy
   fake.texts[DRIVER.input] = '<p>hello world</p>'
   await expect(wrapper.submit('hello world', COOKIE_DRIVER, 1))
     .rejects.toMatchObject({ token: 'chathub-signed-out' })
-  expect(fake.keys).toEqual(['Enter', 'Enter'])
+  expect(fake.keys).toEqual(['Enter', 'Enter', 'Enter'])
 })
 
 it('retypes when the composer never took the prompt', async () => {

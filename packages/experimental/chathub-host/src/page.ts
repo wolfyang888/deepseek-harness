@@ -14,6 +14,18 @@ import type { BrowserInputLike, BrowserPageLike, ChatPageHandle, SiteDriverConfi
 const SEND_SETTLE_MS = 3_000
 
 /**
+ * How many times one prompt is submitted before the send reads as dropped.
+ *
+ * A freshly opened site renders its composer before the framework's handlers
+ * attach: the text lands in the DOM, the submit key reaches nobody, and the
+ * editor keeps the prompt. One re-press was not enough on doubao.com, and
+ * giving up costs the whole turn — a new page, the full prompt again, and the
+ * tool results already gathered. Each round waits longer than the last, so a
+ * slow hydration still lands inside the same page.
+ */
+const SUBMIT_ATTEMPTS = 3
+
+/**
  * One browser page bound to a key and its operation timeout.
  *
  * Visibility and completion use explicit polling rather than Playwright's
@@ -170,7 +182,9 @@ export class PlaywrightPage implements ChatPageHandle {
    * Two failures are silent without the checks below, and both end the turn
    * as an empty answer long after the fact: a selector whose first match is a
    * hidden composer takes the text nowhere, and a composer whose handlers are
-   * not attached yet accepts the text and drops the key press.
+   * not attached yet accepts the text and drops the key press. The second one
+   * is only ever cured by time or by a refocus, so the press is retried with a
+   * growing window instead of being given up on after one beat.
    * @param prompt - rendered prompt.
    * @param driver - site facts for input and submission.
    * @param typeDelayMs - settle delay between insertion and the submit key.
@@ -213,11 +227,18 @@ export class PlaywrightPage implements ChatPageHandle {
       // hurry (or a test); waiting longer than one operation budget there
       // would stall the suite without teaching it anything.
       const settleMs = Math.min(SEND_SETTLE_MS, this.actionTimeoutMs)
-      await this.submitPrompt(driver)
-      if (typed === undefined || await this.composerCleared(composer, typed, settleMs)) return
-      await this.submitPrompt(driver)
-      if (await this.composerCleared(composer, typed, settleMs * 2)) return
-      if (await this.answerSignature(driver) !== before) return
+      for (let round = 0; round < SUBMIT_ATTEMPTS; round += 1) {
+        // A retry has to refocus the composer: a toast, a banner, or a modal
+        // that came and went moves the focus, and a key press lands wherever
+        // the focus is — not in the editor that still shows the prompt.
+        if (round > 0) await this.page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
+        await this.submitPrompt(driver)
+        // An unreadable composer (a textarea keeps its text in `value`) offers
+        // no receipt, so its behaviour stays as before: one press, no verdict.
+        if (typed === undefined) return
+        if (await this.composerCleared(composer, typed, settleMs * 2 ** round)) return
+        if (await this.answerSignature(driver) !== before) return
+      }
       // A send the site silently drops is most often its signed-out gate
       // (a login modal over the composer); report that cause when the site
       // declares one, so the turn asks for login instead of a vague drift.
@@ -227,7 +248,10 @@ export class PlaywrightPage implements ChatPageHandle {
       if (driver.loginWall !== undefined && await this.visible(driver.loginWall)) {
         throw new BrowserTransportError('chathub-signed-out', `${this.key}: the send was blocked by the site's signed-out wall`)
       }
-      throw new BrowserTransportError('chathub-ui-drift', `${this.key}: the input kept the prompt; the message was not sent`)
+      throw new BrowserTransportError(
+        'chathub-ui-drift',
+        `${this.key}: the input kept the prompt after ${SUBMIT_ATTEMPTS} submits; the message was not sent`,
+      )
     } catch (error) {
       throw classifyPageError(error, `${this.key}: submitting the prompt`)
     }
