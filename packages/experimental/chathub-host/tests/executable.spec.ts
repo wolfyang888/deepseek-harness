@@ -49,10 +49,25 @@ it('returns no candidates for an unhandled platform', () => {
   expect(chromeCandidates('freebsd', {}, '/home/x')).toEqual([])
 })
 
-it('returns the first candidate that exists', () => {
+it('returns the only candidate that exists', () => {
   const installed = new Set(['/usr/bin/chromium'])
   expect(discoverChromeExecutable({ platform: 'linux', exists: path => installed.has(path) }))
     .toBe('/usr/bin/chromium')
+})
+
+it('picks the newest install when several browsers coexist', () => {
+  // An older Chrome crashes against a newer Playwright CDP protocol; the
+  // newest file modification time stands in for the newest version.
+  const installed = new Set(['/usr/bin/google-chrome-stable', '/snap/bin/chromium'])
+  const mtimes = new Map([
+    ['/usr/bin/google-chrome-stable', new Date(2024, 7, 6)],
+    ['/snap/bin/chromium', new Date(2025, 5, 12)],
+  ])
+  expect(discoverChromeExecutable({
+    platform: 'linux',
+    exists: path => installed.has(path),
+    stat: path => mtimes.get(path)!,
+  })).toBe('/snap/bin/chromium')
 })
 
 it('returns undefined when no candidate exists', () => {

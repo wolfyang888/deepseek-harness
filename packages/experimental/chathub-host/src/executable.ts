@@ -9,7 +9,7 @@
  * @module @deepseek-ai/dsh-experimental-chathub-host/executable
  */
 
-import { existsSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 
 /** Inputs for one discovery pass; every field defaults to the live host. */
@@ -22,6 +22,12 @@ export interface ChromeDiscovery {
   home?: string
   /** Existence probe; defaults to `fs.existsSync`. */
   exists?: (path: string) => boolean
+  /**
+   * File modification time for a candidate; defaults to `fs.statSync(...).mtime`.
+   * Used only to break ties when several browsers are installed: an older Chrome
+   * can crash against a newer Playwright's CDP protocol, so the newest binary wins.
+   */
+  stat?: (path: string) => Date
 }
 
 /**
@@ -68,12 +74,18 @@ export function chromeCandidates(
 
 /**
  * @param options - Discovery inputs; every field defaults to the live host.
- * @returns The first installed Chrome/Chromium binary, or `undefined` when none is present.
+ * @returns The newest installed Chrome/Chromium binary, or `undefined` when none is present.
+ *   Several browsers can coexist (a user-level Chrome and a system Edge), and an
+ *   older one can crash against a newer Playwright's CDP protocol; when more than
+ *   one candidate exists, the one with the newest file modification time wins.
  */
 export function discoverChromeExecutable(options: ChromeDiscovery = {}): string | undefined {
   const platform = options.platform ?? process.platform
   const env = options.env ?? process.env
   const home = options.home ?? homedir()
   const exists = options.exists ?? existsSync
-  return chromeCandidates(platform, env, home).find(path => exists(path))
+  const candidates = chromeCandidates(platform, env, home).filter(path => exists(path))
+  if (candidates.length <= 1) return candidates[0]
+  const stat = options.stat ?? ((path: string) => statSync(path).mtime)
+  return candidates.reduce((newest, path) => (stat(path) > stat(newest) ? path : newest))
 }
