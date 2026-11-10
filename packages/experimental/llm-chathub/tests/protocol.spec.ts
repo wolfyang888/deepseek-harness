@@ -194,6 +194,56 @@ describe('parseAnswer', () => {
     expect(parsed.text).toBe('here you go')
   })
 
+  it('repairs a native <tool_call> reply whose arguments are array-wrapped and curly-quoted', () => {
+    // The exact shape a glm-web turn died on: the model wrote its own
+    // tool-call vocabulary instead of the block, twice in one turn.
+    const parsed = parseAnswer(
+      '继续补齐上下文：<tool_call>read [{“file_path”: “lua/workflow/service/workflow_service.lua”, “offset”: 256, “limit”: 110}]</tool_call>',
+      POLICY,
+    )
+    expect(parsed.invalid).toBeUndefined()
+    expect(parsed.suspected).toBeUndefined()
+    expect(parsed.cutOff).toBeUndefined()
+    expect(parsed.call).toEqual({
+      name: 'read',
+      arguments: { file_path: 'lua/workflow/service/workflow_service.lua', offset: 256, limit: 110 },
+    })
+    expect(parsed.warnings.join('\n')).toMatch(/<tool_call>…<\/tool_call> instead of the block/u)
+    expect(parsed.text).toBe('继续补齐上下文：')
+  })
+
+  it('repairs a plain native <tool_call> reply and strips a trailing END marker from the text', () => {
+    const parsed = parseAnswer(
+      '<tool_call>read {"file_path":"a.ts"}</tool_call>\n<<<END',
+      POLICY,
+    )
+    expect(parsed.call).toEqual({ name: 'read', arguments: { file_path: 'a.ts' } })
+    expect(parsed.text).toBe('')
+  })
+
+  it('suspects an unparseable native <tool_call> reply instead of running a guess', () => {
+    // The second shape from the same turn: pseudo-attribute body with no
+    // JSON object to read — the correction must teach the block format.
+    const parsed = parseAnswer(
+      '重读文件。<tool_call>read file_path=“a.ts”</arg_value>limit=“2000”</arg_value></tool_call>end',
+      POLICY,
+    )
+    expect(parsed.call).toBeUndefined()
+    expect(parsed.suspected).toContain('<tool_call>')
+  })
+
+  it('never repairs a native <tool_call> for a tool outside the whitelist', () => {
+    const parsed = parseAnswer('<tool_call>bash {"command":"ls"}</tool_call>', POLICY)
+    expect(parsed.call).toBeUndefined()
+    expect(parsed.suspected).toContain('<tool_call>')
+  })
+
+  it('never repairs a native <tool_call> whose path the policy forbids', () => {
+    const parsed = parseAnswer('<tool_call>read {"file_path":"node_modules/x.js"}</tool_call>', POLICY)
+    expect(parsed.call).toBeUndefined()
+    expect(parsed.suspected).toContain('<tool_call>')
+  })
+
   it('reads the object out of prose and nested braces inside strings', () => {
     const parsed = parseAnswer(
       reply('sure: {"name":"edit","arguments":{"file_path":"a.ts","old_string":"if (x) { y() }"}} trailing noise'),

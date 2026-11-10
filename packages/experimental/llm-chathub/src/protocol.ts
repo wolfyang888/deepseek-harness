@@ -25,13 +25,18 @@ export const END_MARKER = '<<<END'
  * Narrative tool-call shapes a reply uses to dodge the block format, each with
  * the repair reason it yields. Every shape was a real subject's answer: the
  * history echoes the prompt renders (`[asked for …]`, `tool(…) ->`) copied into
- * a reply as if they executed, and a whole call written as bare JSON.
+ * a reply as if they executed, a whole call written as bare JSON, and the
+ * model's own tool-call vocabulary — GLM answered `<tool_call>read …
+ * </tool_call>` twice in one turn when a long edit task wore the documented
+ * format down.
  */
 const SUSPECTED_NARRATIVE: readonly (readonly [RegExp, string])[] = [
   [/\[asked for \w+[ \]]/u, 'the reply narrates a tool call as "[asked for …]" instead of using the block'],
   [/\btool\(\w+\)\s*(?:->|→)/u, 'the reply invents tool output as "tool(…) ->" instead of using the block'],
   [/\{\s*[“"]name[”"]\s*:\s*[“"][\w-]+[”"]\s*,\s*[“"]arguments[”"]/u,
     'the reply writes a tool call as bare JSON outside the block'],
+  [/<\s*\/?\s*tool_call\s*>/u,
+    'the reply writes the call in "<tool_call>…</tool_call>" tags instead of using the block'],
 ]
 
 /**
@@ -52,6 +57,8 @@ export function parseAnswer(raw: string, policy: ChatHubParsePolicy): ChatHubPar
   const warnings: string[] = []
   const open = raw.indexOf(TOOL_CALL_OPEN)
   if (open < 0) {
+    const native = repairedNativeCall(raw, policy, warnings)
+    if (native !== undefined) return native
     const suspicion = suspectedToolNarrative(raw)
     const { text, ended, damaged } = finalTextOf(raw)
     if (damaged === true) {
@@ -143,6 +150,54 @@ function suspectedToolNarrative(text: string): string | undefined {
     if (pattern.test(text)) return reason
   }
   return undefined
+}
+
+/** Opening tag of a model's native tool-call vocabulary. */
+const NATIVE_OPEN = /<\s*tool_call\s*>/iu
+/** Closing tag of that vocabulary. */
+const NATIVE_CLOSE = /<\s*\/\s*tool_call\s*>/iu
+/** Bare tool name a native call body opens with. */
+const NATIVE_NAME = /^[\s[({]*([A-Za-z][\w-]*)/u
+
+/**
+ * Repair a call a reply wrote in its native `<tool_call>…</tool_call>`
+ * vocabulary instead of the block.
+ *
+ * GLM drifts into this shape on long edit tasks: the body carries the tool
+ * name as a bare word followed by its arguments as JSON — sometimes wrapped
+ * in an array, sometimes curly-quoted, the same damages the block repairs.
+ * The call is accepted only when every check a block call passes passes here
+ * too (whitelist, path policy); anything else is left to the narrative
+ * suspicion, which teaches the block format instead of executing a guess.
+ * @param raw - the site's answer text.
+ * @param policy - whitelist and path policy.
+ * @param warnings - sink for the non-fatal repair.
+ * @returns The accepted call with the tags stripped from the text, or
+ *   `undefined` when the native body offers nothing safe to run.
+ */
+function repairedNativeCall(
+  raw: string,
+  policy: ChatHubParsePolicy,
+  warnings: string[],
+): ChatHubParsedAnswer | undefined {
+  const openMatch = NATIVE_OPEN.exec(raw)
+  if (openMatch === null) return undefined
+  const closeMatch = NATIVE_CLOSE.exec(raw)
+  if (closeMatch === null || closeMatch.index < openMatch.index) return undefined
+  const body = raw.slice(openMatch.index + openMatch[0].length, closeMatch.index)
+  const nameMatch = NATIVE_NAME.exec(body)
+  if (nameMatch === null) return undefined
+  const name = nameMatch[1] ?? ''
+  if (!policy.allowTools.includes(name)) return undefined
+  let rest = body.slice(nameMatch[0].length).trim()
+  if (rest.startsWith('[') && rest.endsWith(']')) rest = rest.slice(1, -1).trim()
+  const args = decodeJsonObject(rest)
+  if (args === undefined) return undefined
+  if (firstRejectedPath(args, policy) !== undefined) return undefined
+  warnings.push('repaired the call the reply wrote as <tool_call>…</tool_call> instead of the block')
+  const joined = `${raw.slice(0, openMatch.index)}\n${raw.slice(closeMatch.index + closeMatch[0].length)}`
+  const { text } = finalTextOf(joined)
+  return { text: boundText(text.trim(), policy.maxTextChars), call: { name, arguments: args }, warnings }
 }
 
 /** Argument keys whose string value addresses the filesystem. */
