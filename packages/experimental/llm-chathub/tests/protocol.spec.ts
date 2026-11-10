@@ -162,6 +162,31 @@ describe('parseAnswer', () => {
       .toBe('tool "read" carries no arguments object')
   })
 
+  it('reads the arguments a reply nested under an alias key', () => {
+    const parsed = parseAnswer(reply('{"name":"read","args":{"file_path":"src/main.ts"}}'), POLICY)
+    expect(parsed.invalid).toBeUndefined()
+    expect(parsed.call).toEqual({ name: 'read', arguments: { file_path: 'src/main.ts' } })
+    expect(parsed.warnings.join('\n')).toMatch(/under "args" instead of "arguments"/u)
+  })
+
+  it('reads the arguments a reply wrote flat beside the tool name', () => {
+    const parsed = parseAnswer(reply('{"name":"read","file_path":"src/main.ts"}'), POLICY)
+    expect(parsed.invalid).toBeUndefined()
+    expect(parsed.call).toEqual({ name: 'read', arguments: { file_path: 'src/main.ts' } })
+    expect(parsed.warnings.join('\n')).toMatch(/flat beside "name"/u)
+  })
+
+  it('still rejects a flat call that offers no arguments to read', () => {
+    const parsed = parseAnswer(reply('{"name":"read","arguments":["a"],"args":42}'), POLICY)
+    expect(parsed.invalid).toBe('tool "read" carries no arguments object')
+  })
+
+  it('checks a flat call\u2019s paths against the policy', () => {
+    const parsed = parseAnswer(reply('{"name":"read","file_path":"node_modules/x.js"}'), POLICY)
+    expect(parsed.call).toBeUndefined()
+    expect(parsed.invalid).toContain('forbidden "node_modules"')
+  })
+
   it('accepts a legal call and strips the block from the prose', () => {
     const parsed = parseAnswer(reply('{"name":"read","arguments":{"file_path":"src/main.ts"}}'), POLICY)
     expect(parsed.invalid).toBeUndefined()

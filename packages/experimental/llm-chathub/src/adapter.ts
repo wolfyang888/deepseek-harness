@@ -461,6 +461,7 @@ export class ChatHubLlmAdapter extends LlmAdapter {
       this.assertNotAborted(site, signal)
       const answer = await this.ask(question, site, signal)
       const parsed = parseAnswer(answer, { ...this.parsePolicy(), maxTextChars })
+      await this.recordAnswer(site, attempt, answer, parsed.invalid)
       const repair = repairOf(parsed, repairs)
       if (repair === undefined || attempt > this.config.repairAttempts) {
         return {
@@ -599,6 +600,43 @@ export class ChatHubLlmAdapter extends LlmAdapter {
       throw new LlmError(`chathub-llm: route "${route}" is not one of ${this.config.sites.join(', ')}`, 'INVALID_REQUEST')
     }
     return site
+  }
+
+  /**
+   * Append the raw answer the site gave to an opt-in tape.
+   *
+   * The prompt tape shows what the model was asked; this one shows what it
+   * answered. An illegal reply is reported to the loop only as its rejection
+   * reason — `tool "read" carries no arguments object` names the verdict, not
+   * the bytes that earned it — so a protocol bug that keeps recurring (the
+   * mangled END marker, the arguments-less call) stays undiagnosable from the
+   * session log alone. `DSH_CHATHUB_LLM_ANSWER_LOG=<file>` turns the tape on;
+   * every answer is recorded, rejected or not, and logging never fails a turn.
+   * @param site - site provider the answer came from.
+   * @param attempt - 1-based ask count within this turn.
+   * @param answer - the raw answer text as the protocol read it.
+   * @param invalid - the rejection reason, when the answer was illegal.
+   */
+  private async recordAnswer(
+    site: string,
+    attempt: number,
+    answer: string,
+    invalid: string | undefined,
+  ): Promise<void> {
+    const path = process.env.DSH_CHATHUB_LLM_ANSWER_LOG
+    if (path === undefined || path === '') return
+    try {
+      await appendFile(path, `${JSON.stringify({
+        at: new Date().toISOString(),
+        site,
+        attempt,
+        chars: answer.length,
+        ...invalid === undefined ? {} : { invalid },
+        answer,
+      })}\n`, 'utf8')
+    } catch {
+      // A tape that cannot be written must not cost the turn it records.
+    }
   }
 
   /**
@@ -747,13 +785,18 @@ interface Repairs {
 
 /**
  * The repair one reply earns, with the advice that corrects it.
+ *
+ * The advice names the defect it fixes where the reason allows it: a correction
+ * that only repeats "use the block format" told a subject its `{"name":"read"}`
+ * was malformed twice, while what it needed to hear was where the arguments
+ * belong.
  * @param parsed - the parsed reply.
  * @param repairs - which findings this request enforces.
  * @returns The rejection reason and advice, or `undefined` when the reply stands.
  */
 function repairOf(parsed: ChatHubParsedAnswer, repairs: Repairs): { reason: string; advice: string } | undefined {
   if (parsed.invalid !== undefined) {
-    return { reason: parsed.invalid, advice: 'Reply again using only the block format above.' }
+    return { reason: parsed.invalid, advice: adviceForInvalid(parsed.invalid) }
   }
   if (repairs.narrative && parsed.suspected !== undefined) {
     return {
@@ -768,6 +811,22 @@ function repairOf(parsed: ChatHubParsedAnswer, repairs: Repairs): { reason: stri
     }
   }
   return undefined
+}
+
+/**
+ * Advice that teaches the defect a rejection names, rather than repeating the
+ * whole protocol at it.
+ * @param invalid - the rejection reason the reply earned.
+ * @returns Advice naming the fix, or the generic protocol reminder.
+ */
+function adviceForInvalid(invalid: string): string {
+  if (invalid.endsWith('carries no arguments object')) {
+    return 'Reply again and nest the arguments under "arguments", e.g. {"name":"read","arguments":{"file_path":"src/main.lua"}} — an arguments key with nothing readable in it cannot run.'
+  }
+  if (invalid.includes('TOOL_CALL>>>')) {
+    return 'Reply again and close the block with a line reading exactly TOOL_CALL>>>'
+  }
+  return 'Reply again using only the block format above.'
 }
 
 /**

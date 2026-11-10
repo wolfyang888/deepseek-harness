@@ -329,6 +329,15 @@ describe('ChatHubLlmAdapter turns', () => {
     expect(records[0]?.attempt).toBe(2)
   })
 
+  it('teaches the missing-arguments defect by name in the correction', async () => {
+    const source = new FakeSource()
+    source.answers = [call('{"name":"read"}'), call('{"name":"read","arguments":{"file_path":"a.ts"}}')]
+    await collect(adapter(source).stream(request()))
+    // The correction says where the arguments belong, not only "use the block".
+    expect(source.prompts[1]).toContain('carries no arguments object')
+    expect(source.prompts[1]).toContain('nest the arguments under "arguments"')
+  })
+
   it('fails with MALFORMED_RESPONSE once the repair budget is spent', async () => {
     const source = new FakeSource()
     const records: ChatHubTurnObservation[] = []
@@ -355,6 +364,36 @@ describe('ChatHubLlmAdapter turns', () => {
       expect(entry.prompt).toContain('# NOW')
     } finally {
       delete process.env.DSH_CHATHUB_LLM_PROMPT_LOG
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('tapes the raw answer with its rejection when the answer log is enabled', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'chathub-tape-'))
+    const tape = join(dir, 'answers.jsonl')
+    process.env.DSH_CHATHUB_LLM_ANSWER_LOG = tape
+    try {
+      const source = new FakeSource()
+      source.answers = [call('{"name":"read"}'), call('{"name":"read","arguments":{"file_path":"a.ts"}}')]
+      await collect(adapter(source).stream(request()))
+      const lines = (await readFile(tape, 'utf8')).trim().split('\n').map(line => JSON.parse(line) as {
+        site: string
+        attempt: number
+        chars: number
+        invalid?: string
+        answer: string
+      })
+      expect(lines).toHaveLength(2)
+      expect(lines[0]?.site).toBe('deepseek-web')
+      expect(lines[0]?.attempt).toBe(1)
+      expect(lines[0]?.chars).toBe(lines[0]?.answer.length)
+      expect(lines[0]?.invalid).toBe('tool "read" carries no arguments object')
+      expect(lines[0]?.answer).toContain(TOOL_CALL_OPEN)
+      // The accepted retry is taped too, without a rejection field.
+      expect(lines[1]?.invalid).toBeUndefined()
+      expect(lines[1]?.answer).toContain('"file_path":"a.ts"')
+    } finally {
+      delete process.env.DSH_CHATHUB_LLM_ANSWER_LOG
       await rm(dir, { recursive: true, force: true })
     }
   })

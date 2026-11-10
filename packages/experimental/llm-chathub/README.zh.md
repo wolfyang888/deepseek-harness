@@ -51,7 +51,7 @@ kind: "package-bundle"
 pnpm dsh web --patch packages/experimental/chathub-host/cordis.patch.yml --patch packages/experimental/llm-chathub/cordis.patch.yml
 ```
 
-该层插入一行 `llm-chathub`，默认值来自环境变量：`DSH_CHATHUB_LLM_SITE`（默认 `deepseek-web`）、`DSH_CHATHUB_LLM_MODEL`、`DSH_CHATHUB_LLM_ROOT`（默认宿主进程工作目录）、`DSH_CHATHUB_LLM_TOOLS`（默认 `read,grep,glob,edit,write`）、`DSH_CHATHUB_LLM_VERIFY`（默认 `pnpm run typecheck`）。当 `DSH_CHATHUB_LLM_SITES` 列出两个及以上站点时，`DSH_CHATHUB_LLM_SELECTION`（默认 `auto`）决定是否追加聚合路由，其选址可用 `DSH_CHATHUB_LLM_SELECTION_STRATEGY`、`DSH_CHATHUB_LLM_FAILOVER`、`DSH_CHATHUB_LLM_TOPIC_TTL_MS`、`DSH_CHATHUB_LLM_SITE_COOLDOWN_MS`、`DSH_CHATHUB_LLM_ESCALATE_AFTER`、`DSH_CHATHUB_LLM_SITE_DEMOTE_MS`、`DSH_CHATHUB_LLM_SITE_RANK`（`site:rank,…`）调整。第一个智能体步骤才会打开页面；挂载本身不启动浏览器。
+该层插入一行 `llm-chathub`，默认值来自环境变量：`DSH_CHATHUB_LLM_SITE`（默认 `deepseek-web`）、`DSH_CHATHUB_LLM_MODEL`、`DSH_CHATHUB_LLM_ROOT`（默认宿主进程工作目录）、`DSH_CHATHUB_LLM_TOOLS`（默认 `read,grep,glob,edit,write`）、`DSH_CHATHUB_LLM_VERIFY`（默认 `pnpm run typecheck`）。当 `DSH_CHATHUB_LLM_SITES` 列出两个及以上站点时，`DSH_CHATHUB_LLM_SELECTION`（默认 `auto`）决定是否追加聚合路由，其选址可用 `DSH_CHATHUB_LLM_SELECTION_STRATEGY`、`DSH_CHATHUB_LLM_FAILOVER`、`DSH_CHATHUB_LLM_TOPIC_TTL_MS`、`DSH_CHATHUB_LLM_SITE_COOLDOWN_MS`、`DSH_CHATHUB_LLM_ESCALATE_AFTER`、`DSH_CHATHUB_LLM_SITE_DEMOTE_MS`、`DSH_CHATHUB_LLM_SITE_RANK`（`site:rank,…`）调整。`DSH_CHATHUB_LLM_PROMPT_LOG` 与 `DSH_CHATHUB_LLM_ANSWER_LOG` 分别开启"站点读到的完整提示词"与"站点给出的原始回答"两条 JSONL 取证磁带——反复出现的协议拒绝，靠它们变成可分析的证据。第一个智能体步骤才会打开页面；挂载本身不启动浏览器。
 
 ### 配置
 
@@ -140,7 +140,7 @@ pnpm dsh web --patch packages/experimental/chathub-host/cordis.patch.yml --patch
 
 `render.ts` 就是全部上下文契约：`# ROLE`、可选的 `# SYSTEM`、每个白名单 schema 一行紧凑 JSON 的 `# TOOLS`、`# PROTOCOL`、含根目录与校验命令的 `# PROJECT`、`# CONVERSATION`、以及 `# NOW`。渲染是纯函数，因此快照能钉住它的形状。历史从旧到新丢弃并折叠成 `[earlier: N entries omitted]`；当连无历史的提示都超过 `maxPromptChars` 时，`ChatHubPromptOverflowError` 带上 `CONTEXT_WINDOW_EXCEEDED`，让循环去压缩而不是拿同一段文本重试。图片与文件块会变成一行占位说明，不会被发送。
 
-`protocol.ts` 读一段回答：先找 `<<<TOOL_CALL` … `TOOL_CALL>>>` 定界符，再从块体里切出第一个配平的 JSON 对象并容忍前后噪声，然后按本挂载的策略校验。工具名不在 `allowTools` 内、参数不是对象、块没有闭合、JSON 解析失败，或路径参数带 `..`、NUL 字节、被拒片段、或落在 `workspaceRoot` 之外的绝对位置，都属于拒绝——以原因返回，从不抛错。用 Markdown 围栏做载体是最直观的做法，这里刻意不用：站点会重排围栏、加复制按钮、有时保留行号，而未知名 token 会原样存活成普通文本。无块回答还会报告它是否以 `<<<END` 结束、是否用叙述文字假装调用；两者都是发现项，由调用方决定是否强制。
+`protocol.ts` 读一段回答：先找 `<<<TOOL_CALL` … `TOOL_CALL>>>` 定界符，再从块体里切出第一个配平的 JSON 对象并容忍前后噪声，然后按本挂载的策略校验。工具名不在 `allowTools` 内、参数不是对象、块没有闭合、JSON 解析失败，或路径参数带 `..`、NUL 字节、被拒片段、或落在 `workspaceRoot` 之外的绝对位置，都属于拒绝——以原因返回，从不抛错。参数被拒之前会先修复两种形状并记入警告：参数嵌在别名键下（`args`、`parameters`、`params`），或直接平铺在工具名旁边（`{"name":"read","file_path":…}`）——两者都说出了模型想打的调用，只是没按文档嵌套。用 Markdown 围栏做载体是最直观的做法，这里刻意不用：站点会重排围栏、加复制按钮、有时保留行号，而未知名 token 会原样存活成普通文本。无块回答还会报告它是否以 `<<<END` 结束、是否用叙述文字假装调用；两者都是发现项，由调用方决定是否强制。
 
 `budget.ts` 夹紧单段文本时保留头尾并写明省略字数，因为文件头能说明它是谁、尾部通常正是被审阅的改动；预算小到放不下头、标记与尾时退化成直接截断。带行号的工具结果则写明省略的行号区间与续读所需的 `offset`，模型可用 `read` 翻页。
 
@@ -204,7 +204,7 @@ When the task is complete, or when you need the user to decide, reply without a 
 
 #### 模型看到什么
 
-只在回答被拒或被强制的发现项命中、且 `repairAttempts` 仍有余额时出现：同一段渲染提示加上一段 `# CORRECTION`，点明原因——例如块未闭合、工具名未知、路径被策略禁止、用叙述文字假装调用、或最终回答缺少 `<<<END`——并要求按文档格式重新回答。
+只在回答被拒或被强制的发现项命中、且 `repairAttempts` 仍有余额时出现：同一段渲染提示加上一段 `# CORRECTION`，点明原因——例如块未闭合、工具名未知、路径被策略禁止、用叙述文字假装调用、或最终回答缺少 `<<<END`——并要求按文档格式重新回答。纠错建议会在原因允许时直接指出修法：参数读不出来的回答会被明确告知「把参数嵌进 "arguments" 对象」并附带示例，而不是被泛泛地引回整套协议。
 
 #### Token 影响
 

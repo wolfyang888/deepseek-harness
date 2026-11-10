@@ -91,7 +91,7 @@ export function parseAnswer(raw: string, policy: ChatHubParsePolicy): ChatHubPar
       warnings,
     }
   }
-  const call = readCall(decoded.parsed, policy)
+  const call = readCall(decoded.parsed, policy, warnings)
   if (typeof call === 'string') return { text, invalid: call, warnings }
   return { text, call: repairArguments(call, warnings), warnings }
 }
@@ -432,25 +432,85 @@ function jsonObjectAt(body: string): string | undefined {
 }
 
 /**
+ * Keys a reply may nest the arguments under besides the documented
+ * `arguments` — a model that half-remembers the block format reaches for one
+ * of these spellings before it gives up.
+ */
+const ARGUMENT_KEYS: readonly string[] = ['arguments', 'args', 'parameters', 'params']
+
+/**
  * Validate the parsed block against the policy.
+ *
+ * A reply that nests no arguments object is repaired before it is rejected:
+ * the arguments may sit under an alias key (`args`, `parameters`, `params`),
+ * or flat beside the tool name (`{"name":"read","file_path":…}` — the shape a
+ * model writes when it flattens the call the way prose would). Every repair is
+ * reported; a block that offers nothing to read is still rejected, because
+ * guessing arguments the model never stated would invent a call.
  * @param parsed - decoded block value.
  * @param policy - whitelist and path policy.
+ * @param warnings - sink for the non-fatal repairs.
  * @returns The accepted call, or the rejection reason.
  */
-function readCall(parsed: Record<string, unknown>, policy: ChatHubParsePolicy): ChatHubToolCall | string {
+function readCall(
+  parsed: Record<string, unknown>,
+  policy: ChatHubParsePolicy,
+  warnings: string[],
+): ChatHubToolCall | string {
   const name = parsed['name']
   if (typeof name !== 'string' || name.length === 0) return 'the tool call block has no tool name'
   if (!policy.allowTools.includes(name)) {
     return `tool "${clip(name)}" is not allowed; allowed tools: ${policy.allowTools.join(', ')}`
   }
-  const args = parsed['arguments']
   // A site that serializes tools itself sends `arguments` as a JSON string —
   // `{"name":"glob","arguments":"{\"pattern\":…}"}` — so a string is decoded
   // through the same repair channels before it is rejected.
-  const decoded = isRecord(args) ? args : typeof args === 'string' ? decodeJsonObject(args) : undefined
-  if (!isRecord(decoded)) return `tool "${clip(name)}" carries no arguments object`
+  let decoded = decodeArguments(parsed['arguments'])
+  if (decoded === undefined) {
+    for (const key of ARGUMENT_KEYS) {
+      if (key === 'arguments') continue
+      const candidate = decodeArguments(parsed[key])
+      if (candidate === undefined) continue
+      decoded = candidate
+      warnings.push(`read the arguments under "${key}" instead of "arguments"`)
+      break
+    }
+  }
+  if (decoded === undefined) {
+    const flat = flatArgumentsOf(parsed)
+    if (flat !== undefined) {
+      decoded = flat
+      warnings.push('read the arguments the reply wrote flat beside "name" instead of nested under "arguments"')
+    }
+  }
+  if (decoded === undefined) return `tool "${clip(name)}" carries no arguments object`
   const path = firstRejectedPath(decoded, policy)
   return path === undefined ? { name, arguments: decoded } : path
+}
+
+/**
+ * Read the arguments a reply wrote flat beside the tool name.
+ * @param parsed - decoded block value.
+ * @returns The non-`name`, non-alias keys as an arguments object, or
+ *   `undefined` when nothing is left to read.
+ */
+function flatArgumentsOf(parsed: Record<string, unknown>): Record<string, unknown> | undefined {
+  const flat: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(parsed)) {
+    if (key === 'name' || ARGUMENT_KEYS.includes(key)) continue
+    flat[key] = value
+  }
+  return Object.keys(flat).length === 0 ? undefined : flat
+}
+
+/**
+ * Decode one candidate arguments value.
+ * @param value - the value an `arguments`-shaped key carried.
+ * @returns The arguments object, or `undefined` when the value is neither an
+ *   object nor a decodable string.
+ */
+function decodeArguments(value: unknown): Record<string, unknown> | undefined {
+  return isRecord(value) ? value : typeof value === 'string' ? decodeJsonObject(value) : undefined
 }
 
 /**

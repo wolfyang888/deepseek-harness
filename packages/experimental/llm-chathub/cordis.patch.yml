@@ -33,6 +33,10 @@
 #   DSH_CHATHUB_LLM_PROMPT_LOG  path of a JSONL tape recording every rendered
 #                            prompt (what the site actually read); unset keeps
 #                            the tape off
+#   DSH_CHATHUB_LLM_ANSWER_LOG  path of a JSONL tape recording every raw site
+#                            answer with its parse verdict (the bytes behind a
+#                            rejection, not just the reason); unset keeps the
+#                            tape off
 #   DSH_CHATHUB_LLM_SELECTION  `auto` (default) or `fixed`. With two or more
 #                            mounted sites, `auto` also registers one aggregate
 #                            route (default id `web-auto-chathub`) that picks a
