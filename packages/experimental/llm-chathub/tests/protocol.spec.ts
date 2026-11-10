@@ -232,6 +232,30 @@ describe('parseAnswer', () => {
     expect(parsed.suspected).toContain('<tool_call>')
   })
 
+  it('suspects a reply pairing a repairable native call with a second, unclosed one', () => {
+    // The dropped-write turn: glm-web paired a repairable native read with an
+    // unclosed <tool_call>write whose payload then vanished silently, and the
+    // model went on insisting it had saved a file that never landed. The
+    // leftover tag must surface as a suspicion so the correction teaches the
+    // block format instead of letting the second call disappear.
+    const parsed = parseAnswer(
+      '关键线索出现：<tool_call>read\n{“file_path”: “lua/init.lua”, “offset”: 720, “limit”: 80}</arg_value></tool_call>调用已确认。'
+        + '<tool_call>write\n{“file_path”: “docs/dev/notes/x.md”, “content”: “# 分析\n正文”}\n',
+      POLICY,
+    )
+    expect(parsed.call).toEqual({ name: 'read', arguments: { file_path: 'lua/init.lua', offset: 720, limit: 80 } })
+    expect(parsed.suspected).toContain('another call')
+  })
+
+  it('suspects a reply carrying two complete native calls and keeps only the first repairable', () => {
+    const parsed = parseAnswer(
+      '<tool_call>read {"file_path":"a.ts"}</tool_call>继续：<tool_call>write {"file_path":"b.ts","content":"x"}</tool_call>',
+      POLICY,
+    )
+    expect(parsed.call).toEqual({ name: 'read', arguments: { file_path: 'a.ts' } })
+    expect(parsed.suspected).toContain('another call')
+  })
+
   it('never repairs a native <tool_call> for a tool outside the whitelist', () => {
     const parsed = parseAnswer('<tool_call>bash {"command":"ls"}</tool_call>', POLICY)
     expect(parsed.call).toBeUndefined()

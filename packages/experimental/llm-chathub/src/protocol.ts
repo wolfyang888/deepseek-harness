@@ -158,6 +158,8 @@ const NATIVE_OPEN = /<\s*tool_call\s*>/iu
 const NATIVE_CLOSE = /<\s*\/\s*tool_call\s*>/iu
 /** Bare tool name a native call body opens with. */
 const NATIVE_NAME = /^[\s[({]*([A-Za-z][\w-]*)/u
+/** A native tag that survived after the repaired pair was stripped. */
+const NATIVE_LEFTOVER = /<\s*\/?\s*tool_call(?:[\s>]|$)/iu
 
 /**
  * Repair a call a reply wrote in its native `<tool_call>…</tool_call>`
@@ -169,6 +171,13 @@ const NATIVE_NAME = /^[\s[({]*([A-Za-z][\w-]*)/u
  * The call is accepted only when every check a block call passes passes here
  * too (whitelist, path policy); anything else is left to the narrative
  * suspicion, which teaches the block format instead of executing a guess.
+ *
+ * Only the first complete tag pair is repaired. When native tags survive in
+ * the remainder — a second call, or one whose closing tag never arrived — the
+ * reply is flagged as narrating a call rather than letting the extra call
+ * vanish: a glm-web turn once paired a repairable read with an unclosed
+ * `<tool_call>write …` and the dropped write left the model insisting it had
+ * saved a file that never landed.
  * @param raw - the site's answer text.
  * @param policy - whitelist and path policy.
  * @param warnings - sink for the non-fatal repair.
@@ -197,7 +206,15 @@ function repairedNativeCall(
   warnings.push('repaired the call the reply wrote as <tool_call>…</tool_call> instead of the block')
   const joined = `${raw.slice(0, openMatch.index)}\n${raw.slice(closeMatch.index + closeMatch[0].length)}`
   const { text } = finalTextOf(joined)
-  return { text: boundText(text.trim(), policy.maxTextChars), call: { name, arguments: args }, warnings }
+  const leftover = NATIVE_LEFTOVER.exec(joined)
+  return {
+    text: boundText(text.trim(), policy.maxTextChars),
+    call: { name, arguments: args },
+    warnings,
+    ...leftover === null ? {} : {
+      suspected: 'the reply wrote another call in <tool_call> tags after the first; only one call fits per answer, and it must use the <<<TOOL_CALL block',
+    },
+  }
 }
 
 /** Argument keys whose string value addresses the filesystem. */
