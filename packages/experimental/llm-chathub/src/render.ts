@@ -54,7 +54,7 @@ const PROTOCOL_TEXT = [
   'Prose that describes a call — "[asked for read …]", "tool(read) -> …", or a bare {"name":…,"arguments":…} JSON — does nothing: only the block calls a tool.',
   'Never claim you read a file or ran a tool whose result this conversation does not show; call read again with offset and limit to see more of a long file.',
   'Write "arguments" as one JSON object, never as a quoted string.',
-  'Use forward slashes in file paths (D:/work/code), not backslashes; a stray backslash breaks the JSON.',
+  'Use forward slashes in file paths (for example, src/app/index.ts), not backslashes; a stray backslash breaks the JSON.',
   'Inside a JSON string value, escape every line break as \\n and every double quote as \\"; a raw line break or a bare quote ends the JSON.',
   'Copy file text byte for byte: inside "arguments", indentation, spaces, and ASCII punctuation',
   '(--, ", \', ...) must match the tool result exactly; a retyped line will not match the file.',
