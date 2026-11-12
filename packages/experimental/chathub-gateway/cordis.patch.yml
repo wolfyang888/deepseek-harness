@@ -1,0 +1,34 @@
+# Opt-in local HTTP gateway: expose mounted ChatHub site routes (glm-web,
+# doubao-web, gemini-web, chatgpt-web, qianwen-web, …) as OpenAI-wire models
+# so external coding agents (Codex, Trae, WorkBuddy, …) can list and use them
+# through their own model selectors. The gateway never touches a browser: it
+# forwards requests over the `ctx.llm` routes the llm-chathub layer already
+# registered, so mounting order matters:
+#   dsh web --patch packages/experimental/chathub-host/cordis.patch.yml \
+#           --patch packages/experimental/llm-chathub/cordis.patch.yml \
+#           --patch packages/experimental/chathub-gateway/cordis.patch.yml
+#
+# Environment inputs (every one optional):
+#   DSH_CHATHUB_GATEWAY_HOST  bind address (default `127.0.0.1`)
+#   DSH_CHATHUB_GATEWAY_PORT  bind port (default `8787`)
+#   DSH_CHATHUB_GATEWAY_KEY   bearer key; when set, every request must carry it
+#                             as `Authorization: Bearer <key>` (empty = no check)
+#   DSH_CHATHUB_GATEWAY_SITES comma-separated mounted sites to expose; the
+#                             default exposes every site the llm-chathub layer
+#                             mounted (read from DSH_CHATHUB_LLM_SITES, falling
+#                             back to DSH_CHATHUB_LLM_SITE)
+#   DSH_CHATHUB_GATEWAY_QUEUE per-site pending request limit (default 8)
+#   DSH_CHATHUB_GATEWAY_KEEPALIVE_MS  SSE keepalive interval (default 15000)
+- insert:
+    - id: chathub-gateway
+      name: '@deepseek-ai/dsh-experimental-chathub-gateway'
+      config:
+        host: !!js process.env.DSH_CHATHUB_GATEWAY_HOST ?? '127.0.0.1'
+        port: !!js Number(process.env.DSH_CHATHUB_GATEWAY_PORT ?? 8787)
+        apiKey: !!js process.env.DSH_CHATHUB_GATEWAY_KEY ?? ''
+        sites: !!js (process.env.DSH_CHATHUB_GATEWAY_SITES
+          ?? process.env.DSH_CHATHUB_LLM_SITES
+          ?? process.env.DSH_CHATHUB_LLM_SITE
+          ?? '').split(',').filter(Boolean)
+        maxQueuePerSite: !!js Number(process.env.DSH_CHATHUB_GATEWAY_QUEUE ?? 8)
+        keepaliveMs: !!js Number(process.env.DSH_CHATHUB_GATEWAY_KEEPALIVE_MS ?? 15000)

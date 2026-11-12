@@ -1,0 +1,43 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/experimental/chathub-gateway/README.md
+/:
+  en: b5c91d7bc02d7ce6
+  zh: 0fcab157e01d5e37
+/deepseek-ai-dsh-experimental-chathub-gateway:
+  en: 1145a8563d21df6c
+  zh: 55f994432956548e
+/deepseek-ai-dsh-experimental-chathub-gateway/summary:
+  en: ca23dae55a40fc5e
+  zh: 0b752cfedec08a5c
+/deepseek-ai-dsh-experimental-chathub-gateway/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: 988e839059414d27
+/deepseek-ai-dsh-experimental-chathub-gateway/use-this-package:
+  en: 053766ad434b379d
+  zh: 64aa690fb25badf9
+/deepseek-ai-dsh-experimental-chathub-gateway/use-this-package/configuration:
+  en: c90b76520ecc806a
+  zh: f01f85591230d56e
+/deepseek-ai-dsh-experimental-chathub-gateway/use-this-package/failure-codes:
+  en: 2c03de2e2f074922
+  zh: ff7408b946b7aacf
+/deepseek-ai-dsh-experimental-chathub-gateway/understand-the-implementation:
+  en: 23c055ecf67d7f7a
+  zh: 17016d91592a4198
+/deepseek-ai-dsh-experimental-chathub-gateway/further-exploration:
+  en: 633a407e1f9ecc55
+  zh: b139a1a600606e8b
+/deepseek-ai-dsh-experimental-chathub-gateway/model-experience:
+  en: d14228ca873e7383
+  zh: 442f0244c4890f96
+/deepseek-ai-dsh-experimental-chathub-gateway/model-experience/kv-cache-effect:
+  en: 5e01e4a62d412e91
+  zh: 6afaf6800fab8bf6
+/deepseek-ai-dsh-experimental-chathub-gateway/known-limitations-and-deferred-work:
+  en: 1e6cbb875b24b400
+  zh: cc87ebac294d162a
+/deepseek-ai-dsh-experimental-chathub-gateway/known-limitations-and-deferred-work/dev-note:
+  en: e1e8dd821d6e1a13
+  zh: 3a3da1682041ec40
