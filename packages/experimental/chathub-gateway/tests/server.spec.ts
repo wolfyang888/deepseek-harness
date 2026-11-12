@@ -25,19 +25,23 @@ interface Mounted {
  */
 async function mount(apiKey = '', sites: string[] = []): Promise<Mounted> {
   const ctx = new Context()
-  const mounted: Mounted = { gateway: undefined as never, url: '', ctx, streams: [], health: [], requests: [] }
-  mounted.health = [
+  const state = {
+    streams: [] as AsyncIterable<StreamChunk>[],
+    health: [] as { id: string; health: { status: string } }[],
+    requests: [] as GenerateOptions[],
+  }
+  state.health = [
     { id: 'glm-web', health: { status: 'ready' } },
     { id: 'qianwen-web', health: { status: 'needs-auth' } },
   ]
   ctx.provide('llm', {
     stream: (options: GenerateOptions): AsyncIterable<StreamChunk> => {
-      mounted.requests.push(options)
-      return mounted.streams.shift() ?? emptyStream()
+      state.requests.push(options)
+      return state.streams.shift() ?? emptyStream()
     },
   } as never)
   ctx.provide('webChatTransport', {
-    providers: () => Promise.resolve(mounted.health),
+    providers: () => Promise.resolve(state.health),
   } as never)
   const config: ChatHubGatewayConfig = {
     host: '127.0.0.1',
@@ -48,9 +52,8 @@ async function mount(apiKey = '', sites: string[] = []): Promise<Mounted> {
     keepaliveMs: 15_000,
   }
   const gateway = new ChatHubGateway(ctx, config)
-  mounted.gateway = gateway
-  mounted.url = await gateway.start()
-  return mounted
+  const url = await gateway.start()
+  return { gateway, url, ctx, streams: state.streams, health: state.health, requests: state.requests }
 }
 
 /**
@@ -62,7 +65,7 @@ async function* emptyStream(): AsyncIterable<StreamChunk> {}
  * @param text - the answer text.
  * @returns One completed text turn.
  */
-function* textTurn(text: string): AsyncIterable<StreamChunk> {
+async function* textTurn(text: string): AsyncIterable<StreamChunk> {
   yield { type: 'block-start', index: 0, blockType: 'text' }
   yield { type: 'text-delta', index: 0, text }
   yield { type: 'block-end', index: 0, block: { type: 'text', text } }
@@ -120,8 +123,10 @@ describe('ChatHubGateway /v1/chat/completions', () => {
     })
     expect(response.status).toBe(200)
     const body = await response.json() as { choices: { message: { content: string } }[] }
-    expect(body.choices[0].message.content).toBe('hello')
-    expect(mounted.requests[0].provider).toBe('glm-web-chathub')
+    const choice = body.choices.at(0)
+    if (choice === undefined) throw new Error('unreachable')
+    expect(choice.message.content).toBe('hello')
+    expect(mounted.requests.at(0)?.provider).toBe('glm-web-chathub')
     await mounted.ctx.fiber.dispose()
   })
 

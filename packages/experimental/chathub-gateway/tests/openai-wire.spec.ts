@@ -7,7 +7,7 @@ import {
   toSseFrames,
   type WireCompletionRequest,
 } from '../src/openai-wire.ts'
-import type { StreamChunk } from '@deepseek-ai/dsh-llm'
+import { ToolCallId, type StreamChunk } from '@deepseek-ai/dsh-llm'
 
 /** One text-choice row as the completion response shapes it. */
 interface TextChoice {
@@ -39,13 +39,13 @@ describe('toGenerateOptions', () => {
     expect(options.model).toBe('glm-web')
     expect(options.system).toBe('be terse')
     expect(options.messages.map(message => message.role)).toEqual(['system', 'user', 'assistant', 'tool'])
-    const assistant = options.messages[2]
-    if (assistant.role !== 'assistant') throw new Error('unreachable')
+    const assistant = options.messages.at(2)
+    if (assistant === undefined || assistant.role !== 'assistant') throw new Error('unreachable')
     expect(assistant.content).toEqual([
-      { type: 'tool-call', id: 'call-1', name: 'read', arguments: '{"file_path":"a.ts"}' },
+      { type: 'tool-call', id: ToolCallId('call-1'), name: 'read', arguments: '{"file_path":"a.ts"}' },
     ])
-    const tool = options.messages[3]
-    if (tool.role !== 'tool') throw new Error('unreachable')
+    const tool = options.messages.at(3)
+    if (tool === undefined || tool.role !== 'tool') throw new Error('unreachable')
     expect(tool.toolCallId).toBe('call-1')
     expect(tool.content[0]).toEqual({ type: 'text', text: 'file body' })
   })
@@ -72,8 +72,8 @@ describe('toGenerateOptions', () => {
       ],
     }
     const options = toGenerateOptions(request, 'glm-web-chathub')
-    const assistant = options.messages[1]
-    if (assistant.role !== 'assistant') throw new Error('unreachable')
+    const assistant = options.messages.at(1)
+    if (assistant === undefined || assistant.role !== 'assistant') throw new Error('unreachable')
     expect(assistant.content).toEqual([{ type: 'text', text: 'thinking' }])
   })
 })
@@ -97,7 +97,7 @@ function callChunks(): StreamChunk[] {
     { type: 'text-delta', index: 0, text: 'let me look.' },
     { type: 'block-end', index: 0, block: { type: 'text', text: 'let me look.' } },
     { type: 'block-start', index: 1, blockType: 'tool-call' },
-    { type: 'block-end', index: 1, block: { type: 'tool-call', id: 'call-9', name: 'read', arguments: '{"file_path":"a.ts"}' } },
+    { type: 'block-end', index: 1, block: { type: 'tool-call', id: ToolCallId('call-9'), name: 'read', arguments: '{"file_path":"a.ts"}' } },
     { type: 'finish', reason: { kind: 'tool-calls' } },
   ]
 }
@@ -105,7 +105,8 @@ function callChunks(): StreamChunk[] {
 describe('toCompletionResponse', () => {
   it('unfolds a text turn into a stop completion', () => {
     const response = toCompletionResponse('glm-web-chathub', 'glm-web', textChunks())
-    const choice = (response.choices as TextChoice[])[0]
+    const choice = (response.choices as TextChoice[]).at(0)
+    if (choice === undefined) throw new Error('unreachable')
     expect(choice.message.content).toBe('hello world')
     expect(choice.finish_reason).toBe('stop')
     expect(response.usage).toEqual({ prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 })
@@ -114,7 +115,8 @@ describe('toCompletionResponse', () => {
 
   it('unfolds a tool turn into tool_calls with the adapter call id', () => {
     const response = toCompletionResponse('glm-web-chathub', 'glm-web', callChunks())
-    const choice = (response.choices as CallChoice[])[0]
+    const choice = (response.choices as CallChoice[]).at(0)
+    if (choice === undefined) throw new Error('unreachable')
     expect(choice.message.tool_calls).toEqual([{
       id: 'call-9',
       type: 'function',
