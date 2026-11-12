@@ -18,7 +18,7 @@ import type { ChatHubGatewayConfig } from './types.ts'
 
 export { ChatHubGateway } from './server.ts'
 export { classifyFailure, failureFromError } from './errors.ts'
-export { toCompletionResponse, toGenerateOptions, toSseFrames } from './openai-wire.ts'
+export { sseRenderer, toCompletionResponse, toGenerateOptions } from './openai-wire.ts'
 export * from './types.ts'
 
 /** Configuration as the mounting profile writes it; defaults fill the rest. */

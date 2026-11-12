@@ -207,7 +207,7 @@ export class PlaywrightChatSession implements WebChatTransportSession {
       const baseline = await this.answerNow(payload.prompt)
       await this.page.submit(payload.prompt, this.driver, this.config.typeDelayMs)
       const collected: TurnContent = { content: '' }
-      await drain(this.streamUntilComplete(payload.prompt, collected, baseline))
+      await drain(this.streamUntilComplete(payload.prompt, collected, baseline, 'deltas'))
       return { content: collected.content, finishReason: 'stop' }
     } finally {
       release()
@@ -224,7 +224,28 @@ export class PlaywrightChatSession implements WebChatTransportSession {
     try {
       const baseline = await this.answerNow(payload.prompt)
       await this.page.submit(payload.prompt, this.driver, this.config.typeDelayMs)
-      yield* this.streamUntilComplete(payload.prompt, { content: '' }, baseline)
+      yield* this.streamUntilComplete(payload.prompt, { content: '' }, baseline, 'deltas')
+    } finally {
+      release()
+    }
+  }
+
+  /**
+   * Send one prompt and yield the answer container's complete markup on every
+   * poll. Each item replaces the previous one; the last item is the stable
+   * answer.
+   * @param payload - provider-normalized page payload.
+   * @returns Full answer markup as it stands, once per poll.
+   */
+  async *watch(payload: WebChatPayload): AsyncIterable<string> {
+    const release = await this.gate.acquireTurn(this.key, this.config.maxQueuedTurns)
+    try {
+      const baseline = await this.answerNow(payload.prompt)
+      await this.page.submit(payload.prompt, this.driver, this.config.typeDelayMs)
+      // The last yielded snapshot is the stabilized answer: stabilization only
+      // counts polls that read unchanged text, so the changing poll before
+      // them always yielded the final markup.
+      yield* this.streamUntilComplete(payload.prompt, { content: '' }, baseline, 'snapshots')
     } finally {
       release()
     }
@@ -236,7 +257,10 @@ export class PlaywrightChatSession implements WebChatTransportSession {
   }
 
   /**
-   * Poll the answer container until its text stabilizes, yielding deltas.
+   * Poll the answer container until its text stabilizes, yielding what the
+   * mode names: growth-suffix deltas (a mid-answer rewrite yields the full
+   * container as one delta), or complete snapshots that each replace the
+   * previous item.
    *
    * A site's answer selector is a class name, not a promise: a landing page,
    * a recommendation card, or the previous turn can occupy the same node, and
@@ -246,12 +270,14 @@ export class PlaywrightChatSession implements WebChatTransportSession {
    * @param prompt - rendered prompt whose echo is not an answer.
    * @param collected - receives the final stable text when the turn completes.
    * @param baseline - container text read just before submission.
-   * @returns Text deltas as the answer grows.
+   * @param mode - `deltas` for suffix growth, `snapshots` for full markup.
+   * @returns What the mode names, in page order.
    */
   private async *streamUntilComplete(
     prompt: string,
     collected: TurnContent,
     baseline: string,
+    mode: 'deltas' | 'snapshots',
   ): AsyncIterable<string> {
     const pollMs = this.driver.pollMs ?? this.config.pollMs
     const stablePolls = this.driver.stablePolls ?? this.config.stablePolls
@@ -305,6 +331,13 @@ export class PlaywrightChatSession implements WebChatTransportSession {
         return
       }
       if (current.length === 0) continue
+      if (mode === 'snapshots') {
+        if (current !== emitted) {
+          emitted = current
+          yield current
+        }
+        continue
+      }
       if (current.startsWith(emitted) && current.length > emitted.length) {
         const delta = current.slice(emitted.length)
         emitted = current

@@ -24,7 +24,7 @@ import {
 } from '@deepseek-ai/dsh-llm'
 import { appendFile } from 'node:fs/promises'
 import { answerMessageText } from '@deepseek-ai/dsh-experimental-chathub-host'
-import { parseAnswer } from './protocol.ts'
+import { END_MARKER, TOOL_CALL_OPEN, parseAnswer } from './protocol.ts'
 import { renderRequest } from './render.ts'
 import { SiteRouter } from './router.ts'
 import {
@@ -39,6 +39,7 @@ import {
   type ChatHubRenderPolicy,
   type ChatHubToolCall,
   type ChatHubTransport,
+  type ChatHubTransportClosed,
   type ChatHubTransportSession,
   type ChatHubTransportSource,
   type ChatHubTurnObservation,
@@ -170,13 +171,63 @@ export class ChatHubLlmAdapter extends LlmAdapter {
 
   /**
    * Run one step of the loop against the site.
+   *
+   * A pinned route on a transport that reports answer snapshots streams them
+   * as text deltas while the site is still writing; every other combination
+   * (the aggregate route, compaction, snapshot-less sessions) keeps the
+   * repair-and-rotation pipeline and emits the answer once it completes.
    * @param options - assembled request, including tool schemas and history.
    * @returns Text block, the optional single tool call, and the finish reason.
    * @throws LlmError when the site cannot be reached, refuses, or answers illegally.
    */
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     const started = Date.now()
-    const turn = await this.runTurn(options, started)
+    const pinned = this.pinnedSiteOf(options.provider)
+    const live = pinned !== undefined && (options.purpose as string | undefined) !== 'compaction'
+      ? new LiveQueue()
+      : undefined
+    if (live === undefined) {
+      const turn = await this.runTurn(options, started)
+      yield* this.emitTurn(turn, options, started)
+      return
+    }
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    let failure: unknown
+    let turn: Awaited<ReturnType<ChatHubLlmAdapter['runTurn']>> | undefined
+    let settled = false
+    const run = this.runTurn(options, started, live).then(
+      result => { turn = result },
+      error => { failure = error },
+    ).finally(() => {
+      settled = true
+      live.wake()
+    })
+    while (!settled || live.pending() > 0) {
+      if (live.pending() === 0) {
+        await live.idle()
+        continue
+      }
+      for (const delta of live.take()) yield { type: 'text-delta', index: 0, text: delta }
+    }
+    await run
+    if (failure !== undefined) throw failure
+    if (turn === undefined) throw new Error('unreachable')
+    yield* this.emitTurnRest(turn, options, started, live.emittedChars())
+  }
+
+  /**
+   * Report a completed turn and emit its answer as one block.
+   * @param turn - the legal answer with its site and render facts.
+   * @param options - the request the turn answered.
+   * @param started - `Date.now()` when the request began.
+   * @returns The turn's chunks, ending in a finish reason.
+   * @throws LlmError when the answer stayed illegal after the repair budget.
+   */
+  private *emitTurn(
+    turn: Awaited<ReturnType<ChatHubLlmAdapter['runTurn']>>,
+    options: GenerateOptions,
+    started: number,
+  ): Iterable<StreamChunk> {
     const call = turn.parsed.call
     if (turn.parsed.invalid !== undefined) {
       // The attempt that produced it is already on the tape as a failure.
@@ -185,6 +236,67 @@ export class ChatHubLlmAdapter extends LlmAdapter {
         CHATHUB_LLM_MALFORMED_CODE,
       )
     }
+    this.reportTurn(turn, options, started)
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    if (turn.parsed.text.length > 0) yield { type: 'text-delta', index: 0, text: turn.parsed.text }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text: turn.parsed.text } }
+    if (call === undefined) {
+      yield { type: 'finish', reason: { kind: 'stop' } }
+      return
+    }
+    yield* this.toolCallChunks(call)
+  }
+
+  /**
+   * Emit the rest of a live-streamed turn: the block never re-sends what the
+   * deltas already delivered, so a session without snapshots still works
+   * through the same path as one lump.
+   * @param turn - the legal answer with its site and render facts.
+   * @param options - the request the turn answered.
+   * @param started - `Date.now()` when the request began.
+   * @param emitted - characters the live deltas already emitted.
+   * @returns The remaining chunks, ending in a finish reason.
+   * @throws LlmError when the answer stayed illegal once the live deltas had
+   *   committed the attempt.
+   */
+  private *emitTurnRest(
+    turn: Awaited<ReturnType<ChatHubLlmAdapter['runTurn']>>,
+    options: GenerateOptions,
+    started: number,
+    emitted: number,
+  ): Iterable<StreamChunk> {
+    const call = turn.parsed.call
+    if (turn.parsed.invalid !== undefined) {
+      // The attempt that produced it is already on the tape as a failure.
+      throw new LlmError(
+        `chathub-llm: ${turn.site} answered illegally: ${turn.parsed.invalid}`,
+        CHATHUB_LLM_MALFORMED_CODE,
+      )
+    }
+    this.reportTurn(turn, options, started)
+    if (emitted === 0 && turn.parsed.text.length > 0) {
+      yield { type: 'text-delta', index: 0, text: turn.parsed.text }
+    }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text: turn.parsed.text } }
+    if (call === undefined) {
+      yield { type: 'finish', reason: { kind: 'stop' } }
+      return
+    }
+    yield* this.toolCallChunks(call)
+  }
+
+  /**
+   * Record the observation for a turn that is about to be emitted.
+   * @param turn - the legal answer with its site and render facts.
+   * @param options - the request the turn answered.
+   * @param started - `Date.now()` when the request began.
+   */
+  private reportTurn(
+    turn: Awaited<ReturnType<ChatHubLlmAdapter['runTurn']>>,
+    options: GenerateOptions,
+    started: number,
+  ): void {
+    const call = turn.parsed.call
     this.report({
       site: turn.site,
       ...options.sessionId === undefined ? {} : { sessionId: String(options.sessionId) },
@@ -197,14 +309,24 @@ export class ChatHubLlmAdapter extends LlmAdapter {
       ms: Date.now() - started,
       droppedEntries: turn.rendered.droppedEntries,
     })
-    yield { type: 'block-start', index: 0, blockType: 'text' }
-    if (turn.parsed.text.length > 0) yield { type: 'text-delta', index: 0, text: turn.parsed.text }
-    yield { type: 'block-end', index: 0, block: { type: 'text', text: turn.parsed.text } }
-    if (call === undefined) {
-      yield { type: 'finish', reason: { kind: 'stop' } }
-      return
+  }
+
+  /**
+   * Open the next attempt's session on a site, mapping transport errors.
+   *
+   * Opening hits the same transport tokens `send` does (a closed page, a
+   * locked profile, a disposed browser); without this mapping those bypass
+   * the site-failure codes and reach the loop unclassified.
+   * @param site - site provider the route selected.
+   * @returns The session, a refusal, or `undefined` while sign-in is pending.
+   * @throws LlmError when the transport itself fails to open.
+   */
+  private async openAttempt(site: string): Promise<ChatHubTransportSession | ChatHubTransportClosed | undefined> {
+    try {
+      return await this.transport().open(site, this.nextPageKey(site))
+    } catch (error) {
+      throw transportFailure(error, site)
     }
-    yield* this.toolCallChunks(call)
   }
 
   /**
@@ -220,10 +342,16 @@ export class ChatHubLlmAdapter extends LlmAdapter {
    * silently is worse than failing.
    * @param options - assembled request.
    * @param started - clock reading when the step began, for attempt records.
+   * @param sink - live emission channel for the streaming caller, when the
+   *   route pins a site and the request is not compaction.
    * @returns The site that served, what it was shown, and how it answered.
    * @throws LlmError when no site serves the turn.
    */
-  private async runTurn(options: GenerateOptions, started: number): Promise<{
+  private async runTurn(
+    options: GenerateOptions,
+    started: number,
+    sink?: ChatHubLiveSink,
+  ): Promise<{
     site: string
     rendered: { prompt: string; droppedEntries: number }
     parsed: Awaited<ReturnType<ChatHubLlmAdapter['askUntilLegal']>>
@@ -260,7 +388,7 @@ export class ChatHubLlmAdapter extends LlmAdapter {
         parsed = await this.askUntilLegal(rendered.prompt, site, options.signal, answerBudget, {
           narrative: (options.purpose as string | undefined) !== 'compaction',
           endMarker: (options.purpose as string | undefined) !== 'compaction' && hadToolActivity(options),
-        })
+        }, sink)
       } catch (error) {
         this.reportAttempt(options, site, rendered, failures + 1, started, failureCodeOf(error))
         if (pinned !== undefined || failures >= routing.failoverAttempts || !failoverEligible(error)) throw error
@@ -438,6 +566,9 @@ export class ChatHubLlmAdapter extends LlmAdapter {
    * @param signal - caller cancellation.
    * @param maxTextChars - answer-text budget; compaction turns raise it.
    * @param repairs - which reply findings this request enforces.
+   * @param sink - live emission channel, when the caller streams: once it has
+   *   emitted, a rejected reply cannot be re-asked invisibly, so repairs stop
+   *   and the rejection surfaces.
    * @returns The last reply with its attempt count and answer length.
    */
   private async askUntilLegal(
@@ -446,6 +577,7 @@ export class ChatHubLlmAdapter extends LlmAdapter {
     signal?: AbortSignal,
     maxTextChars = ANSWER_CHARS,
     repairs: Repairs = { narrative: true, endMarker: false },
+    sink?: ChatHubLiveSink,
   ): Promise<{
     text: string
     call?: ChatHubToolCall
@@ -459,11 +591,11 @@ export class ChatHubLlmAdapter extends LlmAdapter {
     for (;;) {
       attempt += 1
       this.assertNotAborted(site, signal)
-      const answer = await this.ask(question, site, signal)
+      const answer = await this.ask(question, site, signal, sink)
       const parsed = parseAnswer(answer, { ...this.parsePolicy(), maxTextChars })
       await this.recordAnswer(site, attempt, answer, parsed.invalid)
       const repair = repairOf(parsed, repairs)
-      if (repair === undefined || attempt > this.config.repairAttempts) {
+      if (repair === undefined || attempt > this.config.repairAttempts || (sink?.emittedChars() ?? 0) > 0) {
         return {
           ...parsed,
           ...repair === undefined ? {} : { invalid: parsed.invalid ?? repair.reason },
@@ -479,22 +611,24 @@ export class ChatHubLlmAdapter extends LlmAdapter {
 
   /**
    * Send one prompt and read the whole answer.
+   *
+   * With a live sink and a session that reports answer snapshots, the answer
+   * is also streamed to the sink as it is written; the returned text stays
+   * the complete answer either way.
    * @param prompt - self-contained prompt.
    * @param site - site provider the route selected.
    * @param signal - caller cancellation.
+   * @param sink - live emission channel for the streaming caller.
    * @returns The site's answer as visible text.
    */
-  private async ask(prompt: string, site: string, signal?: AbortSignal): Promise<string> {
+  private async ask(
+    prompt: string,
+    site: string,
+    signal?: AbortSignal,
+    sink?: ChatHubLiveSink,
+  ): Promise<string> {
     await this.assertHealthy(site)
-    let opened: Awaited<ReturnType<ChatHubTransport['open']>>
-    try {
-      opened = await this.transport().open(site, this.nextPageKey(site))
-    } catch (error) {
-      // Opening hits the same transport tokens `send` does (a closed page, a
-      // locked profile, a disposed browser); without this mapping those
-      // bypass the site-failure codes and reach the loop unclassified.
-      throw transportFailure(error, site)
-    }
+    const opened = await this.openAttempt(site)
     if (opened === undefined) {
       throw new LlmError(`chathub-llm: ${site} is waiting for sign-in`, CHATHUB_LLM_AUTH_CODE)
     }
@@ -502,15 +636,14 @@ export class ChatHubLlmAdapter extends LlmAdapter {
       throw new LlmError(`chathub-llm: ${site} refused the session (${opened.reason})`, CHATHUB_LLM_AUTH_CODE)
     }
     const session: ChatHubTransportSession = opened
+    const payload = {
+      providerId: site,
+      system: '',
+      messages: [],
+      prompt,
+      meta: { origin: 'raw-messages' as const },
+    }
     try {
-      const answer = await session.send({
-        providerId: site,
-        system: '',
-        messages: [],
-        prompt,
-        meta: { origin: 'raw-messages' },
-      })
-      this.assertNotAborted(site, signal)
       // The transport carries answers as markup for the panel; the protocol
       // here parses plain text, and the conversion also unescapes the
       // `&lt;&lt;&lt;TOOL_CALL` delimiters a site's DOM serializes. It restores
@@ -518,7 +651,27 @@ export class ChatHubLlmAdapter extends LlmAdapter {
       // because this text is also the answer the transcript shows; code is
       // left verbatim so a JSON argument read from the block still matches the
       // bytes an `edit` searches for.
-      return answerMessageText(answer.content)
+      const toText = (markup: string): string => answerMessageText(markup)
+      if (sink !== undefined && session.watch !== undefined) {
+        let emitted = 0
+        let snapshot = ''
+        for await (const current of session.watch(payload)) {
+          snapshot = current
+          this.assertNotAborted(site, signal)
+          const delta = emittableSuffix(toText(current), emitted)
+          if (delta.length > 0) {
+            emitted += delta.length
+            sink.emit(delta)
+          }
+        }
+        const rest = finalSuffix(toText(snapshot), emitted)
+        if (rest.length > 0) sink.emit(rest)
+        this.assertNotAborted(site, signal)
+        return toText(snapshot)
+      }
+      const answer = await session.send(payload)
+      this.assertNotAborted(site, signal)
+      return toText(answer.content)
     } catch (error) {
       throw transportFailure(error, site)
     } finally {
@@ -839,6 +992,115 @@ function readToken(error: Error): string | undefined {
   if (typeof own === 'string') return own
   const prefix = /^(chathub-[a-z-]+):/u.exec(error.message)
   return prefix?.[1]
+}
+
+/**
+ * Marker opens that end the visible portion of a reply while it is still
+ * being written: everything from the first marker on belongs to the protocol,
+ * not the reader.
+ */
+const MARKER_OPENS = [TOOL_CALL_OPEN, END_MARKER] as const
+
+/**
+ * Characters a mid-stream projection holds back so a marker split across
+ * snapshots is never emitted as answer text: one less than the longest marker.
+ */
+const MARKER_HOLDBACK = TOOL_CALL_OPEN.length - 1
+
+/**
+ * The answer text a projection may emit next, honoring the marker holdback.
+ *
+ * @param projected - the snapshot's visible text.
+ * @param emitted - how much of the previous projections was already emitted.
+ * @returns The next safe suffix, or empty when the projection shrank, has not
+ *   grown past the holdback, or reached a marker.
+ */
+function emittableSuffix(projected: string, emitted: number): string {
+  let bound = projected.length - MARKER_HOLDBACK
+  for (const marker of MARKER_OPENS) {
+    const at = projected.indexOf(marker)
+    if (at >= 0) bound = Math.min(bound, at)
+  }
+  if (bound <= emitted) return ''
+  return projected.slice(emitted, bound)
+}
+
+/**
+ * The answer text the final projection still owes, with no holdback left:
+ * once the site has stopped writing, a projection that never grew a marker is
+ * all visible answer.
+ *
+ * @param answer - the stable answer's visible text.
+ * @param emitted - how much the mid-stream deltas already emitted.
+ * @returns The remaining visible text, or empty when nothing is owed. Text the
+ *   protocol parses after a tool call block is not re-emitted: the block-end
+ *   block still carries it for non-streaming consumers.
+ */
+function finalSuffix(answer: string, emitted: number): string {
+  let bound = answer.length
+  for (const marker of MARKER_OPENS) {
+    const at = answer.indexOf(marker)
+    if (at >= 0) bound = Math.min(bound, at)
+  }
+  if (bound <= emitted) return ''
+  return answer.slice(emitted, bound)
+}
+
+/**
+ * The live-emission channel between an in-flight attempt and the streaming
+ * caller. Emission commits the attempt: once text has been emitted, the
+ * repair pipeline stops retrying that answer invisibly.
+ */
+interface ChatHubLiveSink {
+  /**
+   * @param text - one answer delta, safe for the consumer to show.
+   */
+  emit(text: string): void
+  /**
+   * @returns Characters emitted so far.
+   */
+  emittedChars(): number
+}
+
+/** Queue-backed sink the streaming caller drains while the turn runs. */
+class LiveQueue implements ChatHubLiveSink {
+  private readonly deltas: string[] = []
+  private emitted = 0
+  private waiter: (() => void) | undefined
+
+  /** @param text - one answer delta, safe for the consumer to show. */
+  emit(text: string): void {
+    this.emitted += text.length
+    this.deltas.push(text)
+    this.waiter?.()
+  }
+
+  /** @returns Characters emitted so far. */
+  emittedChars(): number {
+    return this.emitted
+  }
+
+  /** @returns Deltas queued but not yet drained. */
+  pending(): number {
+    return this.deltas.length
+  }
+
+  /** @returns Every queued delta, leaving the queue empty. */
+  take(): string[] {
+    return this.deltas.splice(0)
+  }
+
+  /** Wake a waiter without queueing anything. */
+  wake(): void {
+    this.waiter?.()
+  }
+
+  /** @returns Resolves on the next emit or wake. */
+  async idle(): Promise<void> {
+    await new Promise<void>((resolve) => {
+      this.waiter = resolve
+    })
+  }
 }
 
 /**

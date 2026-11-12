@@ -211,6 +211,13 @@ export interface ChatHubTransportSession {
    */
   send(payload: ChatHubTransportPayload): Promise<{ readonly content: string }>
   /**
+   * @param payload - provider-normalized page payload; the adapter fills `prompt`.
+   * @returns The answer container's complete markup as it stands, once per
+   *   poll; each item replaces the previous one, and the last item is the
+   *   stable answer.
+   */
+  watch?(payload: ChatHubTransportPayload): AsyncIterable<string>
+  /**
    * @returns Resolves when the page backing this session is released.
    */
   close(): Promise<void>

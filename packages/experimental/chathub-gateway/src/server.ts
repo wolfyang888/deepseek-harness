@@ -15,7 +15,7 @@ import { createServer } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import { LlmError, type FinishReason, type LlmRuntime, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { failureFromError } from './errors.ts'
-import { toCompletionResponse, toGenerateOptions, toSseFrames, type WireCompletionRequest } from './openai-wire.ts'
+import { sseRenderer, toCompletionResponse, toGenerateOptions, type SseRenderer, type WireCompletionRequest } from './openai-wire.ts'
 import { SiteQueues } from './queue.ts'
 import { GATEWAY_NEEDS_AUTH, GATEWAY_READY, type ChatHubGatewayConfig, type GatewayFailure, type GatewayModelEntry } from './types.ts'
 
@@ -202,16 +202,34 @@ export class ChatHubGateway {
     }
     const chunks: StreamChunk[] = []
     let keepalive: ReturnType<typeof setInterval> | undefined
+    let sse: SseRenderer | undefined
     try {
       if (parsed.stream === true) {
-        // Open the SSE stream and hold it with keepalive writes while the
-        // site turn runs, so a proxy or client does not time the response
-        // out before the answer lands.
+        // Open the SSE stream and hold it with keepalive writes between
+        // frames, so a proxy or client does not time the response out while
+        // the site turn runs.
         response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', 'connection': 'keep-alive' })
         response.write(': keepalive\n\n')
         keepalive = setInterval(() => { response.write(': keepalive\n\n') }, this.config.keepaliveMs)
+        sse = sseRenderer(parsed.model)
+        response.write(sse.role())
       }
-      for await (const chunk of this.stream(route, options)) chunks.push(chunk)
+      for await (const chunk of this.stream(route, options)) {
+        chunks.push(chunk)
+        if (sse === undefined) continue
+        switch (chunk.type) {
+          case 'text-delta':
+            response.write(sse.content(chunk.text))
+            break
+          case 'block-end':
+            if (chunk.block.type === 'tool-call') {
+              response.write(sse.toolCall(chunk.block.id, chunk.block.name, chunk.block.arguments))
+            }
+            break
+          default:
+            break
+        }
+      }
     } catch (error) {
       const failure = failureFromError(error)
       // The SSE stream already carries a 200; the failure has to ride the
@@ -238,8 +256,16 @@ export class ChatHubGateway {
       }
       return
     }
-    if (parsed.stream === true) {
-      for (const frame of toSseFrames(parsed.model, chunks)) response.write(frame)
+    if (sse !== undefined) {
+      // The adapter contract ends the stream in a finish chunk; the fallback
+      // only covers streams that ended without one.
+      const reason = finish?.reason.kind === 'tool-calls'
+        ? 'tool_calls'
+        : finish?.reason.kind === 'stop'
+          ? 'stop'
+          : chunks.some(chunk => chunk.type === 'block-end' && chunk.block.type === 'tool-call') ? 'tool_calls' : 'stop'
+      response.write(sse.finish(reason))
+      response.write(sse.done())
       response.end()
     } else {
       this.writeJson(response, 200, toCompletionResponse(route, parsed.model, chunks))

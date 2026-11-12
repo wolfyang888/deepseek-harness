@@ -91,9 +91,9 @@ bundle 层把 `DSH_CHATHUB_GATEWAY_HOST`、`DSH_CHATHUB_GATEWAY_PORT`、`DSH_CHA
 <details>
 <summary>实现内部 — 点击展开</summary>
 
-`openai-wire.ts` 是唯一的翻译缝：`toGenerateOptions` 把线格式消息（system、user、assistant 文本与 `tool_calls`、tool 结果）折叠成 `GenerateOptions`，并保留适配层签发的调用 id；`toCompletionResponse` / `toSseFrames` 把该轮的 chunk 展开成 completion 对象或 SSE 帧序列。第一个文本块和第一个 tool-call 块胜出；适配层不会产出更多。
+`openai-wire.ts` 是唯一的翻译缝：`toGenerateOptions` 把线格式消息（system、user、assistant 文本与 `tool_calls`、tool 结果）折叠成 `GenerateOptions`，并保留适配层签发的调用 id；`toCompletionResponse` / `sseRenderer` 把该轮的 chunk 展开成 completion 对象或逐帧的 SSE 渲染器。第一个文本块和第一个 tool-call 块胜出；适配层不会产出更多。
 
-`server.ts` 拥有 HTTP 面：请求路由、Bearer 校验、请求体大小上限（32 MiB）、SSE 生命周期——响应头加一条 keepalive 注释开流，`keepaliveMs` 在站点轮次进行中维持连接，失败的轮次以线格式错误事件呈现而不是断流。模型解析走传输健康状态：`ready` 的站点应答，`needs-auth` 的站点回 401 附面板指引，未列出的模型回 404 附列表指引。
+`server.ts` 拥有 HTTP 面：请求路由、Bearer 校验、请求体大小上限（32 MiB）、SSE 生命周期——响应头加一条 keepalive 注释开流，每个适配层 chunk 落地即刻写成自己的帧，`keepaliveMs` 在站点轮次进行中的帧间隙维持连接，失败的轮次以线格式错误事件呈现而不是断流。模型解析走传输健康状态：`ready` 的站点应答，`needs-auth` 的站点回 401 附面板指引，未列出的模型回 404 附列表指引。
 
 `queue.ts` 按站点统计待处理请求，超过 `maxQueuePerSite` 回 429；站点之间互不计数。`errors.ts` 把 llm runtime 的稳定失败码映射到 HTTP 状态与用户可执行的 message——绝不拼接站点原文。`index.ts` 把行解析成配置，并用 context effect 注册监听器，插件停时端口随之关闭。
 
@@ -133,7 +133,7 @@ bundle 层把 `DSH_CHATHUB_GATEWAY_HOST`、`DSH_CHATHUB_GATEWAY_PORT`、`DSH_CHA
 <a id="known-limitations-and-deferred-work"></a>
 
 - **Anthropic 线协议待做** — Claude Code 需要 `/v1/messages` 及其自己的 SSE 事件词汇；OpenAI 线协议先覆盖 Codex、Trae、WorkBuddy。
-- **伪流式** — 站点传输轮询到答案稳定，所以流式响应在站点轮次结束后一次性交付全部文本；等待期间只有 keepalive 注释在跑。
+- **流式即提交** — pinned 路由在站点书写的同时流式转发答案，已交付的 delta 无法再透明修复：非法回答以 `MALFORMED_RESPONSE` 错误呈现而不是重问。聚合路由、压缩轮次与无快照的会话保持整块交付并保留修复。
 - **无真实用量统计** — web 回答不带 token 计数，`usage` 只镜像适配层的估算。
 - **是队列，不是公平调度** — 每站点准入只给待处理请求设上限，不重排；站点页面上的轮次仍由宿主传输串行化。
 - **跨轮次无请求身份** — 网关在两次调用之间不存储任何东西；外部 agent 自己的历史就是会话。

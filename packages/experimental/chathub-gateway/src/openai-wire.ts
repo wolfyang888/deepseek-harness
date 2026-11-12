@@ -170,42 +170,58 @@ export function toCompletionResponse(route: string, model: string, chunks: reado
 }
 
 /**
- * Render the SSE event frames of one assembled turn, including the leading
- * role delta and the final `[DONE]` sentinel.
+ * Render the SSE frames of one completion stream as its chunks arrive.
+ *
+ * Frames follow the assembled layout the non-streaming response uses — role
+ * delta, content deltas, one complete tool-call delta, the terminal reason,
+ * `[DONE]` — but each frame is produced the moment its chunk lands, so a
+ * client watching the event stream sees the answer while the site writes it.
  * @param model - model id the caller asked for.
- * @param chunks - the turn's adapter chunks in order.
- * @returns The exact `data:` frames to write, newline-terminated.
+ * @returns The per-frame renderers for one open event stream.
  */
-export function toSseFrames(model: string, chunks: readonly StreamChunk[]): string[] {
-  const assembled = assemble(chunks)
-  const id = `chathub-${assembled.messageId}`
-  const created = Math.floor(assembled.created / 1000)
-  const header = { id, object: 'chat.completion.chunk', created, model }
-  const frames: string[] = []
-  frames.push(frame({ ...header, choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }] }))
-  if (assembled.text.length > 0) {
-    frames.push(frame({ ...header, choices: [{ index: 0, delta: { content: assembled.text }, finish_reason: null }] }))
-  }
-  if (assembled.call !== undefined) {
-    frames.push(frame({
+export function sseRenderer(model: string): SseRenderer {
+  const header = { id: 'chathub-turn', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model }
+  return {
+    role: () => frame({ ...header, choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }] }),
+    content: (text: string) => frame({ ...header, choices: [{ index: 0, delta: { content: text }, finish_reason: null }] }),
+    toolCall: (id: string, name: string, argumentsJson: string) => frame({
       ...header,
       choices: [{
         index: 0,
         delta: {
-          tool_calls: [{
-            index: 0,
-            id: assembled.call.id,
-            type: 'function',
-            function: { name: assembled.call.name, arguments: assembled.call.arguments },
-          }],
+          tool_calls: [{ index: 0, id, type: 'function', function: { name, arguments: argumentsJson } }],
         },
         finish_reason: null,
       }],
-    }))
+    }),
+    finish: (reason: 'stop' | 'tool_calls') => frame({ ...header, choices: [{ index: 0, delta: {}, finish_reason: reason }] }),
+    done: () => 'data: [DONE]\n',
   }
-  frames.push(frame({ ...header, choices: [{ index: 0, delta: {}, finish_reason: assembled.call !== undefined ? 'tool_calls' : 'stop' }] }))
-  frames.push('data: [DONE]\n')
-  return frames
+}
+
+/** The frame renderers of one open SSE completion stream. */
+export interface SseRenderer {
+  /** @returns The leading role delta frame. */
+  role(): string
+  /**
+   * @param text - one answer delta.
+   * @returns The content delta frame for it.
+   */
+  content(text: string): string
+  /**
+   * @param id - adapter call id.
+   * @param name - tool name.
+   * @param argumentsJson - complete call arguments JSON.
+   * @returns The single tool-call delta frame for the call.
+   */
+  toolCall(id: string, name: string, argumentsJson: string): string
+  /**
+   * @param reason - the successful terminal reason.
+   * @returns The finish frame for it.
+   */
+  finish(reason: 'stop' | 'tool_calls'): string
+  /** @returns The `[DONE]` sentinel. */
+  done(): string
 }
 
 /** One assembled turn: display text, the single accepted call, and metadata. */
@@ -218,23 +234,26 @@ interface Assembled {
 }
 
 /**
- * Fold adapter chunks, taking the first text and the first tool-call block
- * and ignoring later blocks the adapter never emits.
+ * Fold adapter chunks, taking the first text block's text and the first
+ * tool-call block and ignoring later blocks the adapter never emits. The
+ * block-end text wins over concatenated deltas: with a live-streaming source
+ * the deltas are the answer as it grew, while the block-end carries the
+ * bounded, marker-stripped text the protocol accepted.
  * @param chunks - adapter chunks in order.
  * @returns The assembled turn.
  */
 function assemble(chunks: readonly StreamChunk[]): Assembled {
-  let text = ''
+  let deltas = ''
+  let blockText: string | undefined
   let call: Assembled['call']
-  const messageId = 'turn'
-  const created = Date.now()
   let usage: Record<string, unknown> | undefined
   for (const chunk of chunks) {
     switch (chunk.type) {
       case 'text-delta':
-        if (call === undefined) text += chunk.text
+        if (call === undefined && blockText === undefined) deltas += chunk.text
         break
       case 'block-end':
+        if (chunk.block.type === 'text' && blockText === undefined) blockText = chunk.block.text
         if (chunk.block.type === 'tool-call' && call === undefined) {
           call = { id: chunk.block.id, name: chunk.block.name, arguments: chunk.block.arguments }
         }
@@ -250,7 +269,7 @@ function assemble(chunks: readonly StreamChunk[]): Assembled {
         break
     }
   }
-  return { text, call, messageId, created, usage }
+  return { text: blockText ?? deltas, call, messageId: 'turn', created: Date.now(), usage }
 }
 
 /**

@@ -91,9 +91,9 @@ The bundle layer maps `DSH_CHATHUB_GATEWAY_HOST`, `DSH_CHATHUB_GATEWAY_PORT`, `D
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-`openai-wire.ts` is the one translation seam: `toGenerateOptions` folds wire messages (system, user, assistant text and `tool_calls`, tool results) into `GenerateOptions` with adapter-issued call ids preserved, and `toCompletionResponse` / `toSseFrames` unfold the turn's chunks into the completion object or the SSE frame sequence. The first text and the first tool-call block win; the adapter never emits more.
+`openai-wire.ts` is the one translation seam: `toGenerateOptions` folds wire messages (system, user, assistant text and `tool_calls`, tool results) into `GenerateOptions` with adapter-issued call ids preserved, and `toCompletionResponse` / `sseRenderer` unfold the turn's chunks into the completion object or the per-frame SSE renderers. The first text and the first tool-call block win; the adapter never emits more.
 
-`server.ts` owns the HTTP surface: request routing, bearer checking, the body size cap (32 MiB), and the SSE lifecycle — headers and one keepalive comment open the stream, `keepaliveMs` keeps it alive while the site turn runs, and a failed turn surfaces as a wire error event instead of a lost stream. Model resolution goes through the transport health: a `ready` site answers, a `needs-auth` site answers 401 with the panel hint, and an unlisted model answers 404 with a listing hint.
+`server.ts` owns the HTTP surface: request routing, bearer checking, the body size cap (32 MiB), and the SSE lifecycle — headers and one keepalive comment open the stream, each adapter chunk is written as its frame the moment it lands, `keepaliveMs` holds the connection between frames while the site turn runs, and a failed turn surfaces as a wire error event instead of a lost stream. Model resolution goes through the transport health: a `ready` site answers, a `needs-auth` site answers 401 with the panel hint, and an unlisted model answers 404 with a listing hint.
 
 `queue.ts` counts pending requests per site and answers 429 over `maxQueuePerSite`; sites count independently. `errors.ts` maps the llm runtime's stable failure codes onto HTTP statuses and user-facing messages that name the next action, never raw site prose. `index.ts` resolves the row into configuration and registers the listener with the context effect, so the port closes with the plugin.
 
@@ -133,7 +133,7 @@ No direct effect; each gateway request becomes one adapter turn that opens its o
 <a id="known-limitations-and-deferred-work"></a>
 
 - **Anthropic wire deferred** — Claude Code needs `/v1/messages` with its own SSE event vocabulary; the OpenAI wire covers Codex, Trae, and WorkBuddy first.
-- **Pseudo-streaming** — the site transport polls until the answer stabilizes, so a streamed response delivers the whole text at once after the site turn; only the keepalive comments run during the wait.
+- **Streaming commits the attempt** — a pinned route streams the answer while the site writes it, so a delta already delivered cannot be transparently repaired: an illegal answer surfaces as a `MALFORMED_RESPONSE` error instead of a re-ask. The aggregate route, compaction turns, and snapshot-less sessions keep the lump delivery with repairs.
 - **No true usage accounting** — a web answer reports no token counts, so `usage` mirrors whatever the adapter estimated.
 - **Queue, not fairness** — per-site admission bounds pending requests but does not reorder them; the host transport still serializes turns on the site page.
 - **No request identity across turns** — the gateway stores nothing between calls; the external agent's own history is the conversation.

@@ -150,6 +150,28 @@ it('sends one prompt and returns the stabilized answer markup', async () => {
   expect(page.submitted).toEqual(['hello'])
 })
 
+it('watches one prompt and yields the growing container as replacing snapshots', async () => {
+  const { session: chat, page, gate } = session()
+  page.answers = ['<p>a</p>', '<p>ab</p>', '<p>ab</p>', '<p>ab</p>']
+  const snapshots: string[] = []
+  for await (const snapshot of chat.watch(payload())) snapshots.push(snapshot)
+  // The last snapshot is the stabilized answer send would have returned; the
+  // unchanging polls after it yield nothing.
+  expect(snapshots).toEqual(['<p>a</p>', '<p>ab</p>'])
+  expect(page.submitted).toEqual(['hello'])
+  expect(gate.acquired).toHaveLength(1)
+})
+
+it('yields the whole container again when a mid-answer rewrite shrinks it', async () => {
+  const { session: chat, page } = session()
+  page.answers = ['<p>long enough</p>', '<p>short</p>', '<p>short</p>', '<p>short</p>']
+  const snapshots: string[] = []
+  for await (const snapshot of chat.watch(payload())) snapshots.push(snapshot)
+  // Snapshots replace, so a rewrite is the new container in full, never a
+  // negative delta or a mix of old and new markup.
+  expect(snapshots).toEqual(['<p>long enough</p>', '<p>short</p>'])
+})
+
 it('does not treat the prompt echo or an empty container as an answer', async () => {
   const { session: chat, page } = session()
   page.answers = ['', '<p>hello</p>', '<p>hello answer</p>', '<p>hello answer</p>', '<p>hello answer</p>']

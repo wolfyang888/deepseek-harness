@@ -131,14 +131,14 @@ Claude Code        Codex / Trae / WorkBuddy
 
 ### 6.4 流式语义（诚实声明）
 
-宿主层是「提交 → 轮询到答案稳定」语义，没有 token 流。网关的处理：
+宿主层是「提交 → 轮询到答案稳定」语义，没有 token 流，但轮询过程中的每次读取都能拿到答案容器的完整快照。网关按快照做实时转发：
 
-- `stream: true` 请求：建立 SSE，立即发 role/首块事件，长轮次期间每 15s 发注释行或 ping 事件（Anthropic 线有 `ping` 事件类型，OpenAI 线用 `: keepalive` 注释行），防止客户端空闲超时；
-- 答案到达后：文本按段落切几片以 delta 形式发出，再发 finish 事件（伪流式，改善打字机观感，不伪装成真流式）；
-- `stream: false` 请求：整轮等待后一次性返回（网关自身的 HTTP 超时要 ≥ 宿主 `turnTimeoutMs` + 余量）;
-- 首延迟即整轮时长（约 10–60s），这是浏览器免费模型的物理现实，写入文档而非隐藏。
-
-真流式是后续项：需要 `chathub-host` 暴露「轮询中的中间文本」观测流，属于宿主层扩展点，不进首版。
+- `stream: true` 请求：建立 SSE，立即发 role 事件；站点书写期间，每次轮询的新增可见文本即刻以 delta 事件转发（`chathub-host` 的 `watch` 快照 → 适配层的 holdback 增量 → 网关逐帧写出）；帧间隙每 15s 发注释行或 ping 事件（Anthropic 线有 `ping` 事件类型，OpenAI 线用 `: keepalive` 注释行），防止客户端空闲超时；
+- 增量转发只覆盖 pinned 单站点路由；聚合路由与压缩轮次保持整块交付（轮换与修复机制和增量外泄不兼容）；
+- 流式即提交：一旦有 delta 交付，非法回复以 `MALFORMED_RESPONSE` 呈现而不是透明重问（调用方已经看过一半，重问无法透明）；
+- 标记 holdback：适配层扣留少量字符，跨快照被拆开的 `<<<TOOL_CALL` / `<<<END` 标记绝不作为答案文本外泄；
+- `stream: false` 请求：整轮等待后一次性返回（网关自身的 HTTP 超时要 ≥ 宿主 `turnTimeoutMs` + 余量）；
+- 首延迟取决于站点书写节奏（glm-web 实测首个内容帧约 6s，后续 20 帧在约 11s 内陆续到达），这是浏览器免费模型的物理现实，写入文档而非隐藏。
 
 ### 6.5 排队与并发
 
@@ -235,7 +235,7 @@ wire_api = "chat"
 
 **Phase 1 — OpenAI 线（覆盖 Codex / Trae / WorkBuddy）**
 
-- `chathub-gateway` 包骨架：HTTP 服务、`/v1/models`、`/v1/chat/completions`（非流式 + SSE 伪流式）、per-site 队列、错误映射、鉴权；
+- `chathub-gateway` 包骨架：HTTP 服务、`/v1/models`、`/v1/chat/completions`（非流式 + SSE 实时流式，见 §6.4）、per-site 队列、错误映射、鉴权；
 - 单测：线格式 ↔ `GenerateOptions` 互转、tool call 翻译、错误表、队列上限；
 - 真浏览器验证（轨道规则 3）：Codex 挂 `glm-web`，项目级 prompt、同一话题两轮、一次合法工具调用，报告每轮站点与失败码。
 
@@ -251,7 +251,6 @@ wire_api = "chat"
 
 **Deferred（明确不做进首版）**
 
-- 真 token 流式（需宿主观测流扩展）；
 - 每回复多工具调用（块协议单调用约束）；
 - 网关侧上下文压缩建议（客户端已有各自机制）。
 
@@ -259,8 +258,8 @@ wire_api = "chat"
 
 | 风险/限制 | 应对 |
 |---|---|
-| 站点反爬 / UI 漂移 | 失败码如实上报（`chathub-ui-drift` → 500 明示驱动需更新）；适配层修复轮兜底 |
-| 首延迟 = 整轮时长（10–60s） | SSE keepalive 防超时；文档如实声明；不伪装流式 |
+| 站点反爬 / UI 漂移 | 失败码如实上报（`chathub-ui-drift` → 500 明示驱动需更新）；适配层修复轮兜底（流式提交后不再兜底，见 §6.4） |
+| 首 token 延迟取决于站点书写节奏 | SSE 快照实时转发 + keepalive 防超时；文档如实声明实际到达节奏 |
 | Claude Code 大 system prompt | 挂载时预算校验 + 警告；`maxSystemChars`/`maxPromptChars` 在 cordis.yml 调大 |
 | 每回复一个工具调用 | `parallel_tool_calls: false` 语义；四个客户端 agent 循环均兼容串行 |
 | 站点模型「编造」（配额/进度幻觉） | 既有防线：块协议 + 修复轮 + ROLE 固定块事实行；网关不额外补救，失败如实返回 |

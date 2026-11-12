@@ -33,6 +33,12 @@ class FakeSession implements ChatHubTransportSession {
   closed = false
 
   /**
+   * Snapshots of the growing answer, present only when the transport reports
+   * them; the streaming caller consumes these instead of `send`.
+   */
+  watch?: (payload: { prompt: string }) => AsyncIterable<string>
+
+  /**
    * @param source - transport that scripted this page.
    * @param key - page key the transport opened it under.
    * @param site - site provider the page belongs to.
@@ -41,7 +47,9 @@ class FakeSession implements ChatHubTransportSession {
     private readonly source: FakeSource,
     readonly key: string,
     private readonly site: string,
-  ) {}
+  ) {
+    if (source.snapshots) this.watch = payload => this.watchTurn(payload)
+  }
 
   /**
    * @param payload - the prompt the adapter rendered.
@@ -49,20 +57,46 @@ class FakeSession implements ChatHubTransportSession {
    */
   async send(payload: { prompt: string }): Promise<{ content: string }> {
     this.source.prompts.push(payload.prompt)
+    const answer = await this.answerOf()
+    // A site serializes its answer DOM: markup-carrying content escapes `<`,
+    // `>`, and `&` into entities, which is the shape the transport really
+    // delivers and the adapter's text conversion unescapes.
+    return {
+      content: answer
+        .replace(/&/gu, '&amp;')
+        .replace(/</gu, '&lt;')
+        .replace(/>/gu, '&gt;'),
+    }
+  }
+
+  /**
+   * @param payload - the prompt the adapter rendered.
+   * @returns The scripted answer's snapshots, entity-escaped like `send`
+   *   content, ending with the full answer.
+   */
+  private async *watchTurn(payload: { prompt: string }): AsyncIterable<string> {
+    this.source.prompts.push(payload.prompt)
+    const answer = await this.answerOf()
+    const escape = (text: string): string => text
+      .replace(/&/gu, '&amp;')
+      .replace(/</gu, '&lt;')
+      .replace(/>/gu, '&gt;')
+    const plan = this.source.watchPlans.shift() ?? [answer]
+    for (const snapshot of plan) yield escape(snapshot)
+  }
+
+  /**
+   * Consume one scripted answer, sharing the failure checks of both paths.
+   * @returns The raw answer text.
+   */
+  private async answerOf(): Promise<string> {
     if (this.source.failSites.has(this.site)) {
       throw new LlmError(`chathub-llm: ${this.site} is needs-auth; sign in first`, 'AUTH')
     }
     const failure = this.source.sendError
     if (failure !== undefined) throw failure
     this.source.onSend?.()
-    // A site serializes its answer DOM: markup-carrying content escapes `<`,
-    // `>`, and `&` into entities, which is the shape the transport really
-    // delivers and the adapter's text conversion unescapes.
-    const answer = (this.source.answers.shift() ?? '')
-      .replace(/&/gu, '&amp;')
-      .replace(/</gu, '&lt;')
-      .replace(/>/gu, '&gt;')
-    return { content: answer }
+    return this.source.answers.shift() ?? ''
   }
 
   /** @returns Resolves once the page is released. */
@@ -78,6 +112,10 @@ class FakeSource implements ChatHubTransportSource {
   /** Per-site health that overrides {@link health} for a listed site. */
   healthBySite: Record<string, string> = {}
   answers: string[] = []
+  /** Whether scripted pages report answer snapshots for the streaming path. */
+  snapshots = false
+  /** Snapshot sequence per streamed turn, entity-escaped like `send` content. */
+  watchPlans: string[][] = []
   openMode: 'session' | 'pending' | 'closed' = 'session'
   sendError: unknown
   openError: unknown
@@ -448,6 +486,83 @@ describe('ChatHubLlmAdapter turns', () => {
     await collect(adapter(source, { onTurn: record => records.push(record) }).stream(request()))
     expect(records[0]?.invalid).toBeUndefined()
     expect(records[0]?.toolName).toBeUndefined()
+  })
+})
+
+describe('ChatHubLlmAdapter live streaming', () => {
+  it('streams a pinned route answer as growing text deltas', async () => {
+    const source = new FakeSource()
+    source.snapshots = true
+    source.answers = ['the build is green now']
+    // One snapshot per poll: the answer grows mid-turn, so the deltas the
+    // caller sees while the turn runs are separate chunks, not one lump.
+    source.watchPlans = [['the build is', 'the build is green', 'the build is green now']]
+    const chunks = await collect(adapter(source).stream(request()))
+    const deltas = chunks.flatMap(chunk => chunk.type === 'text-delta' ? [chunk.text] : [])
+    expect(deltas.length).toBeGreaterThan(1)
+    expect(deltas.join('')).toBe('the build is green now')
+    const blockEnd = chunks.find(chunk => chunk.type === 'block-end')
+    expect(blockEnd).toMatchObject({ block: { type: 'text', text: 'the build is green now' } })
+    expect(source.prompts).toHaveLength(1)
+    expect(source.released).toEqual(['deepseek-web:1'])
+  })
+
+  it('holds the tool-call marker back while streaming and emits the call after', async () => {
+    const source = new FakeSource()
+    source.snapshots = true
+    const body = '{"name":"read","arguments":{"file_path":"src/a.ts"}}'
+    const full = call(body)
+    source.answers = [full]
+    source.watchPlans = [[`let me look.\n${TOOL_CALL_OPEN}`, full]]
+    const chunks = await collect(adapter(source).stream(request()))
+    const deltas = chunks.flatMap(chunk => chunk.type === 'text-delta' ? [chunk.text] : [])
+    // No delta carries any part of the marker, however the DOM split it.
+    for (const delta of deltas) expect(delta).not.toContain('<')
+    expect(deltas.join('')).toBe('let me look.\n')
+    const callEnd = chunks.find(chunk => chunk.type === 'block-end' && chunk.block.type === 'tool-call')
+    expect(callEnd).toMatchObject({
+      index: 1,
+      block: { type: 'tool-call', id: expect.any(String), name: 'read', arguments: '{"file_path":"src/a.ts"}' },
+    })
+    expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'tool-calls' } })
+  })
+
+  it('surfaces an illegal answer instead of repairing once a delta has been emitted', async () => {
+    const source = new FakeSource()
+    source.snapshots = true
+    const unclosed = `looking\n${TOOL_CALL_OPEN}\n{"name":"read"`
+    const body = '{"name":"read","arguments":{"file_path":"src/a.ts"}}'
+    source.answers = [unclosed, call(body)]
+    source.watchPlans = [[unclosed]]
+    await expect(collect(adapter(source).stream(request()))).rejects.toMatchObject({ code: 'MALFORMED_RESPONSE' })
+    // The visible text committed the attempt, so no repair round re-asks.
+    expect(source.prompts).toHaveLength(1)
+  })
+
+  it('repairs the same illegal answer when nothing was streamed yet', async () => {
+    const source = new FakeSource()
+    const unclosed = `looking\n${TOOL_CALL_OPEN}\n{"name":"read"`
+    const body = '{"name":"read","arguments":{"file_path":"src/a.ts"}}'
+    source.answers = [unclosed, call(body)]
+    const chunks = await collect(adapter(source).stream(request()))
+    expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'tool-calls' } })
+    expect(source.prompts).toHaveLength(2)
+  })
+
+  it('keeps the aggregate route on the lump path even when snapshots exist', async () => {
+    const source = new FakeSource()
+    source.snapshots = true
+    // Two answers: the aggregate route replays prose across sites, and both
+    // replays and lumps stay on the full-answer pipeline.
+    source.answers = ['one answer', 'one answer']
+    source.watchPlans = [['one', 'one answer'], ['one', 'one answer']]
+    const chunks = await collect(adapter(source, {
+      sites: ['deepseek-web', 'qianwen-web'],
+      routes: ['deepseek-web-chathub', 'qianwen-web-chathub', 'web-auto-chathub'],
+      autoRoute: 'web-auto-chathub',
+    }).stream({ ...request(), provider: 'web-auto-chathub' }))
+    const deltas = chunks.flatMap(chunk => chunk.type === 'text-delta' ? [chunk.text] : [])
+    expect(deltas).toEqual(['one answer'])
   })
 })
 

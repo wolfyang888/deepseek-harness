@@ -202,9 +202,15 @@ async function post(model: string, messages: WireTurn[], stream: boolean): Promi
   }
   // SSE: the gateway writes keepalive comments while the site turn runs, then
   // role, content, tool_calls, and finish frames plus the [DONE] sentinel.
+  // Frame arrival times are recorded so the run reports whether content
+  // reached the client while the site was still writing.
   let text = ''
   let call: Step['call']
   let finish: string | undefined
+  const startedAt = Date.now()
+  let contentFrames = 0
+  let firstContentMs: number | undefined
+  let lastContentMs: number | undefined
   for await (const line of readSseLines(response)) {
     if (!line.startsWith('data: ')) continue
     const payload = line.slice('data: '.length)
@@ -215,7 +221,12 @@ async function post(model: string, messages: WireTurn[], stream: boolean): Promi
     }
     if (frame.error !== undefined) throw new Error(`stream error: ${frame.error.message}`)
     const choice = frame.choices?.[0]
-    if (choice?.delta?.content !== undefined) text += choice.delta.content
+    if (choice?.delta?.content !== undefined) {
+      text += choice.delta.content
+      contentFrames += 1
+      lastContentMs = Date.now() - startedAt
+      if (firstContentMs === undefined) firstContentMs = lastContentMs
+    }
     const wireCall = choice?.delta?.tool_calls?.[0]
     if (wireCall !== undefined && wireCall.function !== undefined) call = {
       id: wireCall.id,
@@ -223,6 +234,9 @@ async function post(model: string, messages: WireTurn[], stream: boolean): Promi
       arguments: wireCall.function.arguments,
     }
     if (choice?.finish_reason !== undefined && choice.finish_reason !== null) finish = choice.finish_reason
+  }
+  if (contentFrames > 0) {
+    console.log(`[sse] ${String(contentFrames)} content frames, first at ${String(firstContentMs)}ms, last at ${String(lastContentMs)}ms`)
   }
   return { text, call, finish }
 }

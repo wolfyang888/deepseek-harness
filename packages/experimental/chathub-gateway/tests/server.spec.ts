@@ -201,6 +201,48 @@ describe('ChatHubGateway /v1/chat/completions', () => {
     await mounted.ctx.fiber.dispose()
   })
 
+  it('forwards content frames while the site turn is still running', async () => {
+    const mounted = await mount()
+    const turn = { finished: false }
+    async function* slowTurn(): AsyncIterable<StreamChunk> {
+      yield { type: 'block-start', index: 0, blockType: 'text' }
+      yield { type: 'text-delta', index: 0, text: 'first ' }
+      // The gap the site takes to write the rest of its answer.
+      await new Promise(resolve => { setTimeout(resolve, 120) })
+      yield { type: 'text-delta', index: 0, text: 'second' }
+      yield { type: 'block-end', index: 0, block: { type: 'text', text: 'first second' } }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+      turn.finished = true
+    }
+    mounted.streams.push(slowTurn())
+    const response = await fetch(`${mounted.url}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'glm-web', stream: true, messages: [{ role: 'user', content: 'hi' }] }),
+    })
+    expect(response.status).toBe(200)
+    const reader = (response.body ?? new ReadableStream<Uint8Array>()).getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let sawFirstWhileRunning = false
+    let sawSecond = false
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      // Freeze on the read that first carried the delta, so later reads after
+      // the turn finished cannot rewrite the liveness observation.
+      if (!sawFirstWhileRunning && buffer.includes('"content":"first "')) sawFirstWhileRunning = !turn.finished
+      if (buffer.includes('"content":"second"')) sawSecond = true
+    }
+    // The first delta reached the client before the turn completed, and the
+    // rest still followed through to the sentinel.
+    expect(sawFirstWhileRunning).toBe(true)
+    expect(sawSecond).toBe(true)
+    expect(buffer.trimEnd().endsWith('data: [DONE]')).toBe(true)
+    await mounted.ctx.fiber.dispose()
+  })
+
   it('rides a mid-stream failure on the open event stream and keeps listening', async () => {
     const mounted = await mount()
     mounted.streams.push(failingStream())

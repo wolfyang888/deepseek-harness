@@ -2,9 +2,9 @@
 
 import { describe, expect, it } from 'vitest'
 import {
+  sseRenderer,
   toCompletionResponse,
   toGenerateOptions,
-  toSseFrames,
   type WireCompletionRequest,
 } from '../src/openai-wire.ts'
 import { ToolCallId, type StreamChunk } from '@deepseek-ai/dsh-llm'
@@ -126,21 +126,22 @@ describe('toCompletionResponse', () => {
   })
 })
 
-describe('toSseFrames', () => {
-  it('emits role, content, finish, and the DONE sentinel', () => {
-    const frames = toSseFrames('glm-web', textChunks())
-    expect(frames[0]).toMatch(/^data: \{"id":"chathub-/u)
-    expect(frames[0]).toContain('"delta":{"role":"assistant"}')
-    expect(frames.some(frame => frame.includes('"content":"hello world"'))).toBe(true)
-    expect(frames.at(-1)).toBe('data: [DONE]\n')
+describe('sseRenderer', () => {
+  it('renders role, content, finish, and the DONE sentinel as separate frames', () => {
+    const sse = sseRenderer('glm-web')
+    const role = sse.role()
+    expect(role).toMatch(/^data: \{"id":"chathub-/u)
+    expect(role).toContain('"delta":{"role":"assistant"}')
+    expect(sse.content('hello world')).toContain('"content":"hello world"')
+    expect(sse.finish('stop')).toContain('"finish_reason":"stop"')
+    expect(sse.done()).toBe('data: [DONE]\n')
   })
 
-  it('carries the tool call as one tool_calls delta', () => {
-    const frames = toSseFrames('glm-web', callChunks())
-    const callFrame = frames.find(frame => frame.includes('"tool_calls"'))
-    expect(callFrame).toContain('"id":"call-9"')
+  it('carries the tool call as one tool_calls delta with a null finish', () => {
+    const sse = sseRenderer('glm-web')
+    const callFrame = sse.toolCall('call-9', 'read', '{"file_path":"a.ts"}')
+    expect(callFrame).toContain('"tool_calls":[{"index":0,"id":"call-9","type":"function"')
     expect(callFrame).toContain('"finish_reason":null')
-    const finishFrame = frames.at(-2)
-    expect(finishFrame).toContain('"finish_reason":"tool_calls"')
+    expect(sse.finish('tool_calls')).toContain('"finish_reason":"tool_calls"')
   })
 })

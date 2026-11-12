@@ -54,6 +54,15 @@ export interface WebChatTransportSession {
    */
   stream?: (payload: WebChatPayload) => AsyncIterable<string>
   /**
+   * Send one prompt and yield the answer container's complete markup on every
+   * poll, when supported. Snapshots make mid-answer rewrites unambiguous:
+   * each item replaces the previous one, and the last item is the stable
+   * answer `send` would have returned.
+   * @param payload - Provider-normalized page payload.
+   * @returns Full answer markup as it stands, once per poll.
+   */
+  watch?: (payload: WebChatPayload) => AsyncIterable<string>
+  /**
    * Release the page or tab backing this session.
    * @returns Resolves when the page is released.
    */
