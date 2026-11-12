@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install the four packed ChatHub tarballs into a standalone project directory.
+# Install the five packed ChatHub tarballs into a standalone project directory.
 #
 # Usage: ./install-chathub.sh [target-dir]
 #   target-dir defaults to ./dist/npm-chathub/install-target
@@ -45,7 +45,8 @@ for name in \
   @deepseek-ai/dsh-experimental-chathub \
   @deepseek-ai/dsh-experimental-client-ui-chathub \
   @deepseek-ai/dsh-experimental-chathub-host \
-  @deepseek-ai/dsh-experimental-llm-chathub; do
+  @deepseek-ai/dsh-experimental-llm-chathub \
+  @deepseek-ai/dsh-experimental-chathub-gateway; do
   node -e "console.log(process.argv[1], '->', require.resolve(process.argv[1]))" "$name"
 done
 echo "done"

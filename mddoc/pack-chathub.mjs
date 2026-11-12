@@ -1,15 +1,16 @@
 #!/usr/bin/env node
 /**
- * Pack the four ChatHub plugins into `dist/npm-chathub`.
+ * Pack the five ChatHub plugins into `dist/npm-chathub`.
  *
  * Artifacts are rebuilt under the official client build profile first, because
  * the release rules reject client bundles whose recorded environment is not the
- * official one (no `DSH_CLIENT_TITLE`). Packing is targeted: exactly these four
- * packages, in dependency order.
+ * official one (no `DSH_CLIENT_TITLE`). Packing is targeted: exactly these five
+ * packages, in dependency order. Pass `--skip-build` to pack the artifacts
+ * already on disk instead of paying for the full rebuild.
  */
-import { execFileSync, execSync } from 'node:child_process'
+import { execSync } from 'node:child_process'
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 
 const ROOT = process.cwd()
 const OUT = join(ROOT, 'dist/npm-chathub')
@@ -20,11 +21,21 @@ const PACKAGES = [
   '@deepseek-ai/dsh-experimental-client-ui-chathub',
   '@deepseek-ai/dsh-experimental-chathub-host',
   '@deepseek-ai/dsh-experimental-llm-chathub',
+  '@deepseek-ai/dsh-experimental-chathub-gateway',
 ]
 
-/** Run a command in the repository root with an environment overlay. */
+/**
+ * Run a command in the repository root with an environment overlay.
+ *
+ * Windows exposes pnpm as a .cmd shim, which CreateProcess cannot start
+ * directly, so the line is built and handed to a shell. Values are quoted only
+ * when they could split, keeping `--filter=@scope/name` untouched.
+ */
 function run(command, args, environment = {}) {
-  execFileSync(command, args, {
+  const line = [command, ...args]
+    .map((argument) => (/\s|"/.test(argument) ? JSON.stringify(argument) : argument))
+    .join(' ')
+  execSync(line, {
     cwd: ROOT,
     stdio: 'inherit',
     env: { ...process.env, ...environment },
@@ -36,14 +47,19 @@ function repositoryVersion() {
   return JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version
 }
 
-/** Read one packed tarball's manifest. */
+/**
+ * Read one packed tarball's manifest.
+ *
+ * Runs from OUT with a bare filename: GNU tar reads a leading `D:` as a remote
+ * host (`Cannot connect to D:`), so an absolute Windows path never reaches it.
+ */
 function packedManifest(tarball) {
-  return JSON.parse(execSync(`tar -xOzf ${JSON.stringify(tarball)} package/package.json`, { cwd: OUT }).toString())
+  return JSON.parse(execSync(`tar -xOzf ${JSON.stringify(basename(tarball))} package/package.json`, { cwd: OUT }).toString())
 }
 
 /** Reject a tarball that publishes source, source maps, or workspace ranges. */
 function validateTarball(tarball) {
-  const members = execSync(`tar -tzf ${JSON.stringify(tarball)}`, { cwd: OUT }).toString().split('\n')
+  const members = execSync(`tar -tzf ${JSON.stringify(basename(tarball))}`, { cwd: OUT }).toString().split('\n')
   const forbidden = members.filter((member) => /^package\/src(\/|$)/.test(member) || /\.(?:js|d\.ts)\.map$/.test(member))
   if (forbidden.length > 0) throw new Error(`${tarball} publishes forbidden entries:\n${forbidden.join('\n')}`)
 
@@ -57,16 +73,20 @@ function validateTarball(tarball) {
 
 const version = repositoryVersion()
 const commit = execSync('git rev-parse HEAD', { cwd: ROOT }).toString().trim()
+const skipBuild = process.argv.includes('--skip-build')
 console.log(`packing ChatHub plugins ${version} (${commit.slice(0, 7)}) into ${OUT}`)
 
-// 1. Rebuild artifacts with the official client profile the release consumes.
-run('pnpm', ['run', 'build:artifacts'], {
-  DSH_BUILD_CLIENT_PROFILE: 'official',
-  DSH_CLIENT_COMMIT_HASH: commit,
-  DSH_CLIENT_VERSION: version,
-})
+// 1. Rebuild artifacts with the official client profile the release consumes,
+//    unless the caller already built them and only wants fresh tarballs.
+if (!skipBuild) {
+  run('pnpm', ['run', 'build:artifacts'], {
+    DSH_BUILD_CLIENT_PROFILE: 'official',
+    DSH_CLIENT_COMMIT_HASH: commit,
+    DSH_CLIENT_VERSION: version,
+  })
+}
 
-// 2. Pack the four packages serially, keeping the dependency order.
+// 2. Pack the five packages serially, keeping the dependency order.
 mkdirSync(OUT, { recursive: true })
 for (const file of readdirSync(OUT).filter((entry) => entry.endsWith('.tgz'))) {
   rmSync(join(OUT, file))

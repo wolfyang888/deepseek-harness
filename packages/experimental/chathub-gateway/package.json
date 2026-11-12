@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-experimental-chathub-gateway",
   "description": "Local OpenAI-wire HTTP gateway that exposes mounted ChatHub site routes to external coding agents",
-  "version": "0.1.0-alpha.1",
+  "version": "0.2.2-alpha.2",
   "publishConfig": {
     "access": "public"
   },

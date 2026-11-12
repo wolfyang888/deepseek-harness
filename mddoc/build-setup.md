@@ -1,6 +1,6 @@
 # Chathub 插件打包与安装指南
 
-覆盖 `packages/experimental/` 下的四个 chathub 插件：
+覆盖 `packages/experimental/` 下的五个 chathub 插件：
 
 | 包 | npm 名 | 说明 |
 |---|---|---|
@@ -8,6 +8,7 @@
 | client-ui-chathub | `@deepseek-ai/dsh-experimental-client-ui-chathub` | 浏览器侧边栏面板 |
 | chathub-host | `@deepseek-ai/dsh-experimental-chathub-host` | 宿主浏览器运行时与 Remote |
 | llm-chathub | `@deepseek-ai/dsh-experimental-llm-chathub` | 网页模型 LLM 适配器 |
+| chathub-gateway | `@deepseek-ai/dsh-experimental-chathub-gateway` | 本地 HTTP 网关：把站点路由暴露成 OpenAI 兼容模型 |
 
 以下命令除特别说明外，都从仓库根目录 `deepseek-harness/` 执行。
 
@@ -36,7 +37,7 @@ node mddoc/pack-chathub.mjs
    （`.dsh-build/client-build-environment.json` 里没有 `DSH_CLIENT_TITLE`），
    仓库的发布校验会拒绝这样的包。
 
-2. 定向打包四个包（保持依赖顺序）：
+2. 定向打包五个包（保持依赖顺序）：
 
    ```bash
    pnpm pack --recursive --workspace-concurrency=1 \
@@ -44,6 +45,7 @@ node mddoc/pack-chathub.mjs
      --filter=@deepseek-ai/dsh-experimental-client-ui-chathub \
      --filter=@deepseek-ai/dsh-experimental-chathub-host \
      --filter=@deepseek-ai/dsh-experimental-llm-chathub \
+     --filter=@deepseek-ai/dsh-experimental-chathub-gateway \
      --pack-destination "$(pwd)/dist/npm-chathub"
    ```
 
@@ -58,8 +60,13 @@ dist/npm-chathub/
   deepseek-ai-dsh-experimental-client-ui-chathub-0.2.2-alpha.2.tgz
   deepseek-ai-dsh-experimental-chathub-host-0.2.2-alpha.2.tgz
   deepseek-ai-dsh-experimental-llm-chathub-0.2.2-alpha.2.tgz
+  deepseek-ai-dsh-experimental-chathub-gateway-0.2.2-alpha.2.tgz
   publish-order.txt
 ```
+
+五个包的版本必须与根 `package.json` 一致（`0.2.2-alpha.2`）：`pack-chathub.mjs`
+按这个基线校验每个 tarball 的 `version`，不一致直接失败。gateway 原先是
+`0.1.0-alpha.1`，作为仓库内唯一例外已对齐，否则它进不了这套打包流水线。
 
 ### 1.2 手工校验（可选）
 
@@ -116,14 +123,17 @@ npm install \
   deepseek-ai-dsh-experimental-chathub-0.2.2-alpha.2.tgz \
   deepseek-ai-dsh-experimental-chathub-host-0.2.2-alpha.2.tgz \
   deepseek-ai-dsh-experimental-llm-chathub-0.2.2-alpha.2.tgz \
-  deepseek-ai-dsh-experimental-client-ui-chathub-0.2.2-alpha.2.tgz
+  deepseek-ai-dsh-experimental-client-ui-chathub-0.2.2-alpha.2.tgz \
+  deepseek-ai-dsh-experimental-chathub-gateway-0.2.2-alpha.2.tgz
 ```
 
-实测安装成功（20 个包），四个包可解析：
+实测安装成功，五个包可解析：
 
 ```bash
 node -e "console.log(require.resolve('@deepseek-ai/dsh-experimental-llm-chathub'))"
 # .../dist/npm-chathub/node_modules/@deepseek-ai/dsh-experimental-llm-chathub/lib/index.js
+node -e "console.log(require.resolve('@deepseek-ai/dsh-experimental-chathub-gateway'))"
+# .../dist/npm-chathub/node_modules/@deepseek-ai/dsh-experimental-chathub-gateway/lib/index.js
 ```
 
 若该目录没有 `package.json`（例如重新打包后清空过），先补一个：
@@ -157,7 +167,8 @@ npm install --no-audit --no-fund \
   /home/ywf/work/code/github/deepseek-harness/dist/npm-chathub/deepseek-ai-dsh-experimental-chathub-0.2.2-alpha.2.tgz \
   /home/ywf/work/code/github/deepseek-harness/dist/npm-chathub/deepseek-ai-dsh-experimental-client-ui-chathub-0.2.2-alpha.2.tgz \
   /home/ywf/work/code/github/deepseek-harness/dist/npm-chathub/deepseek-ai-dsh-experimental-chathub-host-0.2.2-alpha.2.tgz \
-  /home/ywf/work/code/github/deepseek-harness/dist/npm-chathub/deepseek-ai-dsh-experimental-llm-chathub-0.2.2-alpha.2.tgz
+  /home/ywf/work/code/github/deepseek-harness/dist/npm-chathub/deepseek-ai-dsh-experimental-llm-chathub-0.2.2-alpha.2.tgz \
+  /home/ywf/work/code/github/deepseek-harness/dist/npm-chathub/deepseek-ai-dsh-experimental-chathub-gateway-0.2.2-alpha.2.tgz
 ```
 
 npm 会把 `chathub-host → chathub@0.2.2-alpha.2` 这类依赖去重到同一次安装的
@@ -184,7 +195,8 @@ tarball（pnpm 11 起 `overrides` 写在 `pnpm-workspace.yaml`，写在 `package
     "@deepseek-ai/dsh-experimental-chathub": "file:/ABS/dist/npm-chathub/deepseek-ai-dsh-experimental-chathub-0.2.2-alpha.2.tgz",
     "@deepseek-ai/dsh-experimental-client-ui-chathub": "file:/ABS/dist/npm-chathub/deepseek-ai-dsh-experimental-client-ui-chathub-0.2.2-alpha.2.tgz",
     "@deepseek-ai/dsh-experimental-chathub-host": "file:/ABS/dist/npm-chathub/deepseek-ai-dsh-experimental-chathub-host-0.2.2-alpha.2.tgz",
-    "@deepseek-ai/dsh-experimental-llm-chathub": "file:/ABS/dist/npm-chathub/deepseek-ai-dsh-experimental-llm-chathub-0.2.2-alpha.2.tgz"
+    "@deepseek-ai/dsh-experimental-llm-chathub": "file:/ABS/dist/npm-chathub/deepseek-ai-dsh-experimental-llm-chathub-0.2.2-alpha.2.tgz",
+    "@deepseek-ai/dsh-experimental-chathub-gateway": "file:/ABS/dist/npm-chathub/deepseek-ai-dsh-experimental-chathub-gateway-0.2.2-alpha.2.tgz"
   }
 }
 ```
@@ -220,7 +232,7 @@ pnpm install --no-frozen-lockfile
 
 ### 2.5 在 dsh 中启用（源码检出，推荐）
 
-四个包在源码仓库里就是 workspace 成员，直接带着 patch 启动即可，无需 npm 安装：
+五个包在源码仓库里就是 workspace 成员，直接带着 patch 启动即可，无需 npm 安装：
 
 ```bash
 cd /home/ywf/work/code/github/deepseek-harness
@@ -232,13 +244,76 @@ pnpm dsh web \
 启动后：
 
 1. 在 ChatHub 面板 `providers` 里登录目标站点，状态变为 `ready`；
-2. `pnpm dsh web --dump-config --dump-config-schema | grep chathub` 应能看到
-   `chathub-host`、`ui-chathub`、`llm-chathub` 三行；
-3. 选 `deepseek-web-chathub` 路由跑一个只读任务（例如「读 package.json 并说出包名」），
-   `chathub-llm/turn` 事件出现即链路通。
+2. `pnpm dsh web --dump-config | grep -E "chathub-host|ui-chathub|llm-chathub"` 应能看到三行；
+3. 选 `<site>-chathub` 路由（默认 `deepseek-web-chathub`，设 `DSH_CHATHUB_LLM_SITE=glm-web` 则为 `glm-web-chathub`）跑一个只读任务（例如「读 package.json 并说出包名」），`chathub-llm/turn` 事件出现即链路通。
 
-常用环境变量：`DSH_CHATHUB_LLM_SITE`、`DSH_CHATHUB_LLM_TOOLS`、
+常用环境变量：`DSH_CHATHUB_LLM_SITE`、`DSH_CHATHUB_LLM_SITES`、`DSH_CHATHUB_LLM_TOOLS`、
 `DSH_CHATHUB_LLM_ROOT`、`DSH_CHATHUB_PROXY`（详见两个 patch 文件头部注释）。
+
+### 2.6 启用 gateway（OpenAI 兼容端点）
+
+gateway 是第五个可选层，必须挂在另外两个 patch 之后——它的模型目录要读 host 的登录
+健康状态，请求要转发到 llm-chathub 注册的 `ctx.llm` 路由：
+
+```bash
+pnpm dsh web \
+  --patch packages/experimental/chathub-host/cordis.patch.yml \
+  --patch packages/experimental/llm-chathub/cordis.patch.yml \
+  --patch packages/experimental/chathub-gateway/cordis.patch.yml
+```
+
+默认监听 `127.0.0.1:8787`，暴露全部已挂载站点，不校验 key。可用环境变量或
+`cordis.patch.yml` 覆盖：
+
+| 环境变量 | 默认 | 含义 |
+|---|---|---|
+| `DSH_CHATHUB_GATEWAY_HOST` | `127.0.0.1` | 绑定地址；非回环时务必配 key |
+| `DSH_CHATHUB_GATEWAY_PORT` | `8787` | 绑定端口 |
+| `DSH_CHATHUB_GATEWAY_KEY` | 空 | 设了之后每个请求必须带 `Authorization: Bearer <key>` |
+| `DSH_CHATHUB_GATEWAY_SITES` | 全部已挂载站点 | 逗号分隔的站点 id，裁剪模型目录 |
+| `DSH_CHATHUB_GATEWAY_QUEUE` | `8` | 单站点待处理请求上限，超出回 429 |
+| `DSH_CHATHUB_GATEWAY_KEEPALIVE_MS` | `15000` | 轮次进行中 SSE keepalive 间隔 |
+
+起来之后先验端点，再配客户端：
+
+```bash
+# 模型目录：ready 的站点列出来，needs-auth 带标记
+curl -s http://127.0.0.1:8787/v1/models | node -e "
+let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{
+  for (const m of JSON.parse(s).data) console.log(m.id, m.chathub?.status ?? '')
+})"
+
+# 非流式一轮
+curl -s http://127.0.0.1:8787/v1/chat/completions \
+  -H 'content-type: application/json' \
+  ${KEY:+-H "authorization: Bearer $KEY"} \
+  -d '{"model":"glm-web","messages":[{"role":"user","content":"回答一个字：好"}]}' | head -c 400
+```
+
+四个客户端的接入：
+
+**Codex**（`~/.codex/config.toml`）
+
+```toml
+model = "glm-web"
+model_provider = "chathub"
+
+[model_providers.chathub]
+name = "ChatHub"
+base_url = "http://127.0.0.1:8787/v1"
+env_key = "CHATHUB_API_KEY"   # 与 DSH_CHATHUB_GATEWAY_KEY 同值；未设 key 时随便填非空
+wire_api = "chat"
+```
+
+**Trae / WorkBuddy**：设置 → 模型 → 添加自定义模型 → OpenAI Compatible，Base URL
+`http://127.0.0.1:8787/v1`，API Key 同上，模型从列表选或手填 `glm-web`。
+
+**Claude Code**：需要 Anthropic 线协议（`/v1/messages`），当前版本未实现，先别配
+`ANTHROPIC_BASE_URL`。
+
+安全边界：默认只绑回环；`apiKey` 为空时任何本机进程都能用这批模型，绑到非回环地址
+却又不设 key 是不受保护的错误配置；网关本身不落 cookie/token，站点登录态仍在
+`chathub-host` 的浏览器 profile 里。
 
 ## 3. 发布到 npm（可选）
 
@@ -252,7 +327,8 @@ pnpm run release:publish  # 实际发布（需要凭据，通常由 CI 从 dsh-v
 
 `0.2.2-alpha.2` 是预发布版本，发布后落在 `alpha` dist-tag，不影响 `latest`。
 这批实验包的互相依赖要求先发布被依赖者（见 `publish-order.txt`）；registry 上
-尚未发布过这些包时，只能整族发布，不能单独先发 `chathub-host`。
+尚未发布过这些包时，只能整族发布，不能单独先发 `chathub-host`。gateway 排在最后：
+它的 peer 依赖 `chathub-host` 与 `llm-chathub`，两者没上 registry 之前它装不上。
 
 ## 4. 排错
 
@@ -263,3 +339,8 @@ pnpm run release:publish  # 实际发布（需要凭据，通常由 CI 从 dsh-v
 | `Cannot find package '@deepseek-ai/dsh-llm'` | profile 内没有 harness peer | 用 2.5 源码方式，或发布后按版本安装 |
 | tarball 缺少 `lib/index.js` | 打包前没跑 `build:artifacts` | 先跑 1.1 的脚本 |
 | client 产物非官方档 | 未设置 `DSH_BUILD_CLIENT_PROFILE=official` | 用 1.1 脚本重建 |
+| `packed version 0.1.0-alpha.1 != 0.2.2-alpha.2` | gateway 版本没跟随仓库基线 | 把 gateway 的 `version` 对齐到根 `package.json`（已对齐） |
+| `EADDRINUSE 127.0.0.1:8787` | 端口被占（另一个 dsh web 还在跑） | `DSH_CHATHUB_GATEWAY_PORT=8788` 或停掉旧实例 |
+| gateway 返回 401 `chathub_signed_out` | 站点未登录 | 在 ChatHub 面板登录该站点，`/v1/models` 里状态变 `ready` |
+| gateway 返回 404 `model_not_found` | 该站点没被 llm-chathub 挂载 | 设 `DSH_CHATHUB_LLM_SITE` / `DSH_CHATHUB_LLM_SITES`，或从 `DSH_CHATHUB_GATEWAY_SITES` 里去掉 |
+| `/v1/models` 是空数组 | 三个 patch 的挂载顺序不对，或没有站点登录 | 按 host → llm-chathub → gateway 顺序挂载，并先登录站点 |

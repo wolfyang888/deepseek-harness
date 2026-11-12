@@ -269,3 +269,176 @@ wire_api = "chat"
 ## 11. 结论
 
 四个 chathub 插件已经把「浏览器里的免费模型」变成了带工具调用、有失败语义、可排队的 `LlmAdapter` 路由；缺的只是一层线协议翻译。新增第五个插件 `chathub-gateway`，用 OpenAI + Anthropic 双方言把这五个模型暴露给任意支持自定义端点的编码 agent，就能让 Claude Code、Codex、Trae、WorkBuddy 的原生模型选择器直接列出 `glm-web` 到 `qianwen-web`——不改四个客户端、不改四个既有插件，网关本身约等于「一个翻译缝 + 一个队列 + 一张错误表」。
+
+## 12. 打包与编译
+
+代码在 `packages/experimental/chathub-gateway/`。它的 `main` 指向 `lib/index.js`，
+`files` 只带 `lib/index.js`、`cordis.patch.yml`、`lib/types/**/*.d.ts`，所以**任何
+打包动作之前必须先构建**；直接 `pnpm pack` 会打出缺入口的空壳包。
+
+### 12.1 全量构建（与仓库一致）
+
+```bash
+cd deepseek-harness
+pnpm install
+pnpm run build:artifacts      # tsc 出 lib/types + tsdown 出 lib/index.js，含 Typert 生成
+```
+
+`build:artifacts` 通过 `scripts/compile-referenced-projects.ts` 的 `host-typert` gate
+跑 `generate-typert.ts`，因此不需要单独执行生成器。gateway 已在 `tsconfig.host.json`
+的 project references 与 `tsconfig.base.json` 的路径映射里，会被一起构建。
+
+产物：
+
+```
+packages/experimental/chathub-gateway/
+  lib/index.js          # tsdown 打出的运行时入口
+  lib/types/*.d.ts      # tsc 出的声明
+```
+
+### 12.2 只构建 gateway
+
+```bash
+pnpm exec tsx scripts/generate-typert.ts          # 仅当 lib/typert.*.js 缺失时需要
+pnpm exec tsc -b packages/experimental/chathub-gateway/tsconfig.json
+pnpm exec tsdown --config-loader native --env.DSH_BUILD_FACE host \
+  -F "@deepseek-ai/dsh-experimental-chathub-gateway"
+```
+
+`-F` 只接受**完整包名**（内部是精确比较，`/regex/` 字符串不会转成正则）；gateway 的
+`tsconfig.json` 引用了 chathub、chathub-host、llm/llm、vendor/cordis、vendor/schemastery，
+`tsc -b` 会按 references 递归构建它们。
+
+### 12.3 定向打包五个包
+
+```bash
+node mddoc/pack-chathub.mjs
+```
+
+脚本做三件事：以官方 client 档案跑 `build:artifacts`、按依赖顺序
+（chathub → client-ui-chathub → chathub-host → llm-chathub → chathub-gateway）
+`pnpm pack --recursive --workspace-concurrency=1`、校验每个 tarball（禁止 `package/src/`
+与 source map、禁止残留 `workspace:`），最后写 `publish-order.txt`。
+
+产物在 `dist/npm-chathub/`：
+
+```
+deepseek-ai-dsh-experimental-chathub-0.2.2-alpha.2.tgz
+deepseek-ai-dsh-experimental-client-ui-chathub-0.2.2-alpha.2.tgz
+deepseek-ai-dsh-experimental-chathub-host-0.2.2-alpha.2.tgz
+deepseek-ai-dsh-experimental-llm-chathub-0.2.2-alpha.2.tgz
+deepseek-ai-dsh-experimental-chathub-gateway-0.2.2-alpha.2.tgz
+publish-order.txt
+```
+
+版本约束：脚本要求每个 tarball 的 `version` 等于根 `package.json`（`0.2.2-alpha.2`）。
+gateway 原先是仓库里唯一的 `0.1.0-alpha.1`，已对齐；否则打包在校验阶段直接失败。
+
+手工等价命令：
+
+```bash
+pnpm pack --recursive --workspace-concurrency=1 \
+  --filter=@deepseek-ai/dsh-experimental-chathub \
+  --filter=@deepseek-ai/dsh-experimental-client-ui-chathub \
+  --filter=@deepseek-ai/dsh-experimental-chathub-host \
+  --filter=@deepseek-ai/dsh-experimental-llm-chathub \
+  --filter=@deepseek-ai/dsh-experimental-chathub-gateway \
+  --pack-destination "$(pwd)/dist/npm-chathub"
+```
+
+## 13. 安装与配置
+
+### 13.1 源码检出直接启用（推荐）
+
+```bash
+pnpm install && pnpm run build:artifacts
+
+export DSH_CHATHUB_LLM_SITE=glm-web        # 决定注册哪个 <site>-chathub 路由
+export DSH_CHATHUB_HEADLESS=false          # 首次登录要看浏览器窗口
+
+pnpm dsh web \
+  --patch packages/experimental/chathub-host/cordis.patch.yml \
+  --patch packages/experimental/llm-chathub/cordis.patch.yml \
+  --patch packages/experimental/chathub-gateway/cordis.patch.yml
+```
+
+挂载顺序有语义：gateway 的 `/v1/models` 读 host 的登录健康状态，请求转发到
+llm-chathub 注册的 `ctx.llm` 路由，所以两个 patch 必须排在它前面。
+
+### 13.2 用 tarball 安装
+
+npm 会把同一批 tarball 里的互相依赖去重到顶层，所以**一次装五个**，不要在仓库树内
+执行（会撞上 pnpm 的 `workspace:` 协议）：
+
+```bash
+mkdir -p /tmp/chathub-target && cd /tmp/chathub-target && npm init -y
+npm install --no-audit --no-fund /ABS/dist/npm-chathub/*.tgz
+node -e "console.log(require.resolve('@deepseek-ai/dsh-experimental-chathub-gateway'))"
+```
+
+pnpm 不会把子依赖去重到顶层 `file:` 依赖，必须在 `pnpm-workspace.yaml` 的
+`overrides` 里把 chathub / client-ui-chathub / chathub-host 都指向本地 tarball
+（pnpm 11 起 `overrides` 写在 `pnpm-workspace.yaml`，`package.json` 的 `pnpm` 字段被忽略）。
+
+注意：dsh profile（`~/.dsh/profiles/<name>`）也是 pnpm 工程，但它没有
+`@deepseek-ai/cordis`、`@deepseek-ai/dsh-llm` 这些 harness peer；把五个包装进 profile
+后插件 import 会失败。**本地 tarball 只适合验证包内容**，要让 dsh 真正加载，用 13.1，
+或者先把五个包按 `publish-order.txt` 发到 registry 再 `dsh plugin add <name>`。
+
+### 13.3 网关配置
+
+```yaml
+- id: chathub-gateway
+  name: '@deepseek-ai/dsh-experimental-chathub-gateway'
+  config:
+    host: 127.0.0.1
+    port: 8787
+    apiKey: ''                  # 空 = 不校验；只在回环绑定下安全
+    sites: []                   # 空 = 暴露全部已挂载站点
+    maxQueuePerSite: 8
+    keepaliveMs: 15000
+```
+
+对应环境变量：`DSH_CHATHUB_GATEWAY_HOST`、`_PORT`、`_KEY`、`_SITES`、`_QUEUE`、
+`_KEEPALIVE_MS`；`sites` 的默认值取自 `DSH_CHATHUB_LLM_SITES` 或 `DSH_CHATHUB_LLM_SITE`。
+
+起来后先验端点：
+
+```bash
+curl -s http://127.0.0.1:8787/v1/models | head -c 400
+```
+
+返回空数组说明站点没登录或挂载顺序不对；单个模型报 404 说明该站点没被 llm-chathub 挂载。
+
+### 13.4 客户端接入
+
+**Codex**（`~/.codex/config.toml`）
+
+```toml
+model = "glm-web"
+model_provider = "chathub"
+
+[model_providers.chathub]
+name = "ChatHub"
+base_url = "http://127.0.0.1:8787/v1"
+env_key = "CHATHUB_API_KEY"
+wire_api = "chat"
+```
+
+**Trae / WorkBuddy**：设置 → 模型 → 添加自定义模型 → OpenAI Compatible，Base URL
+`http://127.0.0.1:8787/v1`，API Key 与 `DSH_CHATHUB_GATEWAY_KEY` 同值（未设 key 时填任意非空），
+模型从 `/v1/models` 列表选或手填 `glm-web`。
+
+**Claude Code**：需要 `/v1/messages` 与 Anthropic 的 SSE 事件词汇，本版未实现，
+先不要设 `ANTHROPIC_BASE_URL`（见 §9 Phase 2、§10 已知限制）。
+
+### 13.5 验证清单
+
+| # | 检查 | 期望 |
+|---|---|---|
+| 1 | `packages/experimental/chathub-gateway/lib/index.js` 存在 | 构建过 |
+| 2 | `pnpm dsh web --dump-config \| grep chathub-gateway` | 有一行 |
+| 3 | `curl /v1/models` | 列出已登录站点 |
+| 4 | `curl /v1/chat/completions` 非流式 | 返回 `choices[0].message.content` |
+| 5 | 带 `"stream": true` | 收到 `data:` 帧，末尾 `data: [DONE]` |
+| 6 | 未登录站点调用 | 401 `chathub_signed_out`，message 指向 ChatHub 面板 |
