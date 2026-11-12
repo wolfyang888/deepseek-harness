@@ -494,6 +494,7 @@ pnpm run release:publish  # 实际发布（需要凭据，通常由 CI 从 dsh-v
 | `/v1/models` 全是 `needs-auth` 但 completion 正常返回 200 | 正常：健康探测不打开浏览器，profile 里其实已登录 | 不用处理；以真实一轮的结果为准，不要按目录状态提前判死 |
 | gateway 返回 401 `invalid_api_key` | 设了 `DSH_CHATHUB_GATEWAY_KEY` 但请求没带同值 Bearer | `curl -H 'authorization: Bearer <key>'`，WorkBuddy 的 apiKey 填同值 |
 | gateway 返回 404 `model_not_found` | 模型名不在目录里（例如填了 `ywf-web`） | 模型名必须等于站点 id；`GET /v1/models` 是唯一真值来源 |
+| gateway 返回 400 `context_length_exceeded` | 客户端的 system prompt + 工具定义 + 本轮消息超过 `maxPromptChars`（默认 48000 字符，`llm-chathub/src/types.ts`）；`render.ts` 会丢最旧历史，任务本身超预算才抛 | 在 `llm-chathub/cordis.patch.yml` 的 `config` 下加 `maxPromptChars: 96000` 后重启；或关掉客户端的部分工具/精简 system prompt。别只调大不验证，站点输入框也有自己的长度上限 |
 | 客户端显示「模型不可用」+ `404 No route: POST /chat/completions` | endpoint 填了根地址，客户端追加后缀却没补 `/v1` | 填 `http://127.0.0.1:8787/v1`；新版网关已兼容裸路径，但**要重启 dsh** 才加载新代码 |
 | `/v1/models` 有行但 completion 报「未知 provider」 | `GATEWAY_SITES` 列了 `LLM_SITES` 没挂的站点 | 两个列表保持一致（脚本用一份 `DSH_CHATHUB_SITES` 同时写两层） |
 | `/v1/models` 是空数组 | transport 没有任何 provider（host 没挂或 `sites` 全是拼错的 id） | 按 host → llm-chathub → gateway 顺序挂载；**没登录不会导致空数组**，行仍会在，只是 `status: needs-auth` |
