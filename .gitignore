@@ -54,5 +54,8 @@ native/system/test/bin/
 # Owner-local real-browser validation profile (cookies, login state).
 /packages/experimental/chathub/.real-browser-profile/
 
+# run-chathub-gateway.sh boot log (holds the panel token URL).
+/.dsh-chathub-gateway.log
+
 # Local agent workspace (session memory logs, preview artifacts).
 /.workbuddy/

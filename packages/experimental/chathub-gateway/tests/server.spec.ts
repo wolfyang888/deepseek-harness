@@ -73,6 +73,13 @@ async function* textTurn(text: string): AsyncIterable<StreamChunk> {
 }
 
 /**
+ * @returns One turn where the site's real sign-in check reports signed out.
+ */
+async function* signedOutTurn(): AsyncIterable<StreamChunk> {
+  throw new LlmError('site requires sign-in', 'AUTH')
+}
+
+/**
  * @returns One turn that fails after the response has started streaming.
  */
 async function* failingStream(): AsyncIterable<StreamChunk> {
@@ -143,8 +150,27 @@ describe('ChatHubGateway /v1/chat/completions', () => {
     await mounted.ctx.fiber.dispose()
   })
 
-  it('rejects a signed-out model with 401 and the panel hint', async () => {
+  it('does not reject a needs-auth model before the real sign-in check', async () => {
+    // Health probing never opens a browser, so `needs-auth` also describes a
+    // signed-in site whose session simply has not been opened yet. Only the
+    // adapter's transport.open()/waitForInput can tell the two apart.
     const mounted = await mount()
+    mounted.streams.push(textTurn('hello'))
+    const response = await fetch(`${mounted.url}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'qianwen-web', messages: [{ role: 'user', content: 'hi' }] }),
+    })
+    expect(response.status).toBe(200)
+    const body = await response.json() as { choices: { message: { content: string } }[] }
+    expect(body.choices.at(0)?.message.content).toBe('hello')
+    expect(mounted.requests.at(0)?.provider).toBe('qianwen-web-chathub')
+    await mounted.ctx.fiber.dispose()
+  })
+
+  it('maps a genuine adapter sign-in failure to 401 with the panel hint', async () => {
+    const mounted = await mount()
+    mounted.streams.push(signedOutTurn())
     const response = await fetch(`${mounted.url}/v1/chat/completions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -208,7 +234,7 @@ describe('ChatHubGateway /v1/chat/completions', () => {
       yield { type: 'block-start', index: 0, blockType: 'text' }
       yield { type: 'text-delta', index: 0, text: 'first ' }
       // The gap the site takes to write the rest of its answer.
-      await new Promise(resolve => { setTimeout(resolve, 120) })
+      await new Promise((resolve) => { setTimeout(resolve, 120) })
       yield { type: 'text-delta', index: 0, text: 'second' }
       yield { type: 'block-end', index: 0, block: { type: 'text', text: 'first second' } }
       yield { type: 'finish', reason: { kind: 'stop' } }
@@ -259,6 +285,39 @@ describe('ChatHubGateway /v1/chat/completions', () => {
     expect(text.trimEnd().endsWith('data: [DONE]')).toBe(true)
     const next = await fetch(`${mounted.url}/v1/models`)
     expect(next.status).toBe(200)
+    await mounted.ctx.fiber.dispose()
+  })
+})
+
+describe('ChatHubGateway bare-path aliases', () => {
+  it('serves /models like /v1/models', async () => {
+    const mounted = await mount()
+    const bare = await fetch(`${mounted.url}/models`)
+    expect(bare.status).toBe(200)
+    expect((await bare.json() as { data: { id: string }[] }).data.map(row => row.id)).toEqual(['glm-web', 'qianwen-web'])
+    await mounted.ctx.fiber.dispose()
+  })
+
+  it('serves /chat/completions like /v1/chat/completions', async () => {
+    const mounted = await mount()
+    mounted.streams.push(textTurn('hello'))
+    const response = await fetch(`${mounted.url}/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'glm-web', messages: [{ role: 'user', content: 'hi' }] }),
+    })
+    expect(response.status).toBe(200)
+    const body = await response.json() as { choices: { message: { content: string } }[] }
+    expect(body.choices[0]?.message.content).toBe('hello')
+    expect(mounted.requests).toHaveLength(1)
+    await mounted.ctx.fiber.dispose()
+  })
+
+  it('still rejects an unknown route', async () => {
+    const mounted = await mount()
+    const response = await fetch(`${mounted.url}/v2/chat/completions`, { method: 'POST', body: '{}' })
+    expect(response.status).toBe(404)
+    expect((await response.json() as { error: { message: string } }).error.message).toBe('No route: POST /v2/chat/completions')
     await mounted.ctx.fiber.dispose()
   })
 })

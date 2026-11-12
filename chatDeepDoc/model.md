@@ -101,7 +101,7 @@ Claude Code        Codex / Trae / WorkBuddy
 ### 6.1 模型目录与 id
 
 - 模型 id 直接用站点 id：`glm-web`、`doubao-web`、`gemini-web`、`chatgpt-web`、`qianwen-web`；
-- `/v1/models` 只列「已挂载且登录可用」的站点：`ready` 全量列出，`needs-auth` 带标记，`not-started` 不列（与 `client-ui-chathub` 的选择器口径一致）；
+- `/v1/models` 列 transport 健康探测已知的站点：`ready` 与 `needs-auth` 都列出（后者带标记），`not-started` 不列（与 `client-ui-chathub` 的选择器口径一致）。健康探测**不打开浏览器**，所以 `needs-auth` 只表示「本次进程还没确认过会话」，不代表账号真的登出；网关据此不提前拒绝请求，真正的登录检查在 adapter 里；
 - 每个模型声明 `resolveModel` 的 `contextWindow`，不虚标；
 - 配置项 `sites`：默认全部五个，可裁剪。
 
@@ -167,7 +167,7 @@ Claude Code        Codex / Trae / WorkBuddy
 
 - 网关默认只绑 `127.0.0.1`（配置 `host`）；
 - 可选 `apiKey`：配置后校验 `Authorization: Bearer`（OpenAI 客户端）与 `x-api-key`（Claude Code）；未配置则只校验来源地址；
-- 站点登录态完全在 `chathub-host` 的浏览器 profile 里：`needs-auth` 的站点在 `/v1/models` 里带标记，调用时返回 401 引导；登录动作发生在 `dsh web` 的 ChatHub 面板（复用 `webChat` Remote），网关不弹窗；
+- 站点登录态完全在 `chathub-host` 的浏览器 profile 里。`/v1/models` 的 `needs-auth` 只是健康探测结果（探测不打开浏览器），**不是请求的前置门禁**：网关照常把请求交给 adapter，由 `transport.open()` / `waitForInput()` 判定，真未登录才抛 `AUTH` 并映射成 401 引导；登录动作发生在 `dsh web` 的 ChatHub 面板（复用 `webChat` Remote），网关不弹窗；
 - 网关自身不落任何 cookie/token。
 
 ### 6.8 配置面（Config，全部可从 cordis.yml 覆盖）
@@ -215,12 +215,15 @@ wire_api = "chat"
 
 **Trae / WorkBuddy**
 
-设置 → 模型 → 添加自定义模型：
+设置 → 模型 → 自定义模型：
 
 - 协议：OpenAI Compatible
-- Base URL：`http://127.0.0.1:8787/v1`
-- API Key：`<apiKey 或任意非空>`
-- 模型：从列表选（`/v1/models` 发现）或手填 `glm-web`
+- endpoint：`http://127.0.0.1:8787/v1`
+- apiKey：`<apiKey 或任意非空>`
+- modelId：站点 id（`glm-web`），必须与 `${model}-chathub` 路由前缀一致
+
+字段名、工具白名单与 pacing 的实际折损见 §13.4 和 `mddoc/build-setup.md` §2.7。
+
 
 后续增强（进 `client-ui-chathub`，不动网关）：面板加「接入编码 agent」卡片，展示以上四段配置并带一键复制。
 
@@ -275,6 +278,11 @@ wire_api = "chat"
 代码在 `packages/experimental/chathub-gateway/`。它的 `main` 指向 `lib/index.js`，
 `files` 只带 `lib/index.js`、`cordis.patch.yml`、`lib/types/**/*.d.ts`，所以**任何
 打包动作之前必须先构建**；直接 `pnpm pack` 会打出缺入口的空壳包。
+
+开发模式（源码 `--patch`）是例外：loader 经 tsx 直跑 `src/`，四个后端包不需要任何
+构建产物；唯一必须的是面板客户端 `client-ui-chathub/lib/client.js`（缺了启动报
+`client-hmr` 等待 `clientModules`）。一键准备用 `scripts/build-chathub-dev.sh`，
+详见 `mddoc/build-setup.md` §2.5。
 
 ### 12.1 全量构建（与仓库一致）
 
@@ -408,7 +416,20 @@ pnpm 不会把子依赖去重到顶层 `file:` 依赖，必须在 `pnpm-workspac
 curl -s http://127.0.0.1:8787/v1/models | head -c 400
 ```
 
-返回空数组说明站点没登录或挂载顺序不对；单个模型报 404 说明该站点没被 llm-chathub 挂载。
+返回空数组说明宿主的 transport 没有任何 provider（`chathub-host` 没挂，或 `sites` 写成了
+不存在的 id）。有行但 `status: "needs-auth"` **不代表站点没登录**：健康探测不打开浏览器，
+一个已登录、只是本次进程还没开过会话的 profile 同样是这个状态（本机实测 ChatGLM 已登录、
+目录四个站点却全 `needs-auth`，真实一轮照常返回 200）。网关不会据此提前 401，真正的判定在
+adapter；只有 completion 自己回 `401 chathub_signed_out` 才需要登录，用可见浏览器跑一次
+`DSH_CHATHUB_LOGIN=true scripts/run-chathub-gateway.sh`，扫码后登录态落在
+`~/.dsh/chathub-profile`。想一步判明，直接发一轮：
+`DSH_CHATHUB_SMOKE=plain DSH_CHATHUB_SMOKE_MODEL=glm-web scripts/run-chathub-gateway.sh`。
+
+注意模型目录读的是 transport 健康状态，不是 `ctx.llm` 的路由表：`DSH_CHATHUB_GATEWAY_SITES`
+指向一个 `DSH_CHATHUB_LLM_SITES` 没挂的站点时，它照样出现在 `/v1/models`，但请求会落到
+不存在的 `${site}-chathub` 路由上，报「未知 provider」而不是 `404 model_not_found`。
+两份列表要一致——`scripts/run-chathub-gateway.sh` 已经用一个 `DSH_CHATHUB_SITES` 同时写这两层。
+
 
 ### 13.4 客户端接入
 
@@ -425,9 +446,22 @@ env_key = "CHATHUB_API_KEY"
 wire_api = "chat"
 ```
 
-**Trae / WorkBuddy**：设置 → 模型 → 添加自定义模型 → OpenAI Compatible，Base URL
-`http://127.0.0.1:8787/v1`，API Key 与 `DSH_CHATHUB_GATEWAY_KEY` 同值（未设 key 时填任意非空），
-模型从 `/v1/models` 列表选或手填 `glm-web`。
+**Trae / WorkBuddy**：设置 → 模型 → 自定义模型（字段：`provider` / `endpoint` / `apiKey` /
+`modelId` / `maxInputTokens` / `maxOutputTokens` + 能力开关）。endpoint 填
+`http://127.0.0.1:8787/v1`，apiKey 与 `DSH_CHATHUB_GATEWAY_KEY` 同值（未设 key 时填任意非空），
+modelId 必须填站点 id（`glm-web`），maxOutputTokens 4096 以内。
+
+注意 WorkBuddy 的 `endpoint` 不是 SDK 的 `baseURL`：它把填的值去掉尾斜杠后直接追加
+`/chat/completions`，**不会自动补 `/v1`**。填根地址 `http://127.0.0.1:8787` 会打出
+`POST /chat/completions`，旧版本回 404 `No route`（客户端显示「模型不可用」）。网关现在
+把 `/models` 与 `/chat/completions` 作为 `/v1/models` 与 `/v1/chat/completions` 的别名，
+两种填法都能通，但仍推荐填 `.../v1`。配置落在 `~/.workbuddy/models.json` 的 `url` 字段。
+
+两个已知折损（详见 `mddoc/build-setup.md` §2.7）：工具白名单按名精确匹配，默认
+`read,grep,glob,edit,write` 对不上外部 agent 的 `Read/Write/Edit/Bash` 命名，站点收不到工具
+定义、只剩聊天能力；pacing 默认 conservative（20s/轮、40 轮/时），长任务必撞 429，先用
+SSE + `DSH_CHATHUB_PACING=responsive` 或 `off` 试。
+
 
 **Claude Code**：需要 `/v1/messages` 与 Anthropic 的 SSE 事件词汇，本版未实现，
 先不要设 `ANTHROPIC_BASE_URL`（见 §9 Phase 2、§10 已知限制）。
@@ -438,7 +472,7 @@ wire_api = "chat"
 |---|---|---|
 | 1 | `packages/experimental/chathub-gateway/lib/index.js` 存在 | 构建过 |
 | 2 | `pnpm dsh web --dump-config \| grep chathub-gateway` | 有一行 |
-| 3 | `curl /v1/models` | 列出已登录站点 |
-| 4 | `curl /v1/chat/completions` 非流式 | 返回 `choices[0].message.content` |
+| 3 | `curl /v1/models` | 列出已挂载站点（`ready` / `needs-auth` 都算，**不等于登录判定**） |
+| 4 | `curl /chat/completions` 非流式（客户端常用的无前缀路径） | 200，返回 `choices[0].message.content` |
 | 5 | 带 `"stream": true` | 收到 `data:` 帧，末尾 `data: [DONE]` |
-| 6 | 未登录站点调用 | 401 `chathub_signed_out`，message 指向 ChatHub 面板 |
+| 6 | 真未登录站点调用 | 401 `chathub_signed_out`，message 指向 ChatHub 面板；由 adapter 判定，不是目录状态预判 |

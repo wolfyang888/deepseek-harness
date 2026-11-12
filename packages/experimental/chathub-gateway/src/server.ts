@@ -2,7 +2,9 @@
  * The HTTP server: OpenAI wire routes over `ctx.llm` site routes.
  *
  * `/v1/models` lists the exposed sites with their sign-in state, and
- * `/v1/chat/completions` translates one request into one adapter turn. The
+ * `/v1/chat/completions` translates one request into one adapter turn; the
+ * bare `/models` and `/chat/completions` paths are accepted as aliases for
+ * clients that append those suffixes to a root base URL. The
  * server owns no browser state and stores nothing; login lives in the ChatHub
  * host layer and the site answer's identity stays in the external agent's own
  * conversation.
@@ -117,19 +119,22 @@ export class ChatHubGateway {
   private async dispatch(request: IncomingMessage, response: ServerResponse): Promise<void> {
     try {
       const url = new URL(request.url ?? '/', `http://${this.config.host}`)
+      const route = normalizeRoute(url.pathname)
+      this.ctx.logger.info('chathub-gateway: %s %s', request.method, url.pathname)
       const body = await readBody(request)
       if (this.config.apiKey.length > 0 && !this.authorized(request)) {
         this.writeJson(response, 401, { error: { message: 'Invalid API key.', type: 'invalid_request_error', code: 'invalid_api_key' } } satisfies WireErrorBody)
         return
       }
-      if (request.method === 'GET' && url.pathname === '/v1/models') {
+      if (request.method === 'GET' && route === '/v1/models') {
         this.writeJson(response, 200, { object: 'list', data: await this.models() })
         return
       }
-      if (request.method === 'POST' && url.pathname === '/v1/chat/completions') {
+      if (request.method === 'POST' && route === '/v1/chat/completions') {
         await this.completions(response, body)
         return
       }
+      this.ctx.logger.warn('chathub-gateway: no route for %s %s', request.method, url.pathname)
       this.writeJson(response, 404, { error: { message: `No route: ${request.method} ${url.pathname}`, type: 'invalid_request_error', code: 'not_found' } } satisfies WireErrorBody)
     } catch (error) {
       const failure = failureFromError(error)
@@ -170,14 +175,13 @@ export class ChatHubGateway {
       })
       return
     }
-    if (model.status === GATEWAY_NEEDS_AUTH) {
-      this.writeFailure(response, {
-        status: 401,
-        code: 'chathub_signed_out',
-        message: 'This site is signed out. Open the ChatHub panel in dsh web and sign in, then retry.',
-      })
-      return
-    }
+    // Do not reject on `needs-auth`: health probing never opens a browser, so
+    // that status also covers a signed-in site whose session simply has not
+    // been opened yet. The adapter's transport.open()/waitForInput is the real
+    // sign-in check; a genuinely signed-out site fails there as an AUTH turn,
+    // which failureFromError maps to the same 401 chathub_signed_out. Rejecting
+    // here would make a logged-in profile permanently unusable until someone
+    // opened the panel by hand.
     const admission = this.queues.enter(parsed.model)
     if (admission.kind === 'queue-full') {
       this.writeFailure(response, {
@@ -335,6 +339,23 @@ export class ChatHubGateway {
     response.write('data: [DONE]\n')
     response.end()
   }
+}
+
+/**
+ * Canonicalize a request path.
+ *
+ * OpenAI-compatible clients disagree on what a "base URL" means: the OpenAI
+ * SDK appends `/chat/completions` to a base that already carries `/v1`, while
+ * custom-model forms such as WorkBuddy's append the same suffix to whatever
+ * the user typed. A user who enters `http://host:8787` therefore reaches
+ * `/chat/completions`, and a GET probe reaches `/models`. Accept those two
+ * bare aliases so both conventions work against one gateway.
+ * @param pathname - the requested path.
+ * @returns The canonical gateway route.
+ */
+function normalizeRoute(pathname: string): string {
+  if (pathname === '/models' || pathname === '/chat/completions') return `/v1${pathname}`
+  return pathname
 }
 
 /**
