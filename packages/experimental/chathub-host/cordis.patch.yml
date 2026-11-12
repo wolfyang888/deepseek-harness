@@ -37,7 +37,12 @@
             ? { mode: 'cdp', profileDir: process.env.DSH_CHATHUB_PROFILE_DIR ?? dshHomePath('chathub-profile'), cdpEndpoint: process.env.DSH_CHATHUB_CDP_ENDPOINT, headless: false }
             : { mode: 'managed', profileDir: process.env.DSH_CHATHUB_PROFILE_DIR ?? dshHomePath('chathub-profile'), ...(process.env.DSH_CHATHUB_EXECUTABLE_PATH !== undefined ? { executablePath: process.env.DSH_CHATHUB_EXECUTABLE_PATH } : {}), headless: process.env.DSH_CHATHUB_HEADLESS !== 'false' && process.env.DSH_CHATHUB_LOGIN !== 'true', ...(process.env.DSH_CHATHUB_PROXY !== undefined && process.env.DSH_CHATHUB_PROXY !== '' ? { proxy: process.env.DSH_CHATHUB_PROXY } : {}) }
         loginTimeoutMs: !!js Number(process.env.DSH_CHATHUB_LOGIN_TIMEOUT_MS ?? 300_000)
-        turnTimeoutMs: !!js Number(process.env.DSH_CHATHUB_TURN_TIMEOUT_MS ?? 180_000)
+        # Deep-thinking site modes (e.g. GLM "极致") can spend several minutes
+        # on their reasoning chain before the reply block even appears. The old
+        # 180 s ceiling fired while the site was still working and threw away a
+        # reply that arrived seconds later; 5 minutes plus the activity-based
+        # deadline renewal in session.ts covers a full deep-thinking turn.
+        turnTimeoutMs: !!js Number(process.env.DSH_CHATHUB_TURN_TIMEOUT_MS ?? 300_000)
         actionTimeoutMs: !!js Number(process.env.DSH_CHATHUB_ACTION_TIMEOUT_MS ?? 15_000)
         pollMs: !!js Number(process.env.DSH_CHATHUB_POLL_MS ?? 500)
         stablePolls: !!js Number(process.env.DSH_CHATHUB_STABLE_POLLS ?? 3)

@@ -28,6 +28,15 @@ export interface SiteDriverConfig {
    * nothing, the container itself is read.
    */
   answerBody?: string
+  /**
+   * Optional selector for the site's visible reasoning / thinking blocks.
+   *
+   * These are deliberately kept out of `answer` (which must contain only the
+   * reply), but a client still wants them: the host reads every match and
+   * exposes the joined text as the turn's reasoning, which the gateway emits
+   * as `reasoning_content` deltas.
+   */
+  reasoning?: string
   /** Element that only appears on a signed-out wall. */
   loginWall?: string
   /**
@@ -351,6 +360,12 @@ export interface TurnPage {
    *   thinking from one that went quiet while its last answer reads unchanged.
    */
   bodyMarkup(): Promise<string>
+  /**
+   * @param selector - reasoning-block selector declared by the driver.
+   * @returns The markup of every matching block joined together, or an empty
+   *   string when the site shows none; the session converts it to text.
+   */
+  reasoningHtml(selector: string): Promise<string>
   /**
    * @param selector - signed-out wall selector.
    * @returns Whether the wall is currently visible.

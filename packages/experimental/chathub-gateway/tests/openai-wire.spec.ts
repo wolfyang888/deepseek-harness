@@ -113,6 +113,21 @@ describe('toCompletionResponse', () => {
     expect(response.parallel_tool_calls).toBe(false)
   })
 
+  it('exposes a reasoning trace as reasoning_content instead of the answer', () => {
+    const chunks: StreamChunk[] = [
+      { type: 'block-start', index: 2, blockType: 'reasoning' },
+      { type: 'reasoning-delta', index: 2, text: 'step one. ' },
+      { type: 'reasoning-delta', index: 2, text: 'step two.' },
+      { type: 'block-end', index: 2, block: { type: 'reasoning', text: 'step one. step two.' } },
+      ...textChunks(),
+    ]
+    const response = toCompletionResponse('glm-web-chathub', 'glm-web', chunks)
+    const choice = (response.choices as (TextChoice & { message: { reasoning_content?: string } })[]).at(0)
+    if (choice === undefined) throw new Error('unreachable')
+    expect(choice.message.content).toBe('hello world')
+    expect(choice.message.reasoning_content).toBe('step one. step two.')
+  })
+
   it('unfolds a tool turn into tool_calls with the adapter call id', () => {
     const response = toCompletionResponse('glm-web-chathub', 'glm-web', callChunks())
     const choice = (response.choices as CallChoice[]).at(0)
@@ -135,6 +150,13 @@ describe('sseRenderer', () => {
     expect(sse.content('hello world')).toContain('"content":"hello world"')
     expect(sse.finish('stop')).toContain('"finish_reason":"stop"')
     expect(sse.done()).toBe('data: [DONE]\n')
+  })
+
+  it('renders a reasoning delta under both reasoning field names', () => {
+    const frame = sseRenderer('glm-web').reasoning('thinking about it')
+    expect(frame).toContain('"reasoning_content":"thinking about it"')
+    expect(frame).toContain('"reasoning":"thinking about it"')
+    expect(frame).toContain('"finish_reason":null')
   })
 
   it('carries the tool call as one tool_calls delta with a null finish', () => {

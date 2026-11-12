@@ -180,6 +180,32 @@ export class PlaywrightPage implements ChatPageHandle {
   }
 
   /**
+   * Read the site's visible chain of thought.
+   *
+   * Deep-thinking modes keep the reasoning in sibling blocks that the answer
+   * selector deliberately excludes. Reading them once, after the reply has
+   * stabilized, gives the caller a reasoning trace without polling the whole
+   * page on every tick. `innerHTML` is used rather than a text-only helper so
+   * this works with the same minimal locator face every other read uses.
+   * @param selector - driver-declared reasoning block selector.
+   * @returns Each matching block's markup joined by a blank-line separator.
+   */
+  async reasoningHtml(selector: string): Promise<string> {
+    try {
+      const locator = this.page.locator(selector)
+      const count = await locator.count()
+      const parts: string[] = []
+      for (let index = 0; index < count; index += 1) {
+        parts.push(await locator.nth(index).innerHTML({ timeout: this.actionTimeoutMs }))
+      }
+      return parts.join('\n\n')
+    } catch (error) {
+      if (isOperationTimeout(error)) return ''
+      throw classifyPageError(error, `${this.key}: reading reasoning "${selector}"`)
+    }
+  }
+
+  /**
    * Resolve the reply body inside one answer container.
    * @param container - the newest answer container.
    * @param body - reply-body selector.

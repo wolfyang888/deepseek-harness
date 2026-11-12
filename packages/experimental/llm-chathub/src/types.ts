@@ -218,6 +218,12 @@ export interface ChatHubTransportSession {
    */
   watch?(payload: ChatHubTransportPayload): AsyncIterable<string>
   /**
+   * @returns The visible reasoning / chain-of-thought text of the last turn,
+   *   when the host's site driver collects it. Optional so hosts that do not
+   *   expose a reasoning trace keep working unchanged.
+   */
+  lastReasoning?(): string
+  /**
    * @returns Resolves when the page backing this session is released.
    */
   close(): Promise<void>

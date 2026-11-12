@@ -143,6 +143,9 @@ export function toCompletionResponse(route: string, model: string, chunks: reado
   const message: Record<string, unknown> = {
     role: 'assistant',
     content: assembled.text.length === 0 ? null : assembled.text,
+    // Sites with a visible reasoning trace send it in a separate channel;
+    // without this field a client can only show the finished reply.
+    ...assembled.reasoning.length > 0 ? { reasoning_content: assembled.reasoning } : {},
   }
   if (assembled.call !== undefined) {
     message.tool_calls = [{
@@ -173,9 +176,10 @@ export function toCompletionResponse(route: string, model: string, chunks: reado
  * Render the SSE frames of one completion stream as its chunks arrive.
  *
  * Frames follow the assembled layout the non-streaming response uses — role
- * delta, content deltas, one complete tool-call delta, the terminal reason,
- * `[DONE]` — but each frame is produced the moment its chunk lands, so a
- * client watching the event stream sees the answer while the site writes it.
+ * delta, reasoning deltas, content deltas, one complete tool-call delta, the
+ * terminal reason, `[DONE]` — but each frame is produced the moment its chunk
+ * lands, so a client watching the event stream sees the thinking and the
+ * answer while the site writes them.
  * @param model - model id the caller asked for.
  * @returns The per-frame renderers for one open event stream.
  */
@@ -184,6 +188,13 @@ export function sseRenderer(model: string): SseRenderer {
   return {
     role: () => frame({ ...header, choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }] }),
     content: (text: string) => frame({ ...header, choices: [{ index: 0, delta: { content: text }, finish_reason: null }] }),
+    reasoning: (text: string) => frame({
+      ...header,
+      // `reasoning_content` is the DeepSeek/vLLM convention; `reasoning` is
+      // the alias several agent clients read. Clients pick one with `??`, so
+      // carrying both keeps the thinking panel working across them.
+      choices: [{ index: 0, delta: { reasoning_content: text, reasoning: text }, finish_reason: null }],
+    }),
     toolCall: (id: string, name: string, argumentsJson: string) => frame({
       ...header,
       choices: [{
@@ -209,6 +220,11 @@ export interface SseRenderer {
    */
   content(text: string): string
   /**
+   * @param text - one reasoning / chain-of-thought delta.
+   * @returns The reasoning delta frame for it.
+   */
+  reasoning(text: string): string
+  /**
    * @param id - adapter call id.
    * @param name - tool name.
    * @param argumentsJson - complete call arguments JSON.
@@ -227,6 +243,7 @@ export interface SseRenderer {
 /** One assembled turn: display text, the single accepted call, and metadata. */
 interface Assembled {
   text: string
+  reasoning: string
   call: { id: string; name: string; arguments: string } | undefined
   messageId: string
   created: number
@@ -234,9 +251,9 @@ interface Assembled {
 }
 
 /**
- * Fold adapter chunks, taking the first text block's text and the first
- * tool-call block and ignoring later blocks the adapter never emits. The
- * block-end text wins over concatenated deltas: with a live-streaming source
+ * Fold adapter chunks, taking the first text block's text, the first reasoning
+ * block's text, and the first tool-call block while ignoring later blocks the
+ * adapter never emits. The block-end text wins over concatenated deltas: with a live-streaming source
  * the deltas are the answer as it grew, while the block-end carries the
  * bounded, marker-stripped text the protocol accepted.
  * @param chunks - adapter chunks in order.
@@ -244,7 +261,9 @@ interface Assembled {
  */
 function assemble(chunks: readonly StreamChunk[]): Assembled {
   let deltas = ''
+  let reasoningDeltas = ''
   let blockText: string | undefined
+  let reasoningBlock: string | undefined
   let call: Assembled['call']
   let usage: Record<string, unknown> | undefined
   for (const chunk of chunks) {
@@ -252,8 +271,12 @@ function assemble(chunks: readonly StreamChunk[]): Assembled {
       case 'text-delta':
         if (call === undefined && blockText === undefined) deltas += chunk.text
         break
+      case 'reasoning-delta':
+        if (reasoningBlock === undefined) reasoningDeltas += chunk.text
+        break
       case 'block-end':
         if (chunk.block.type === 'text' && blockText === undefined) blockText = chunk.block.text
+        if (chunk.block.type === 'reasoning' && reasoningBlock === undefined) reasoningBlock = chunk.block.text
         if (chunk.block.type === 'tool-call' && call === undefined) {
           call = { id: chunk.block.id, name: chunk.block.name, arguments: chunk.block.arguments }
         }
@@ -269,7 +292,14 @@ function assemble(chunks: readonly StreamChunk[]): Assembled {
         break
     }
   }
-  return { text: blockText ?? deltas, call, messageId: 'turn', created: Date.now(), usage }
+  return {
+    text: blockText ?? deltas,
+    reasoning: reasoningBlock ?? reasoningDeltas,
+    call,
+    messageId: 'turn',
+    created: Date.now(),
+    usage,
+  }
 }
 
 /**

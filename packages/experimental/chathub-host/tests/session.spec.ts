@@ -57,6 +57,7 @@ class ScriptedPage implements TurnPage {
    * @returns The next scripted answer markup.
    */
   async answerHtml(selector: string, body?: string): Promise<string> {
+    if (this.delayMs > 0) await new Promise<void>((resolve) => { setTimeout(resolve, this.delayMs) })
     this.asked.push({ selector, body })
     // Before submission the container is whatever the page already displayed.
     if (this.submitted.length === 0) return this.before
@@ -78,6 +79,17 @@ class ScriptedPage implements TurnPage {
 
   /** Whole-page markup to report; set to simulate a thinking card the answer selector excludes. */
   body = ''
+
+  /** Artificial read latency for exercising the idle-deadline renewal. */
+  delayMs = 0
+
+  /** Visible reasoning text a scripted page reports after the reply settles. */
+  reasoningValue = ''
+
+  /** @returns The reasoning markup the site showed. */
+  async reasoningHtml(_selector: string): Promise<string> {
+    return this.reasoningValue
+  }
 
   /**
    * @param _selector - signed-out wall selector.
@@ -148,6 +160,29 @@ it('sends one prompt and returns the stabilized answer markup', async () => {
   // The markup, not its text: emphasis, tables, and images survive the read.
   expect(answer).toEqual({ content: '<p>ab</p>', finishReason: 'stop' })
   expect(page.submitted).toEqual(['hello'])
+})
+
+it('collects the site thinking blocks without mixing them into the answer', async () => {
+  const page = new ScriptedPage()
+  page.reasoningValue = 'first thought.\n\nsecond thought.'
+  page.answers = ['<p>reply</p>', '<p>reply</p>', '<p>reply</p>']
+  const reasoningDriver: SiteDriverConfig = { ...DRIVER, reasoning: '.thinking' }
+  const { session: chat } = session(page, new FakeGate(), reasoningDriver)
+  const answer = await chat.send(payload())
+  expect(answer.content).toBe('<p>reply</p>')
+  expect(chat.lastReasoning()).toBe('first thought.\n\nsecond thought.')
+  expect(answer.metadata).toEqual({ reasoning: 'first thought.\n\nsecond thought.' })
+})
+
+it('keeps a long streaming answer alive instead of cutting it off at the idle deadline', async () => {
+  const page = new ScriptedPage()
+  // 12 growing reads at 30 ms each outlast the 200 ms turn budget; every
+  // changed poll renews it, so the site is allowed to finish writing.
+  page.delayMs = 30
+  page.answers = Array.from({ length: 12 }, (_unused, index) => `<p>${'x'.repeat(index + 1)}</p>`)
+  const { session: chat } = session(page)
+  const answer = await chat.send(payload())
+  expect(answer.content).toBe('<p>xxxxxxxxxxxx</p>')
 })
 
 it('watches one prompt and yields the growing container as replacing snapshots', async () => {

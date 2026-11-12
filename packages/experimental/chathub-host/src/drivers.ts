@@ -93,8 +93,16 @@ export const DEFAULT_SITE_DRIVERS: Readonly<SiteDrivers> = {
     // and excluding the thinking variant keeps every other markdown block on
     // the page out of the answer.
     answer: '.answer-content-wrap:not([class*="thinking"])',
-    // The card wraps a "思考中" strip and the reply; only the body is the answer.
-    answerBody: '.markdown-body',
+    // Deep-thinking turns write their chain of thought into sibling wraps that
+    // carry the `text-advance-thinking-content` class. They are not part of the
+    // reply (the selector above excludes them), but they are the only place the
+    // site exposes a reasoning trace, so collect them separately.
+    reasoning: '.answer-content-wrap[class*="thinking"]',
+    // A reply is several `.markdown-body` blocks inside one wrapper, not one:
+    // scoping to a body selector reads only the LAST block, which both loses
+    // the head of the answer and makes each poll's snapshot look like a
+    // rewrite instead of prefix growth (corrupting live deltas). Read the
+    // whole wrapper; the thinking variant is already excluded above.
     pending: '思考中|正在思考|生成中|正在生成|输出中|停止生成',
     signedOutPath: SIGNED_OUT_PATH,
     submitKey: 'Enter',
@@ -142,6 +150,9 @@ export function validateSiteDriver(providerId: string, driver: SiteDriverConfig)
   }
   if (driver.answerBody !== undefined && driver.answerBody.trim().length === 0) {
     throw new Error(`WebChatTransport: driver "${providerId}" has an empty answerBody`)
+  }
+  if (driver.reasoning !== undefined && driver.reasoning.trim().length === 0) {
+    throw new Error(`WebChatTransport: driver "${providerId}" has an empty reasoning`)
   }
   if (driver.pollMs !== undefined && driver.pollMs < 1) {
     throw new Error(`WebChatTransport: driver "${providerId}" has a pollMs below 1`)

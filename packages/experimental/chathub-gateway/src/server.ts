@@ -225,6 +225,9 @@ export class ChatHubGateway {
           case 'text-delta':
             response.write(sse.content(chunk.text))
             break
+          case 'reasoning-delta':
+            response.write(sse.reasoning(chunk.text))
+            break
           case 'block-end':
             if (chunk.block.type === 'tool-call') {
               response.write(sse.toolCall(chunk.block.id, chunk.block.name, chunk.block.arguments))

@@ -196,6 +196,20 @@ export class PlaywrightChatSession implements WebChatTransportSession {
     private readonly gate: TurnGate,
   ) {}
 
+  /** Visible chain of thought collected during the most recent turn. */
+  private reasoning = ''
+
+  /**
+   * @returns The site's reasoning text for the turn that just finished.
+   *
+   * Consumers that want a `reasoning_content` channel (the OpenAI-wire
+   * gateway) call this after `send`/`watch` returns; it is intentionally not
+   * part of the answer markup, where the text would corrupt the reply.
+   */
+  lastReasoning(): string {
+    return this.reasoning
+  }
+
   /**
    * Send one prompt and wait for the site's complete answer.
    * @param payload - provider-normalized page payload.
@@ -208,7 +222,11 @@ export class PlaywrightChatSession implements WebChatTransportSession {
       await this.page.submit(payload.prompt, this.driver, this.config.typeDelayMs)
       const collected: TurnContent = { content: '' }
       await drain(this.streamUntilComplete(payload.prompt, collected, baseline, 'deltas'))
-      return { content: collected.content, finishReason: 'stop' }
+      return {
+        content: collected.content,
+        finishReason: 'stop',
+        ...this.reasoning.length > 0 ? { metadata: { reasoning: this.reasoning } } : {},
+      }
     } finally {
       release()
     }
@@ -281,18 +299,27 @@ export class PlaywrightChatSession implements WebChatTransportSession {
   ): AsyncIterable<string> {
     const pollMs = this.driver.pollMs ?? this.config.pollMs
     const stablePolls = this.driver.stablePolls ?? this.config.stablePolls
-    // A site that thinks before it answers can hold its last non-thinking
-    // answer unchanged for longer than one turn's budget; a hard ceiling of
-    // twice the budget keeps such a turn alive without waiting forever on a
-    // site that truly hung.
-    const hardDeadline = Date.now() + this.config.turnTimeoutMs * 2
+    // The turn budget is an *idle* budget, not a wall clock: a deep-thinking
+    // site can reason for minutes and then stream a long reply, and every
+    // observable page change renews it. The hard ceiling only stops a site
+    // that keeps mutating forever without ever settling.
+    const hardDeadline = Date.now() + this.config.turnTimeoutMs * 3
     let deadline = Date.now() + this.config.turnTimeoutMs
     let lastText = baseline
     let stable = 0
     let emitted = ''
+    let lastBodyLength = -1
+    this.reasoning = ''
     while (true) {
       const remaining = deadline - Date.now()
       if (remaining <= 0) {
+        // A reply that landed but never reached its last stable poll is still
+        // an answer. Handing it back beats discarding a turn the site finished.
+        if (lastText !== baseline && lastText.length > 0) {
+          collected.content = lastText
+          await this.collectReasoning()
+          return
+        }
         throw new BrowserTransportError(
           'chathub-turn-timeout',
           `${this.key}: answer did not stabilize within ${this.config.turnTimeoutMs}ms`,
@@ -306,28 +333,33 @@ export class PlaywrightChatSession implements WebChatTransportSession {
       )
       // Unchanged means the site has not started this turn's answer yet.
       // The answer selector keeps a thinking card out, so while a site works
-      // its last answer reads unchanged — the page still carries the site's
-      // status phrase then, and matching it means the site is busy, not
-      // stuck, so the turn gets another budget to let the answer land.
+      // its last answer reads unchanged; a changing page body (or the site's
+      // status phrase) then proves it is busy, not stuck.
       if (current === baseline) {
         const body = answerTextOf(await this.page.bodyMarkup())
         // An empty body reads as pending only because the remainder is empty;
         // require a non-empty body so a page that returned nothing does not
         // reset the deadline forever.
-        if (body.length > 0
-          && this.driver.pending !== undefined
-          && Date.now() < hardDeadline
-          && this.isPending(body, this.driver.pending)) {
-          deadline = Date.now() + this.config.turnTimeoutMs
-        }
+        const active = body.length > 0
+          && (body.length !== lastBodyLength
+            || (this.driver.pending !== undefined && this.isPending(body, this.driver.pending)))
+        lastBodyLength = body.length
+        if (active && Date.now() < hardDeadline) deadline = Date.now() + this.config.turnTimeoutMs
         stable = 0
         continue
+      }
+      // The reply is being written. Renewing on each changed poll is what keeps
+      // a long streaming answer alive: previously the budget ran from submit
+      // time, so a site that started writing late was cut off mid-sentence.
+      if (current !== lastText && Date.now() < hardDeadline) {
+        deadline = Date.now() + this.config.turnTimeoutMs
       }
       if (current.length > 0 && current === lastText) stable += 1
       else stable = 0
       lastText = current
       if (stable >= stablePolls) {
         collected.content = lastText
+        await this.collectReasoning()
         return
       }
       if (current.length === 0) continue
@@ -392,6 +424,29 @@ export class PlaywrightChatSession implements WebChatTransportSession {
     // with no wall element stable enough to name.
     if (this.driver.loginCookie !== undefined && !(await this.page.cookiePresent(this.driver.loginCookie))) {
       throw new BrowserTransportError('chathub-signed-out', `${this.key}: the session cookie is gone`)
+    }
+  }
+
+  /**
+   * Read the site's visible reasoning blocks once, after the reply settled.
+   *
+   * A missing driver declaration or a selector the site changed is not a turn
+   * failure: the answer still stands, only the reasoning channel stays empty.
+   * @returns Resolves once the reasoning text has been cached.
+   */
+  private async collectReasoning(): Promise<void> {
+    if (this.driver.reasoning === undefined) return
+    try {
+      const markup = await this.page.reasoningHtml(this.driver.reasoning)
+      // Each block is converted on its own so the site's thinking steps stay
+      // separated instead of collapsing into one wall of prose.
+      this.reasoning = markup
+        .split('\n\n')
+        .map(part => answerMarkupText(part))
+        .filter(part => part.length > 0)
+        .join('\n\n')
+    } catch {
+      this.reasoning = ''
     }
   }
 

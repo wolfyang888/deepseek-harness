@@ -196,8 +196,8 @@ export class ChatHubLlmAdapter extends LlmAdapter {
     let turn: Awaited<ReturnType<ChatHubLlmAdapter['runTurn']>> | undefined
     let settled = false
     const run = this.runTurn(options, started, live).then(
-      result => { turn = result },
-      error => { failure = error },
+      (result) => { turn = result },
+      (error) => { failure = error },
     ).finally(() => {
       settled = true
       live.wake()
@@ -237,6 +237,7 @@ export class ChatHubLlmAdapter extends LlmAdapter {
       )
     }
     this.reportTurn(turn, options, started)
+    yield* this.reasoningChunks(turn.parsed.reasoning)
     yield { type: 'block-start', index: 0, blockType: 'text' }
     if (turn.parsed.text.length > 0) yield { type: 'text-delta', index: 0, text: turn.parsed.text }
     yield { type: 'block-end', index: 0, block: { type: 'text', text: turn.parsed.text } }
@@ -274,6 +275,7 @@ export class ChatHubLlmAdapter extends LlmAdapter {
       )
     }
     this.reportTurn(turn, options, started)
+    yield* this.reasoningChunks(turn.parsed.reasoning)
     if (emitted === 0 && turn.parsed.text.length > 0) {
       yield { type: 'text-delta', index: 0, text: turn.parsed.text }
     }
@@ -580,6 +582,7 @@ export class ChatHubLlmAdapter extends LlmAdapter {
     sink?: ChatHubLiveSink,
   ): Promise<{
     text: string
+    reasoning: string
     call?: ChatHubToolCall
     invalid?: string
     warnings: readonly string[]
@@ -591,13 +594,14 @@ export class ChatHubLlmAdapter extends LlmAdapter {
     for (;;) {
       attempt += 1
       this.assertNotAborted(site, signal)
-      const answer = await this.ask(question, site, signal, sink)
+      const { text: answer, reasoning } = await this.ask(question, site, signal, sink)
       const parsed = parseAnswer(answer, { ...this.parsePolicy(), maxTextChars })
       await this.recordAnswer(site, attempt, answer, parsed.invalid)
       const repair = repairOf(parsed, repairs)
       if (repair === undefined || attempt > this.config.repairAttempts || (sink?.emittedChars() ?? 0) > 0) {
         return {
           ...parsed,
+          reasoning,
           ...repair === undefined ? {} : { invalid: parsed.invalid ?? repair.reason },
           attempt,
           answerChars: answer.length,
@@ -619,14 +623,15 @@ export class ChatHubLlmAdapter extends LlmAdapter {
    * @param site - site provider the route selected.
    * @param signal - caller cancellation.
    * @param sink - live emission channel for the streaming caller.
-   * @returns The site's answer as visible text.
+   * @returns The site's answer as visible text, plus any reasoning trace the
+   *   host collected from the page.
    */
   private async ask(
     prompt: string,
     site: string,
     signal?: AbortSignal,
     sink?: ChatHubLiveSink,
-  ): Promise<string> {
+  ): Promise<{ text: string; reasoning: string }> {
     await this.assertHealthy(site)
     const opened = await this.openAttempt(site)
     if (opened === undefined) {
@@ -667,11 +672,11 @@ export class ChatHubLlmAdapter extends LlmAdapter {
         const rest = finalSuffix(toText(snapshot), emitted)
         if (rest.length > 0) sink.emit(rest)
         this.assertNotAborted(site, signal)
-        return toText(snapshot)
+        return { text: toText(snapshot), reasoning: session.lastReasoning?.() ?? '' }
       }
       const answer = await session.send(payload)
       this.assertNotAborted(site, signal)
-      return toText(answer.content)
+      return { text: toText(answer.content), reasoning: session.lastReasoning?.() ?? '' }
     } catch (error) {
       throw transportFailure(error, site)
     } finally {
@@ -706,6 +711,23 @@ export class ChatHubLlmAdapter extends LlmAdapter {
   private assertNotAborted(site: string, signal?: AbortSignal): void {
     if (signal?.aborted !== true) return
     throw new LlmError(`chathub-llm: ${site} turn cancelled`, 'ABORTED')
+  }
+
+  /**
+   * Emit the site's visible chain of thought as its own reasoning block.
+   *
+   * Index 2 keeps it clear of the text block (0) and the tool call (1). The
+   * gateway maps these deltas to `reasoning_content` SSE frames, which is what
+   * lets a client render a thinking panel instead of only the final reply.
+   * @param reasoning - joined text of the site's thinking blocks.
+   * @returns A complete reasoning block, or nothing when the site showed none.
+   */
+  private *reasoningChunks(reasoning: string): Iterable<StreamChunk> {
+    if (reasoning.length === 0) return
+    const index = 2
+    yield { type: 'block-start', index, blockType: 'reasoning' }
+    yield { type: 'reasoning-delta', index, text: reasoning }
+    yield { type: 'block-end', index, block: { type: 'reasoning', text: reasoning } }
   }
 
   /**
