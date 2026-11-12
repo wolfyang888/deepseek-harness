@@ -55,6 +55,7 @@ const SENTENCE_MODEL_EXPERIENCE: Readonly<Record<string, SentenceContract>> = {
   'packages/experimental/chathub': { kind: 'indirect', reason: 'The library renders the handoff prompt and browser adapters normalize it; the host transport owns page dispatch and login state.' },
   'packages/experimental/chathub-host': { kind: 'indirect', reason: 'The transport types the prompt an adapter rendered and polls the site for answers; it adds no model input and owns page dispatch and sign-in.' },
   'packages/experimental/client-ui-chathub': { kind: 'indirect', reason: 'The panel forwards user-authored messages and the localized switch reason through the chatHub Remote; the host controller owns the compiled context and page dispatch.' },
+  'packages/experimental/chathub-gateway': { kind: 'none', reason: 'The gateway translates an external agent wire request into an existing llm route turn without adding instructions, wrappers, or metadata the site model reads.' },
   'packages/experimental/client-ui-cot-translation': { kind: 'indirect', reason: 'The translator owns optional paid queries; normal Session activation delegates startup context to the preset.' },
   'packages/experimental/cot-translation-bundle': { kind: 'indirect', reason: 'The GUI consumer delegates paid query prompts to the translator and normal activation context to the Session preset.' },
   'packages/client/product-analytics': { kind: 'none', reason: 'Desktop analytics observes selected interactions without contributing model context or Session events.' },

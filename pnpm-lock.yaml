@@ -8770,6 +8770,28 @@ importers:
         specifier: ^5.0.6
         version: 5.0.6
 
+  packages/experimental/chathub-gateway:
+    dependencies:
+      '@deepseek-ai/schemastery':
+        specifier: link:../../../vendor/schemastery
+        version: link:../../../vendor/schemastery
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: workspace:~
+        version: link:../../../vendor/cordis
+      '@deepseek-ai/dsh-experimental-chathub':
+        specifier: workspace:*
+        version: link:../chathub
+      '@deepseek-ai/dsh-experimental-chathub-host':
+        specifier: workspace:*
+        version: link:../chathub-host
+      '@deepseek-ai/dsh-llm':
+        specifier: workspace:*
+        version: link:../../llm/llm
+      playwright-core:
+        specifier: ^1.61.1
+        version: 1.61.1
+
   packages/experimental/chathub-host:
     dependencies:
       '@deepseek-ai/dsh-experimental-chathub':

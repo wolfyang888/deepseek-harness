@@ -240,7 +240,7 @@ describe('parseAnswer', () => {
     // block format instead of letting the second call disappear.
     const parsed = parseAnswer(
       '关键线索出现：<tool_call>read\n{“file_path”: “lua/init.lua”, “offset”: 720, “limit”: 80}</arg_value></tool_call>调用已确认。'
-        + '<tool_call>write\n{“file_path”: “docs/dev/notes/x.md”, “content”: “# 分析\n正文”}\n',
+        + '<tool_call>write\n{“file_path”: “docs/dev/notes/x.txt”, “content”: “# 分析\n正文”}\n',
       POLICY,
     )
     expect(parsed.call).toEqual({ name: 'read', arguments: { file_path: 'lua/init.lua', offset: 720, limit: 80 } })
