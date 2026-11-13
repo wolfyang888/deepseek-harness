@@ -21,7 +21,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
 # --- knobs -------------------------------------------------------------------
-: "${DSH_CHATHUB_SITES:=glm-web,doubao-web,deepseek-web,qianwen-web}"
+: "${DSH_CHATHUB_SITES:=glm-web,doubao-web,qianwen-web,gemini-web,chatgpt-web,deepseek-web}"
 : "${DSH_CHATHUB_GATEWAY_HOST:=127.0.0.1}"
 : "${DSH_CHATHUB_GATEWAY_PORT:=8787}"
 : "${DSH_CHATHUB_PACING:=responsive}"

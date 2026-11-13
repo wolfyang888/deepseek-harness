@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { ChatHubLlmAdapter } from '../src/adapter.ts'
-import { TOOL_CALL_CLOSE, TOOL_CALL_OPEN } from '../src/protocol.ts'
+import { END_MARKER, TOOL_CALL_CLOSE, TOOL_CALL_OPEN } from '../src/protocol.ts'
 import type {
   ChatHubLlmConfig,
   ChatHubTransport,
@@ -525,6 +525,57 @@ describe('ChatHubLlmAdapter live streaming', () => {
       block: { type: 'tool-call', id: expect.any(String), name: 'read', arguments: '{"file_path":"src/a.ts"}' },
     })
     expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'tool-calls' } })
+  })
+
+  it('does not stream a half-written END marker when the holdback is released', async () => {
+    const source = new FakeSource()
+    source.snapshots = true
+    // Regression for 2026-11-13: gemini-web's answer container stabilized on
+    // the first two characters of <<<END. parseAnswer already accepts that as a
+    // damaged marker, but finalSuffix used to flush "\n<<" into the SSE deltas,
+    // so the client saw text the final block-end did not contain.
+    const answer = 'HTTP 200 means OK\n<<'
+    source.answers = [answer]
+    source.watchPlans = [['HTTP 200 means', answer]]
+    const chunks = await collect(adapter(source).stream(request()))
+    const deltas = chunks.flatMap(chunk => chunk.type === 'text-delta' ? [chunk.text] : [])
+    expect(deltas.join('')).toBe('HTTP 200 means OK')
+    const blockEnd = chunks.find(chunk => chunk.type === 'block-end' && chunk.block.type === 'text')
+    expect(blockEnd).toMatchObject({ block: { type: 'text', text: 'HTTP 200 means OK' } })
+    expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'stop' } })
+  })
+
+  it('keeps a site-mangled END tail out of streamed text too', async () => {
+    const source = new FakeSource()
+    source.snapshots = true
+    const answer = 'all done\n<<END'
+    source.answers = [answer]
+    source.watchPlans = [['all', answer]]
+    const chunks = await collect(adapter(source).stream(request()))
+    const deltas = chunks.flatMap(chunk => chunk.type === 'text-delta' ? [chunk.text] : [])
+    expect(deltas.join('')).toBe('all done')
+  })
+
+  it('still hides the exact END marker from streamed text', async () => {
+    const source = new FakeSource()
+    source.snapshots = true
+    const answer = `done\n${END_MARKER}`
+    source.answers = [answer]
+    source.watchPlans = [['done', answer]]
+    const chunks = await collect(adapter(source).stream(request()))
+    const deltas = chunks.flatMap(chunk => chunk.type === 'text-delta' ? [chunk.text] : [])
+    expect(deltas.join('')).toBe('done')
+  })
+
+  it('still streams a single trailing bracket that is not a marker tail', async () => {
+    const source = new FakeSource()
+    source.snapshots = true
+    const answer = 'x <'
+    source.answers = [answer]
+    source.watchPlans = [['x', answer]]
+    const chunks = await collect(adapter(source).stream(request()))
+    const deltas = chunks.flatMap(chunk => chunk.type === 'text-delta' ? [chunk.text] : [])
+    expect(deltas.join('')).toBe('x <')
   })
 
   it('surfaces an illegal answer instead of repairing once a delta has been emitted', async () => {

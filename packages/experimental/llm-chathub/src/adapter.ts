@@ -24,7 +24,7 @@ import {
 } from '@deepseek-ai/dsh-llm'
 import { appendFile } from 'node:fs/promises'
 import { answerMessageText } from '@deepseek-ai/dsh-experimental-chathub-host'
-import { END_MARKER, TOOL_CALL_OPEN, parseAnswer } from './protocol.ts'
+import { END_MARKER, TOOL_CALL_OPEN, parseAnswer, visibleTextOf } from './protocol.ts'
 import { renderRequest } from './render.ts'
 import { SiteRouter } from './router.ts'
 import {
@@ -1061,6 +1061,12 @@ function emittableSuffix(projected: string, emitted: number): string {
  * once the site has stopped writing, a projection that never grew a marker is
  * all visible answer.
  *
+ * The boundary comes from the protocol's own marker stripping. A site that
+ * stopped mid-marker (gemini-web left a bare `\n<<` behind) has a damaged END
+ * tail there, not answer text: releasing the holdback up to `answer.length`
+ * used to stream that tail, so the SSE content disagreed with the clean text
+ * the final block reported.
+ *
  * @param answer - the stable answer's visible text.
  * @param emitted - how much the mid-stream deltas already emitted.
  * @returns The remaining visible text, or empty when nothing is owed. Text the
@@ -1068,7 +1074,7 @@ function emittableSuffix(projected: string, emitted: number): string {
  *   block still carries it for non-streaming consumers.
  */
 function finalSuffix(answer: string, emitted: number): string {
-  let bound = answer.length
+  let bound = visibleTextOf(answer).text.length
   for (const marker of MARKER_OPENS) {
     const at = answer.indexOf(marker)
     if (at >= 0) bound = Math.min(bound, at)

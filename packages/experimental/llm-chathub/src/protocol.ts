@@ -60,7 +60,7 @@ export function parseAnswer(raw: string, policy: ChatHubParsePolicy): ChatHubPar
     const native = repairedNativeCall(raw, policy, warnings)
     if (native !== undefined) return native
     const suspicion = suspectedToolNarrative(raw)
-    const { text, ended, damaged } = finalTextOf(raw)
+    const { text, ended, damaged } = visibleTextOf(raw)
     if (damaged === true) {
       warnings.push('accepted a damaged END marker: the reply ended with a mangled form of <<<END')
     }
@@ -124,12 +124,18 @@ const END_TAILS: readonly RegExp[] = [
 
 /**
  * Strip the completion marker from a blockless reply.
+ *
+ * The live-streaming projection uses the returned text as the boundary of what
+ * a reader may see. A site can stop writing with only the first two characters
+ * of `<<<END`; that tail counts as a damaged marker here, and reusing this
+ * boundary keeps the stream from flushing it as answer text when the
+ * projection releases its holdback.
  * @param raw - the site's answer text.
  * @returns The text without its trailing marker, whether the marker counted,
  *   and whether what matched was a damaged spelling rather than the exact
  *   `<<<END`.
  */
-function finalTextOf(raw: string): { text: string; ended: boolean; damaged?: boolean } {
+export function visibleTextOf(raw: string): { text: string; ended: boolean; damaged?: boolean } {
   const trimmed = raw.trimEnd()
   for (const tail of END_TAILS) {
     const match = tail.exec(trimmed)
@@ -205,7 +211,7 @@ function repairedNativeCall(
   if (firstRejectedPath(args, policy) !== undefined) return undefined
   warnings.push('repaired the call the reply wrote as <tool_call>…</tool_call> instead of the block')
   const joined = `${raw.slice(0, openMatch.index)}\n${raw.slice(closeMatch.index + closeMatch[0].length)}`
-  const { text } = finalTextOf(joined)
+  const { text } = visibleTextOf(joined)
   const leftover = NATIVE_LEFTOVER.exec(joined)
   return {
     text: boundText(text.trim(), policy.maxTextChars),
