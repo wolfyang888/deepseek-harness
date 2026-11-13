@@ -320,12 +320,16 @@ export class ChatHubLlmAdapter extends LlmAdapter {
    * locked profile, a disposed browser); without this mapping those bypass
    * the site-failure codes and reach the loop unclassified.
    * @param site - site provider the route selected.
+   * @param signal - cancels the open when the caller gave up on the turn.
    * @returns The session, a refusal, or `undefined` while sign-in is pending.
    * @throws LlmError when the transport itself fails to open.
    */
-  private async openAttempt(site: string): Promise<ChatHubTransportSession | ChatHubTransportClosed | undefined> {
+  private async openAttempt(
+    site: string,
+    signal?: AbortSignal,
+  ): Promise<ChatHubTransportSession | ChatHubTransportClosed | undefined> {
     try {
-      return await this.transport().open(site, this.nextPageKey(site))
+      return await this.transport().open(site, this.nextPageKey(site), signal)
     } catch (error) {
       throw transportFailure(error, site)
     }
@@ -645,7 +649,7 @@ export class ChatHubLlmAdapter extends LlmAdapter {
     sink?: ChatHubLiveSink,
   ): Promise<{ text: string; reasoning: string }> {
     await this.assertHealthy(site)
-    const opened = await this.openAttempt(site)
+    const opened = await this.openAttempt(site, signal)
     if (opened === undefined) {
       throw new LlmError(`chathub-llm: ${site} is waiting for sign-in`, CHATHUB_LLM_AUTH_CODE)
     }

@@ -26,6 +26,22 @@ const SEND_SETTLE_MS = 3_000
 const SUBMIT_ATTEMPTS = 3
 
 /**
+ * How long a rendered composer may still lack the session cookie before the
+ * page is read as signed out.
+ *
+ * A site with a `loginCookie` renders its composer for a guest too, so the
+ * input cannot prove sign-in; the cookie can. The opposite reading is what
+ * matters here: once the composer has painted, a missing cookie means the
+ * page is signed out, not slow. Without this the wait polls to the full login
+ * deadline — 2026-11-13, gemini-web: every conversation turn took 305s and
+ * answered `chathub_signed_out`, and each such turn held the browser session
+ * (and the site's pacing budget) for the whole time. The window covers the
+ * moment a cookie lands right after first paint; the login flow does not use
+ * it, because there the cookie only arrives when the user finishes signing in.
+ */
+const SIGN_IN_SETTLE_MS = 2_000
+
+/**
  * One browser page bound to a key and its operation timeout.
  *
  * Visibility and completion use explicit polling rather than Playwright's
@@ -77,36 +93,53 @@ export class PlaywrightPage implements ChatPageHandle {
   }
 
   /**
-   * Wait for a signed-in composer, stopping early on a signed-out wall or cancellation.
+   * Wait for a signed-in composer, stopping early on a signed-out page or cancellation.
    *
    * A site whose driver declares a `loginCookie` renders its composer for a
    * guest too, so a visible input alone is a false sign-in; the wait reports
    * ready only once that cookie is also present, which is what makes the
    * login window's poll wait for the QR scan to actually land the session.
+   *
+   * The same fact reads the other way for an ordinary turn: a composer that
+   * has painted and still carries no cookie after `SIGN_IN_SETTLE_MS` is a
+   * signed-out page, and reporting it then is the whole point of the cookie
+   * proof. Waiting out `timeoutMs` instead charges every unsigned-in turn the
+   * full login deadline and keeps the browser session busy while it waits.
    * @param driver - site facts: input selector, wall selector, session cookie.
    * @param timeoutMs - longest wait for the signed-in composer.
    * @param pollMs - delay between visibility checks.
    * @param signal - cancels the wait.
-   * @param options - `ignoreLoginWall` keeps polling on a page whose wall is
-   *   expected to be visible: a login window opens signed-out, so treating
-   *   its wall as a failure would close it before the user can sign in.
+   * @param options - `awaitingSignIn` marks the login window: its page is
+   *   signed out by definition, so its wall is not a failure and its missing
+   *   cookie is not a verdict — only the user finishing sign-in produces one.
    * @returns `true` when the composer is visible — and the session cookie is
-   * present when the site declares one — before the deadline.
+   *   present when the site declares one — before the deadline.
    */
   async waitForInput(
     driver: SiteDriverConfig,
     timeoutMs: number,
     pollMs: number,
     signal?: AbortSignal,
-    options: { readonly ignoreLoginWall?: boolean } = {},
+    options: { readonly awaitingSignIn?: boolean } = {},
   ): Promise<boolean> {
     const deadline = Date.now() + timeoutMs
+    let composerSeenAt: number | undefined
     while (Date.now() < deadline) {
       if (signal?.aborted === true) return false
       if (await this.visible(driver.input)) {
         if (driver.loginCookie === undefined || await this.cookiePresent(driver.loginCookie)) return true
+        if (!options.awaitingSignIn) {
+          // A guest page paints the composer; the cookie is the proof. Give it
+          // the settle window to land, then read the page as signed out.
+          composerSeenAt ??= Date.now()
+          if (Date.now() - composerSeenAt >= SIGN_IN_SETTLE_MS) return false
+        }
+      } else {
+        // A composer that went away restarts the settle window: the page is
+        // still loading, and its next paint deserves the full allowance.
+        composerSeenAt = undefined
       }
-      if (!options.ignoreLoginWall && driver.loginWall !== undefined && await this.visible(driver.loginWall)) return false
+      if (!options.awaitingSignIn && driver.loginWall !== undefined && await this.visible(driver.loginWall)) return false
       if (this.page.isClosed()) {
         throw new BrowserTransportError('chathub-browser-unavailable', `${this.key}: page closed while waiting for input`)
       }

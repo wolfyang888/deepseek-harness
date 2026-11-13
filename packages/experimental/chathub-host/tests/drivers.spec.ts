@@ -60,10 +60,14 @@ it('uses a real visible guest wall for gemini, not the hidden ServiceLogin link'
   // accounts.google.com/ServiceLogin anchor exists in the guest DOM but is
   // hidden (verified against a live guest page on 2026-11-13), so declaring
   // it as the wall never fired and turned every unsigned-in gemini turn into
-  // a 300s poll. The signed-out sidebar test ids are actually visible.
+  // a 300s poll. The signed-out sidebar test ids are visible at 1440x960, but
+  // the gateway's own profile-restored 800x600 window collapses that sidebar
+  // and hides them too — the top-bar `.signed-out-buttons` button measured
+  // visible at both widths, so the union must keep it.
   const wall = DEFAULT_SITE_DRIVERS['gemini-web']?.loginWall ?? ''
   expect(wall).not.toContain('ServiceLogin')
   expect(wall).toContain('sidenav-error')
+  expect(wall).toContain('.signed-out-buttons')
   expect(DEFAULT_SITE_DRIVERS['gemini-web']?.loginCookie).toBe('SAPISID')
 })
 

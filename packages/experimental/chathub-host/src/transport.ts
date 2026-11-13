@@ -52,12 +52,14 @@ export class PlaywrightWebChatTransport implements WebChatTransport {
    * Open or reuse a signed-in session for one provider.
    * @param providerId - provider whose site the session belongs to.
    * @param sessionKey - optional site-side conversation to resume.
+   * @param signal - cancels the open, including the wait for a signed-in composer.
    * @returns The session, or the closed result when the site is not signed in.
    * @throws BrowserTransportError with `chathub-driver-missing` for an unregistered provider.
    */
   async open(
     providerId: string,
     sessionKey?: string,
+    signal?: AbortSignal,
   ): Promise<WebChatTransportSession | WebChatTransportClosed | undefined> {
     const driver = this.drivers[providerId]
     if (driver === undefined) {
@@ -68,7 +70,10 @@ export class PlaywrightWebChatTransport implements WebChatTransport {
     await this.pacing.admit(providerId)
     const key = sessionKey ?? providerId
     const page = await this.runtime.acquire(key, driver)
-    const signedIn = await page.waitForInput(driver, this.config.loginTimeoutMs, this.config.pollMs)
+    // The caller's signal must reach this wait: a client that gave up on the
+    // request cannot cancel anything else, and an uncancelled wait keeps the
+    // page (and the key's turn chain) busy long after nobody is listening.
+    const signedIn = await page.waitForInput(driver, this.config.loginTimeoutMs, this.config.pollMs, signal)
     if (!signedIn) {
       await this.runtime.release(key)
       return { closed: true, reason: 'not-signed-in' }

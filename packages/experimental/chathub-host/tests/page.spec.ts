@@ -83,16 +83,46 @@ it('fails a cookie-and-wall site fast on its wall, not the deadline', async () =
 
 it('ignores a visible wall during a sign-in wait until the cookie lands', async () => {
   // The login window opens signed-out: its wall is expected, not a failure.
-  // Without ignoreLoginWall this resolves false on the first poll and the
+  // Without awaitingSignIn this resolves false on the first poll and the
   // window closes before anyone can sign in (2026-11-13 gemini regression).
   const driver = { ...DRIVER, loginCookie: 'SAPISID', loginWall: '.login-wall' }
   const { wrapper, fake } = page()
   fake.visible.add(DRIVER.input)
   fake.visible.add('.login-wall')
-  const waiting = wrapper.waitForInput(driver, 500, 1, undefined, { ignoreLoginWall: true })
+  const waiting = wrapper.waitForInput(driver, 500, 1, undefined, { awaitingSignIn: true })
   setTimeout(() => {
     if (fake.contextValue !== undefined) fake.contextValue.cookieNames = ['SAPISID']
   }, 20)
+  await expect(waiting).resolves.toBe(true)
+})
+
+it('reports a guest composer as signed out without waiting out the deadline', async () => {
+  // 2026-11-13: gemini-web renders its composer for a guest, its wall missed
+  // at the gateway's 800x600 viewport, and every turn answered
+  // `chathub_signed_out` only after 305s (loginTimeoutMs). A composer that
+  // has painted and still has no session cookie is a signed-out page, so the
+  // wait must say so after the settle window — far inside a 10s deadline.
+  const driver = { ...DRIVER, loginCookie: 'SAPISID', loginWall: '.login-wall' }
+  const { wrapper, fake } = page()
+  fake.visible.add(DRIVER.input)
+  const started = Date.now()
+  await expect(wrapper.waitForInput(driver, 10_000, 10)).resolves.toBe(false)
+  expect(Date.now() - started).toBeLessThan(4_000)
+})
+
+it('keeps waiting for a cookie when the page has not painted its composer yet', async () => {
+  // A slow page is not a signed-out page: the settle window only starts once
+  // the composer is visible, so a load that lands late still gets in.
+  const driver = { ...DRIVER, loginCookie: 'sessionid' }
+  const { wrapper, fake } = page()
+  // A real page always has its context; touching it here gives the fake one
+  // to flip from the timer below.
+  await fake.context().cookies()
+  const waiting = wrapper.waitForInput(driver, 200, 1)
+  setTimeout(() => {
+    fake.visible.add(DRIVER.input)
+    if (fake.contextValue !== undefined) fake.contextValue.cookieNames = ['sessionid']
+  }, 40)
   await expect(waiting).resolves.toBe(true)
 })
 

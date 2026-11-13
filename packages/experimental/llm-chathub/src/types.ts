@@ -178,9 +178,14 @@ export interface ChatHubTransport {
    * Open or reuse a signed-in chat session for one site and page key.
    * @param providerId - site provider id.
    * @param sessionKey - page key; a new key means a new site conversation.
+   * @param signal - cancels the open, including the wait for a signed-in page.
    * @returns The session, a refusal, or `undefined` while sign-in is pending.
    */
-  open(providerId: string, sessionKey?: string): Promise<ChatHubTransportSession | ChatHubTransportClosed | undefined>
+  open(
+    providerId: string,
+    sessionKey?: string,
+    signal?: AbortSignal,
+  ): Promise<ChatHubTransportSession | ChatHubTransportClosed | undefined>
   /**
    * Characters the site's composer accepts in one insertion.
    * @param providerId - site provider id.

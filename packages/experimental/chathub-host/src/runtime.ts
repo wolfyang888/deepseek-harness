@@ -220,10 +220,11 @@ export class PlaywrightBrowserRuntime implements TransportRuntime {
   ): Promise<boolean> {
     try {
       // A login window opens on the signed-out page, where the wall is
-      // expected to be visible. Keep polling for the session cookie instead
-      // of rejecting the very first frame and closing the window before the
-      // user can sign in. Wall rejection belongs to ordinary turns only.
-      return await page.waitForInput(driver, timeoutMs, this.timings.pollMs, signal, { ignoreLoginWall: true })
+      // expected to be visible and the session cookie is missing until the
+      // user finishes. Keep polling for the cookie instead of rejecting the
+      // very first frame and closing the window before anyone can sign in;
+      // the fast signed-out verdicts belong to ordinary turns only.
+      return await page.waitForInput(driver, timeoutMs, this.timings.pollMs, signal, { awaitingSignIn: true })
     } catch (error) {
       if (error instanceof BrowserTransportError && error.token === 'chathub-browser-unavailable') {
         // The user closing the login page or the browser ends the attempt,

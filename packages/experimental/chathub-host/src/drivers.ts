@@ -40,13 +40,21 @@ export const DEFAULT_SITE_DRIVERS: Readonly<SiteDrivers> = {
     // the cookie alone would poll a guest composer to the 300s deadline.
     //
     // The wall MUST be visible on the real guest page: page.ts checks
-    // locator.isVisible(), not DOM presence. The `accounts.google.com/
-    // ServiceLogin` link is in the guest DOM but hidden (verified 2026-11-13
-    // with a real browser probe), so using it silently regressed gemini-web
-    // into a 300s hang. These two Angular test ids render on the signed-out
-    // sidebar and disappear once the session cookie lands.
+    // locator.isVisible(), not DOM presence. Hidden candidates that already
+    // burned this driver once, each verified 2026-11-13 with a real browser
+    // probe at the gateway's own 800x600 viewport:
+    //   - a[href*="accounts.google.com/ServiceLogin"] — in the guest DOM,
+    //     `visible=false` (hidden template), and logged-in pages carry account
+    //     links on the same host, so a broad match would misfire anyway.
+    //   - a[data-test-id="sidenav-error-action-link"], [data-test-id=
+    //     "sidenav-error-text"] — visible at 1440x960, but the 800x600 window
+    //     the profile stores collapses the sidebar, and both read `false`.
+    // `.signed-out-buttons` is the top-bar container Gemini renders for a
+    // guest only; its button measured visible at 800x600 and 1440x960, so the
+    // union keeps a visible wall at either width. The sidebar test ids stay as
+    // the wider-layout primary; a signed-in page renders neither.
     loginCookie: 'SAPISID',
-    loginWall: 'a[data-test-id="sidenav-error-action-link"], [data-test-id="sidenav-error-text"]',
+    loginWall: 'a[data-test-id="sidenav-error-action-link"], [data-test-id="sidenav-error-text"], .signed-out-buttons button',
     signedOutPath: SIGNED_OUT_PATH,
     submitKey: 'Enter',
   },
