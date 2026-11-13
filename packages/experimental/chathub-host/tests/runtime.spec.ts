@@ -307,6 +307,34 @@ it('keeps the headful login window for later turns on a headless service', async
   await browser.dispose()
 })
 
+it('keeps a guest login window open while its wall is visible', async () => {
+  // 2026-11-13 regression: gemini-web declares both a session cookie and a
+  // login wall. A login window *starts* on the guest page, so the wall is
+  // expected there. Failing on it closed the window before a human could
+  // sign in; the sign-in wait must poll for the cookie instead.
+  const dir = await profileDir()
+  const launcher = new FakeLauncher()
+  const driver: SiteDriverConfig = { ...DRIVER, loginCookie: 'SAPISID', loginWall: '.login-wall' }
+  let context: FakeContext | undefined
+  launcher.contextFactory = () => {
+    context = new FakeContext()
+    context.pageFactory = () => {
+      const page = new FakePage()
+      page.visible.add(DRIVER.input)
+      page.visible.add('.login-wall')
+      return page
+    }
+    return context
+  }
+  const { runtime: browser } = await runtime(managed(dir), launcher)
+  const login = browser.login('gemini-web', driver, 2000, new AbortController().signal)
+  setTimeout(() => {
+    if (context !== undefined) context.cookieNames = ['SAPISID']
+  }, 30)
+  await expect(login).resolves.toBe(true)
+  await browser.dispose()
+})
+
 it('closes the headful login window when sign-in fails', async () => {
   const dir = await profileDir()
   const launcher = new FakeLauncher()

@@ -55,6 +55,18 @@ it('rejects an uncompilable thinking-placeholder pattern', () => {
     .toThrow('driver "qianwen-web" has invalid pending')
 })
 
+it('uses a real visible guest wall for gemini, not the hidden ServiceLogin link', () => {
+  // page.ts checks locator.isVisible(), not DOM presence. The
+  // accounts.google.com/ServiceLogin anchor exists in the guest DOM but is
+  // hidden (verified against a live guest page on 2026-11-13), so declaring
+  // it as the wall never fired and turned every unsigned-in gemini turn into
+  // a 300s poll. The signed-out sidebar test ids are actually visible.
+  const wall = DEFAULT_SITE_DRIVERS['gemini-web']?.loginWall ?? ''
+  expect(wall).not.toContain('ServiceLogin')
+  expect(wall).toContain('sidenav-error')
+  expect(DEFAULT_SITE_DRIVERS['gemini-web']?.loginCookie).toBe('SAPISID')
+})
+
 it('accepts a driver without a signed-out path', () => {
   const driver = { url: 'https://fake.test/', input: '#prompt', answer: '.answer', submitKey: 'Enter' }
   expect(() => { validateSiteDriver('deepseek-web', driver) }).not.toThrow()

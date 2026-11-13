@@ -407,6 +407,7 @@ export interface ChatPageHandle extends TurnPage {
     timeoutMs: number,
     pollMs: number,
     signal?: AbortSignal,
+    options?: { readonly ignoreLoginWall?: boolean },
   ): Promise<boolean>
   /** @returns Resolves when the page is closed. */
   close(): Promise<void>

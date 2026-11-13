@@ -81,6 +81,21 @@ it('fails a cookie-and-wall site fast on its wall, not the deadline', async () =
   expect(Date.now() - started).toBeLessThan(4000)
 })
 
+it('ignores a visible wall during a sign-in wait until the cookie lands', async () => {
+  // The login window opens signed-out: its wall is expected, not a failure.
+  // Without ignoreLoginWall this resolves false on the first poll and the
+  // window closes before anyone can sign in (2026-11-13 gemini regression).
+  const driver = { ...DRIVER, loginCookie: 'SAPISID', loginWall: '.login-wall' }
+  const { wrapper, fake } = page()
+  fake.visible.add(DRIVER.input)
+  fake.visible.add('.login-wall')
+  const waiting = wrapper.waitForInput(driver, 500, 1, undefined, { ignoreLoginWall: true })
+  setTimeout(() => {
+    if (fake.contextValue !== undefined) fake.contextValue.cookieNames = ['SAPISID']
+  }, 20)
+  await expect(waiting).resolves.toBe(true)
+})
+
 it('serves a cookie-and-wall site once the cookie lands', async () => {
   // The signed-in page no longer shows the wall, so this is the ready path
   // with a wall declared: the declaration must not disturb the cookie proof.

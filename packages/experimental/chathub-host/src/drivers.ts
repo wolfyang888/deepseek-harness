@@ -33,15 +33,20 @@ export const DEFAULT_SITE_DRIVERS: Readonly<SiteDrivers> = {
     // conversation is never saved to the Google account: turns that ran as a
     // guest (2026-11-13: "list 当前目录下有哪些目录" — answered, yet absent
     // from the signed-in history with the answer tape as the only record)
-    // cannot be found afterwards at all. The ServiceLogin link is the one
-    // sign a guest page carries and a signed-in page never shows, and
-    // `SAPISID` is the persistent Google session cookie; together they fail
-    // an unsigned-in turn fast instead of letting it run unrecorded. Both
-    // fields matter: the wall alone never runs — a visible input returns
-    // first when no cookie is declared — and the cookie alone would poll a
-    // guest composer to the login deadline (Doubao's 300s hang).
+    // cannot be found afterwards at all. `SAPISID` is the persistent Google
+    // session cookie; the wall fails an unsigned-in turn fast instead of
+    // letting it run unrecorded. Both fields matter: the wall alone never
+    // runs — a visible input returns first when no cookie is declared — and
+    // the cookie alone would poll a guest composer to the 300s deadline.
+    //
+    // The wall MUST be visible on the real guest page: page.ts checks
+    // locator.isVisible(), not DOM presence. The `accounts.google.com/
+    // ServiceLogin` link is in the guest DOM but hidden (verified 2026-11-13
+    // with a real browser probe), so using it silently regressed gemini-web
+    // into a 300s hang. These two Angular test ids render on the signed-out
+    // sidebar and disappear once the session cookie lands.
     loginCookie: 'SAPISID',
-    loginWall: 'a[href*="accounts.google.com/ServiceLogin"]',
+    loginWall: 'a[data-test-id="sidenav-error-action-link"], [data-test-id="sidenav-error-text"]',
     signedOutPath: SIGNED_OUT_PATH,
     submitKey: 'Enter',
   },

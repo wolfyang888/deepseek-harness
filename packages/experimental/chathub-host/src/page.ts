@@ -87,6 +87,9 @@ export class PlaywrightPage implements ChatPageHandle {
    * @param timeoutMs - longest wait for the signed-in composer.
    * @param pollMs - delay between visibility checks.
    * @param signal - cancels the wait.
+   * @param options - `ignoreLoginWall` keeps polling on a page whose wall is
+   *   expected to be visible: a login window opens signed-out, so treating
+   *   its wall as a failure would close it before the user can sign in.
    * @returns `true` when the composer is visible — and the session cookie is
    * present when the site declares one — before the deadline.
    */
@@ -95,6 +98,7 @@ export class PlaywrightPage implements ChatPageHandle {
     timeoutMs: number,
     pollMs: number,
     signal?: AbortSignal,
+    options: { readonly ignoreLoginWall?: boolean } = {},
   ): Promise<boolean> {
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {
@@ -102,7 +106,7 @@ export class PlaywrightPage implements ChatPageHandle {
       if (await this.visible(driver.input)) {
         if (driver.loginCookie === undefined || await this.cookiePresent(driver.loginCookie)) return true
       }
-      if (driver.loginWall !== undefined && await this.visible(driver.loginWall)) return false
+      if (!options.ignoreLoginWall && driver.loginWall !== undefined && await this.visible(driver.loginWall)) return false
       if (this.page.isClosed()) {
         throw new BrowserTransportError('chathub-browser-unavailable', `${this.key}: page closed while waiting for input`)
       }
