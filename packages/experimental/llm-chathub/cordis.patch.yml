@@ -47,6 +47,10 @@
 #   DSH_CHATHUB_LLM_SELECTION_STRATEGY  `sticky` (default) or `round-robin`
 #   DSH_CHATHUB_LLM_FAILOVER  extra sites one turn may try after a site-level
 #                            failure (default 1); 0 disables failover
+#   DSH_CHATHUB_LLM_REPAIRS  correction rounds after a reply breaks the call
+#                            protocol (default 2); each round is a fresh site
+#                            conversation with the original prompt plus one
+#                            correction, so raising this raises turn latency
 #   DSH_CHATHUB_LLM_TOPIC_TTL_MS  how long a topic keeps its site (default
 #                            1800000 = 30 min)
 #   DSH_CHATHUB_LLM_SITE_COOLDOWN_MS  how long a failed site stays out of
@@ -87,6 +91,7 @@
         stickyTtlMs: !!js Number(process.env.DSH_CHATHUB_LLM_TOPIC_TTL_MS ?? 1800000)
         siteCooldownMs: !!js Number(process.env.DSH_CHATHUB_LLM_SITE_COOLDOWN_MS ?? 600000)
         failoverAttempts: !!js Number(process.env.DSH_CHATHUB_LLM_FAILOVER ?? 1)
+        repairAttempts: !!js Number(process.env.DSH_CHATHUB_LLM_REPAIRS ?? 2)
         escalateAfterFailures: !!js Number(process.env.DSH_CHATHUB_LLM_ESCALATE_AFTER ?? 2)
         siteDemoteMs: !!js Number(process.env.DSH_CHATHUB_LLM_SITE_DEMOTE_MS ?? 1800000)
         siteRank: !!js |

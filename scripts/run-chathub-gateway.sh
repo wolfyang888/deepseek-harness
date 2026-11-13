@@ -39,6 +39,11 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # for both.
 export DSH_CHATHUB_LLM_SITES="$DSH_CHATHUB_SITES"
 export DSH_CHATHUB_GATEWAY_SITES="$DSH_CHATHUB_SITES"
+# Keep a tape of every raw site answer and its parse verdict. A protocol
+# rejection otherwise leaves no evidence of what the site actually said, which
+# makes a failed WorkBuddy turn impossible to diagnose after the fact.
+: "${DSH_CHATHUB_LLM_ANSWER_LOG:=$ROOT/.dsh-chathub-answers.jsonl}"
+export DSH_CHATHUB_LLM_ANSWER_LOG
 export DSH_CHATHUB_GATEWAY_HOST
 export DSH_CHATHUB_GATEWAY_PORT
 export DSH_CHATHUB_PACING

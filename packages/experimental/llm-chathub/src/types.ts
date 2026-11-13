@@ -261,8 +261,10 @@ export interface ChatHubParsedAnswer {
   readonly invalid?: string
   /**
    * Why a blockless reply looks cut off: it ends without the `<<<END`
-   * completion marker. Enforcement is the caller's decision — a fresh topic
-   * may legitimately answer in prose — so this is a finding, not a rejection.
+   * completion marker. This is a finding, not a rejection: a fresh topic may
+   * legitimately answer in prose, and a site's trailing sources/disclaimers
+   * can leave a finished answer without the marker. The adapter records it as
+   * a warning only — it must never trigger a repair round or an error here.
    */
   readonly cutOff?: string
   /**
@@ -377,7 +379,10 @@ export const DEFAULT_CHATHUB_LLM_CONFIG = {
   denyPaths: ['.git', 'node_modules', '.env'] as const,
   verifyCommands: ['pnpm run typecheck'] as const,
   maxToolCallsPerTurn: 1,
-  repairAttempts: 1,
+  // A deep-thinking site such as GLM often needs more than one correction to
+  // return to the call block on a long agent prompt. The host's idle turn
+  // budget gives those rounds room without cutting a finished answer short.
+  repairAttempts: 2,
   auxiliary: 'refuse',
 } as const
 

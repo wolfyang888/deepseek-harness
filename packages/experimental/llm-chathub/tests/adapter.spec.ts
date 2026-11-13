@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { ChatHubLlmAdapter } from '../src/adapter.ts'
-import { END_MARKER, TOOL_CALL_CLOSE, TOOL_CALL_OPEN } from '../src/protocol.ts'
+import { TOOL_CALL_CLOSE, TOOL_CALL_OPEN } from '../src/protocol.ts'
 import type {
   ChatHubLlmConfig,
   ChatHubTransport,
@@ -747,23 +747,31 @@ function requestAfterTools(text: string): GenerateOptions {
 }
 
 describe('ChatHubLlmAdapter reply-shape repairs', () => {
-  it('repairs a final answer that lacks the END marker', async () => {
+  // Regression for 2026-11-13: a long GLM turn with tool history answered in
+  // full but was discarded as MALFORMED_RESPONSE because the reply lacked the
+  // trailing <<<END. The marker is a warning now; reintroducing a repair or a
+  // rejection for it must break this test.
+  it('delivers a completed final answer without END instead of re-asking or rejecting it', async () => {
     const source = new FakeSource()
-    source.answers = ['the build is fixed', `the build is fixed\n${END_MARKER}`]
+    const answer = `the build is fixed\n\n${'more detail '.repeat(60)}`
+    source.answers = [answer]
     const chunks = await collect(adapter(source).stream(requestAfterTools('summarize the fix')))
     expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'stop' } })
-    expect(source.keys).toEqual(['deepseek-web:1', 'deepseek-web:2'])
-    // The correction names the missing marker and the shape to reply in.
-    expect(source.prompts[1]).toContain('# CORRECTION')
-    expect(source.prompts[1]).toContain(END_MARKER)
+    // The whole answer reaches the caller, not just a prefix, on one site turn.
+    expect(chunks.flatMap(chunk => chunk.type === 'text-delta' ? [chunk.text] : []).join(''))
+      .toContain('the build is fixed')
+    expect(source.keys).toEqual(['deepseek-web:1'])
+    expect(source.prompts).toHaveLength(1)
+    expect(source.prompts[0]).not.toContain('# CORRECTION')
   })
 
-  it('fails a final answer that never ends with the marker', async () => {
+  it('does not fail a final answer that never ends with the marker, even with a zero repair budget', async () => {
     const source = new FakeSource()
     source.answers = ['the build is fixed']
-    await expect(collect(adapter(source, { repairAttempts: 0 }).stream(requestAfterTools('summarize the fix'))))
-      .rejects.toMatchObject({ code: 'MALFORMED_RESPONSE' })
+    const chunks = await collect(adapter(source, { repairAttempts: 0 }).stream(requestAfterTools('summarize the fix')))
+    expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'stop' } })
     expect(source.keys).toEqual(['deepseek-web:1'])
+    expect(source.prompts[0]).not.toContain('# CORRECTION')
   })
 
   it('does not require the marker before any tool has run', async () => {

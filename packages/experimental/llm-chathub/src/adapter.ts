@@ -389,7 +389,6 @@ export class ChatHubLlmAdapter extends LlmAdapter {
       try {
         parsed = await this.askUntilLegal(rendered.prompt, site, options.signal, answerBudget, {
           narrative: (options.purpose as string | undefined) !== 'compaction',
-          endMarker: (options.purpose as string | undefined) !== 'compaction' && hadToolActivity(options),
         }, sink)
       } catch (error) {
         this.reportAttempt(options, site, rendered, failures + 1, started, failureCodeOf(error))
@@ -556,13 +555,15 @@ export class ChatHubLlmAdapter extends LlmAdapter {
   /**
    * Ask the site until the reply is legal, or the repair budget runs out.
    *
-   * Beyond a rejected call block, two reply shapes earn a repair round: a
-   * narrated tool call (history echoes or bare JSON where the block belongs)
-   * and, once tools have run, a final answer missing the `<<<END` marker —
-   * the one signal that separates a finished reply from one the site cut off.
-   * A finding the caller does not enforce is ignored, and a still-failing
-   * reply after the budget ends the step as `MALFORMED_RESPONSE` rather than
-   * delivering an answer that cannot be trusted as complete.
+   * Beyond a rejected call block, a narrated tool call earns a repair round.
+   * A missing `<<<END` marker used to earn one too, but the host now waits for
+   * the answer container to stabilize, and site tail matter (sources,
+   * disclaimers) can leave a complete answer without a trailing marker. That
+   * finding is recorded as a warning instead: spending a whole site turn
+   * re-asking a finished reply, then dropping it, made long GLM turns fail
+   * with MALFORMED_RESPONSE even though the site had answered. A still-failing
+   * call protocol after the budget still ends the step as
+   * `MALFORMED_RESPONSE`, so an unsafe call is never executed.
    * @param prompt - the rendered prompt.
    * @param site - site provider the route selected.
    * @param signal - caller cancellation.
@@ -578,7 +579,7 @@ export class ChatHubLlmAdapter extends LlmAdapter {
     site: string,
     signal?: AbortSignal,
     maxTextChars = ANSWER_CHARS,
-    repairs: Repairs = { narrative: true, endMarker: false },
+    repairs: Repairs = { narrative: true },
     sink?: ChatHubLiveSink,
   ): Promise<{
     text: string
@@ -597,10 +598,21 @@ export class ChatHubLlmAdapter extends LlmAdapter {
       const { text: answer, reasoning } = await this.ask(question, site, signal, sink)
       const parsed = parseAnswer(answer, { ...this.parsePolicy(), maxTextChars })
       await this.recordAnswer(site, attempt, answer, parsed.invalid)
+      // A missing END marker is evidence, not a verdict. The host already
+      // waits for the answer container to stabilize, and a site's trailing
+      // sources/disclaimers can leave a complete reply without the marker, so
+      // record it as a warning and never re-ask or discard a finished answer.
+      // Deliberately no enforcement switch lives here: turning this back into a
+      // rejection made long GLM turns fail with MALFORMED_RESPONSE even though
+      // the site had answered. See the END-marker regression tests.
+      const warnings = parsed.cutOff !== undefined
+        ? [...parsed.warnings, parsed.cutOff]
+        : [...parsed.warnings]
       const repair = repairOf(parsed, repairs)
       if (repair === undefined || attempt > this.config.repairAttempts || (sink?.emittedChars() ?? 0) > 0) {
         return {
           ...parsed,
+          warnings,
           reasoning,
           ...repair === undefined ? {} : { invalid: parsed.invalid ?? repair.reason },
           attempt,
@@ -945,17 +957,19 @@ function hadToolActivity(options: GenerateOptions): boolean {
     && message.content.some((block: { type?: string }) => block.type === 'tool-call'))
 }
 
-/** Which reply findings one request enforces with a repair round. */
+/**
+ * Which reply findings one request enforces with a repair round.
+ *
+ * Intentionally only `narrative`. A missing `<<<END` marker was once enforced
+ * here too, but that spent a whole extra site turn re-asking an answer the
+ * site had already finished, then threw MALFORMED_RESPONSE when the correction
+ * also lacked the marker. The protocol layer still reports it as `cutOff`, and
+ * `askUntilLegal` records it as a warning — do not add an enforcement flag
+ * back without reinstating the failure it caused.
+ */
 interface Repairs {
   /** Repair replies that narrate a tool call instead of using the block. */
   readonly narrative: boolean
-  /**
-   * Repair blockless replies missing the END marker. Only a final answer —
-   * one that follows executed tool calls — must end with it; a fresh topic may
-   * answer in prose, and compaction turns are exempt because their checkpoint
-   * has no fallback route on a web-only mount.
-   */
-  readonly endMarker: boolean
 }
 
 /**
@@ -979,12 +993,7 @@ function repairOf(parsed: ChatHubParsedAnswer, repairs: Repairs): { reason: stri
       advice: 'Reply again with the call inside the <<<TOOL_CALL ... TOOL_CALL>>> block, or with a final answer that mentions no tool.',
     }
   }
-  if (repairs.endMarker && parsed.cutOff !== undefined) {
-    return {
-      reason: parsed.cutOff,
-      advice: 'Reply again: either ask for one tool with the block, or give the complete final answer ending with the <<<END line.',
-    }
-  }
+  // `parsed.cutOff` is a warning, not a repair: see the Repairs note above.
   return undefined
 }
 
