@@ -66,6 +66,34 @@ it('stops waiting when the login wall appears', async () => {
   await expect(wrapper.waitForInput(LOGIN_DRIVER, 20, 1)).resolves.toBe(false)
 })
 
+it('fails a cookie-and-wall site fast on its wall, not the deadline', async () => {
+  // Gemini's shape (2026-11-13): the composer renders for a guest, the
+  // cookie is the proof, and the guest page shows a wall element. The wall
+  // alone never runs — a visible input returns first when no cookie is
+  // declared — and the cookie alone is Doubao's 300s hang; together the wall
+  // must fail an unsigned-in open immediately.
+  const driver = { ...DRIVER, loginCookie: 'sessionid', loginWall: '.login-wall' }
+  const { wrapper, fake } = page()
+  fake.visible.add(DRIVER.input)
+  fake.visible.add('.login-wall')
+  const started = Date.now()
+  await expect(wrapper.waitForInput(driver, 5000, 1)).resolves.toBe(false)
+  expect(Date.now() - started).toBeLessThan(4000)
+})
+
+it('serves a cookie-and-wall site once the cookie lands', async () => {
+  // The signed-in page no longer shows the wall, so this is the ready path
+  // with a wall declared: the declaration must not disturb the cookie proof.
+  const driver = { ...DRIVER, loginCookie: 'sessionid', loginWall: '.login-wall' }
+  const { wrapper, fake } = page()
+  fake.visible.add(DRIVER.input)
+  const waiting = wrapper.waitForInput(driver, 200, 1)
+  setTimeout(() => {
+    if (fake.contextValue !== undefined) fake.contextValue.cookieNames = ['sessionid']
+  }, 20)
+  await expect(waiting).resolves.toBe(true)
+})
+
 it('reports an unsigned-in site after the deadline', async () => {
   const { wrapper } = page()
   await expect(wrapper.waitForInput(LOGIN_DRIVER, 2, 1)).resolves.toBe(false)

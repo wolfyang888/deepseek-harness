@@ -29,6 +29,19 @@ export const DEFAULT_SITE_DRIVERS: Readonly<SiteDrivers> = {
     url: 'https://gemini.google.com/app',
     input: '.ql-editor',
     answer: 'model-response .markdown',
+    // A guest page renders the composer and answers turns too, but a guest
+    // conversation is never saved to the Google account: turns that ran as a
+    // guest (2026-11-13: "list 当前目录下有哪些目录" — answered, yet absent
+    // from the signed-in history with the answer tape as the only record)
+    // cannot be found afterwards at all. The ServiceLogin link is the one
+    // sign a guest page carries and a signed-in page never shows, and
+    // `SAPISID` is the persistent Google session cookie; together they fail
+    // an unsigned-in turn fast instead of letting it run unrecorded. Both
+    // fields matter: the wall alone never runs — a visible input returns
+    // first when no cookie is declared — and the cookie alone would poll a
+    // guest composer to the login deadline (Doubao's 300s hang).
+    loginCookie: 'SAPISID',
+    loginWall: 'a[href*="accounts.google.com/ServiceLogin"]',
     signedOutPath: SIGNED_OUT_PATH,
     submitKey: 'Enter',
   },
