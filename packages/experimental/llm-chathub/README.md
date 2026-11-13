@@ -51,7 +51,7 @@ The package ships an opt-in bundle layer, [`cordis.patch.yml`](cordis.patch.yml)
 pnpm dsh web --patch packages/experimental/chathub-host/cordis.patch.yml --patch packages/experimental/llm-chathub/cordis.patch.yml
 ```
 
-The layer mounts one `llm-chathub` row with environment-driven defaults: `DSH_CHATHUB_LLM_SITE` (default `deepseek-web`), `DSH_CHATHUB_LLM_MODEL`, `DSH_CHATHUB_LLM_ROOT` (default the host process's working directory), `DSH_CHATHUB_LLM_TOOLS` (default `read,grep,glob,edit,write`), and `DSH_CHATHUB_LLM_VERIFY` (default `pnpm run typecheck`). With `DSH_CHATHUB_LLM_SITES` listing two or more sites, `DSH_CHATHUB_LLM_SELECTION` (default `auto`) decides whether the aggregate route is added, and `DSH_CHATHUB_LLM_SELECTION_STRATEGY`, `DSH_CHATHUB_LLM_FAILOVER`, `DSH_CHATHUB_LLM_TOPIC_TTL_MS`, `DSH_CHATHUB_LLM_SITE_COOLDOWN_MS`, `DSH_CHATHUB_LLM_ESCALATE_AFTER`, `DSH_CHATHUB_LLM_SITE_DEMOTE_MS`, and `DSH_CHATHUB_LLM_SITE_RANK` (`site:rank,…`) tune its placement. `DSH_CHATHUB_LLM_PROMPT_LOG` and `DSH_CHATHUB_LLM_ANSWER_LOG` opt into JSONL tapes of exactly what each site was asked and what it answered — the forensic pair that turns a recurring protocol rejection into evidence. The first agent step opens a page; nothing starts a browser at mount time.
+The layer mounts one `llm-chathub` row with environment-driven defaults: `DSH_CHATHUB_LLM_SITE` (default `deepseek-web`), `DSH_CHATHUB_LLM_MODEL`, `DSH_CHATHUB_LLM_ROOT` (default the host process's working directory), `DSH_CHATHUB_LLM_TOOLS` (default `read,grep,glob,edit,write,bash`, matched against the caller's tool names without regard to case, so a host mounting `Read`/`Write`/`Edit`/`Bash`/`Glob`/`Grep` needs no override), and `DSH_CHATHUB_LLM_VERIFY` (default `pnpm run typecheck`). With `DSH_CHATHUB_LLM_SITES` listing two or more sites, `DSH_CHATHUB_LLM_SELECTION` (default `auto`) decides whether the aggregate route is added, and `DSH_CHATHUB_LLM_SELECTION_STRATEGY`, `DSH_CHATHUB_LLM_FAILOVER`, `DSH_CHATHUB_LLM_TOPIC_TTL_MS`, `DSH_CHATHUB_LLM_SITE_COOLDOWN_MS`, `DSH_CHATHUB_LLM_ESCALATE_AFTER`, `DSH_CHATHUB_LLM_SITE_DEMOTE_MS`, and `DSH_CHATHUB_LLM_SITE_RANK` (`site:rank,…`) tune its placement. `DSH_CHATHUB_LLM_PROMPT_LOG` and `DSH_CHATHUB_LLM_ANSWER_LOG` opt into JSONL tapes of exactly what each site was asked and what it answered — the forensic pair that turns a recurring protocol rejection into evidence. The first agent step opens a page; nothing starts a browser at mount time.
 
 ### Configuration
 
@@ -66,7 +66,7 @@ The layer mounts one `llm-chathub` row with environment-driven defaults: `DSH_CH
     maxToolResultChars: 6000
     maxSystemChars: 4000
     historyTurns: 8
-    allowTools: [read, grep, glob, edit, write]
+    allowTools: [read, grep, glob, edit, write, bash]
     denyPaths: ['.git', node_modules, '.env']
     verifyCommands: [pnpm run typecheck]
     workspaceRoot: /path/to/project
@@ -84,7 +84,7 @@ The layer mounts one `llm-chathub` row with environment-driven defaults: `DSH_CH
 | `maxToolResultChars` | `6000` | Ceiling of one tool result inside the prompt |
 | `maxSystemChars` | `4000` | Ceiling of the harness system prompt carried into the prompt |
 | `historyTurns` | `8` | Recent conversation entries kept verbatim; older ones collapse |
-| `allowTools` | `read, grep, glob, edit, write` | Tool names the model may call; every other name is a rejected reply |
+| `allowTools` | `read, grep, glob, edit, write, bash` | Tool names the model may call; every other name is a rejected reply. Matching ignores case, so one list covers both a `read`-style and a `Read`-style registry |
 | `denyPaths` | `.git, node_modules, .env` | Path segments no argument may address |
 | `verifyCommands` | `pnpm run typecheck` | Commands the prompt states as the completion check; the adapter never runs them |
 | `workspaceRoot` | the host process's cwd | Absolute root every absolute path argument must stay under |
@@ -224,7 +224,7 @@ Independent: the correction is a new site conversation, so nothing from the reje
 - **No cancellation inside a turn** — the transport has no per-turn cancel; the adapter checks `AbortSignal` between prompts and closes the page in a finally block, so an in-flight site turn runs to its own timeout.
 - **One browser profile** — agent steps and panel turns share the host profile and queue, so a busy panel delays coding; parallel work needs a second profile directory.
 - **Lexical path guard** — `..`, denied segments, NUL bytes, and absolute paths outside `workspaceRoot` are rejected before the call runs, but the guard does not resolve symlinks, and relative paths are judged by the tool that executes them.
-- **Whitelist must match shipped tools** — a name in `allowTools` that no mounted tool provides makes those calls fail in the executor, and a tool the loop ships but the whitelist omits is invisible to the model.
+- **Whitelist must match shipped tools** — a name in `allowTools` that no mounted tool provides makes those calls fail in the executor, and a tool the loop ships but the whitelist omits is invisible to the model. Names are compared case-insensitively, so a caller mounting `Read` needs no second entry beside `read`; the accepted call keeps the caller's spelling, because that is the name its registry executes.
 - **Site drift breaks the chain** — a selector or layout change surfaces as `SERVER` or `TRANSPORT`, and recovery means updating the ChatHub host driver.
 - **No completion verdict** — a reply without a block ends the step as `stop`; whether the task is actually done is judged by the loop and the user, not by this adapter.
 - **`verifyCommands` is prompt text** — the adapter never runs it; the loop runs only what the session's approvals allow.

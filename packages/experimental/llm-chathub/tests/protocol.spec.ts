@@ -1,8 +1,15 @@
 /** Protocol: one delimiter block per reply, validated before anything runs. */
 
 import { describe, expect, it } from 'vitest'
-import { END_MARKER, formatToolCall, parseAnswer, TOOL_CALL_CLOSE, TOOL_CALL_OPEN } from '../src/protocol.ts'
-import type { ChatHubParsePolicy } from '../src/types.ts'
+import {
+  END_MARKER,
+  formatToolCall,
+  isToolAllowed,
+  parseAnswer,
+  TOOL_CALL_CLOSE,
+  TOOL_CALL_OPEN,
+} from '../src/protocol.ts'
+import { DEFAULT_CHATHUB_LLM_CONFIG, type ChatHubParsePolicy } from '../src/types.ts'
 
 const POLICY: ChatHubParsePolicy = {
   allowTools: ['read', 'edit'],
@@ -154,6 +161,42 @@ describe('parseAnswer', () => {
   it('rejects a tool outside the whitelist and names what is allowed', () => {
     expect(parseAnswer(reply('{"name":"bash","arguments":{}}'), POLICY).invalid)
       .toBe('tool "bash" is not allowed; allowed tools: read, edit')
+  })
+
+  it('accepts the capitalized spelling of a whitelisted tool', () => {
+    // 2026-11-14: a caller that mounts `Read`/`Edit` sent every name through an
+    // exact `includes()` and matched nothing, so the whitelist emptied the
+    // prompt's tool section (the site then refused "list the directories").
+    // Matching folds case; the call keeps the spelling the caller mounts.
+    const capital = { ...POLICY, allowTools: ['Read', 'Edit'] }
+    const parsed = parseAnswer(reply('{"name":"Read","arguments":{"file_path":"src/main.ts"}}'), capital)
+    expect(parsed.invalid).toBeUndefined()
+    expect(parsed.call).toEqual({ name: 'Read', arguments: { file_path: 'src/main.ts' } })
+  })
+
+  it('matches a whitelisted name regardless of the reply\u2019s case', () => {
+    const parsed = parseAnswer(reply('{"name":"READ","arguments":{"file_path":"src/main.ts"}}'), POLICY)
+    expect(parsed.invalid).toBeUndefined()
+    expect(parsed.call?.name).toBe('READ')
+  })
+
+  it('still rejects a name the whitelist does not carry in any case', () => {
+    expect(parseAnswer(reply('{"name":"Delete","arguments":{"file_path":"a.ts"}}'), POLICY).invalid)
+      .toBe('tool "Delete" is not allowed; allowed tools: read, edit')
+  })
+
+  it('ships a default whitelist that covers the names a host capitalizes', () => {
+    // The whole point of the default: WorkBuddy mounts these six and expects
+    // them declared without any DSH_CHATHUB_LLM_TOOLS override.
+    const shipped = { allowTools: [...DEFAULT_CHATHUB_LLM_CONFIG.allowTools] }
+    for (const name of ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep']) {
+      expect(isToolAllowed(shipped, name), name).toBe(true)
+    }
+    // The harness loop mounts the lowercase spelling on the same list.
+    for (const name of ['read', 'write', 'edit', 'bash', 'glob', 'grep']) {
+      expect(isToolAllowed(shipped, name), name).toBe(true)
+    }
+    expect(isToolAllowed(shipped, 'Delete')).toBe(false)
   })
 
   it('rejects a call without an arguments object', () => {
@@ -375,6 +418,16 @@ describe('parseAnswer typographic repair', () => {
     expect(parsed.call?.arguments['old_string']).toBe('x = 1 -- c')
     expect(parsed.warnings).toHaveLength(1)
     expect(parsed.warnings[0]).toMatch(/folded 2 typographic/u)
+  })
+
+  it('folds the arguments of a capitalized text tool too', () => {
+    const capital = { ...policy, allowTools: ['Edit', 'Write', 'Read'] }
+    const parsed = parseAnswer(
+      formatToolCall({ name: 'Edit', arguments: { file_path: 'a.lua', old_string: 'x = 1 – c', new_string: 'x = 2' } }),
+      capital,
+    )
+    expect(parsed.call?.arguments['old_string']).toBe('x = 1 -- c')
+    expect(parsed.warnings.join('\n')).toMatch(/folded 1 typographic/u)
   })
 
   it('leaves a non-text tool argument alone', () => {

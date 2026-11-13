@@ -120,7 +120,11 @@ export interface ChatHubLlmConfig {
   readonly maxSystemChars: number
   /** How many recent conversation entries stay verbatim; older ones collapse. */
   readonly historyTurns: number
-  /** Tool names the model may call; anything else is a rejected answer. */
+  /**
+   * Tool names the model may call; anything else is a rejected answer.
+   * Matching ignores case, so one list serves a `read`-style registry and a
+   * `Read`-style one, and the accepted call keeps the caller's spelling.
+   */
   readonly allowTools: readonly string[]
   /** Path segments no argument may address, e.g. `.git` or `node_modules`. */
   readonly denyPaths: readonly string[]
@@ -380,7 +384,16 @@ export const DEFAULT_CHATHUB_LLM_CONFIG = {
   maxToolResultChars: 6_000,
   maxSystemChars: 4_000,
   historyTurns: 8,
-  allowTools: ['read', 'grep', 'glob', 'edit', 'write'] as const,
+  // Tool names the model may call, matched case-insensitively (see
+  // `isToolAllowed` in protocol.ts), so one canonical list serves every
+  // spelling a caller mounts: the harness loop's `read`/`edit`, WorkBuddy's
+  // `Read`/`Write`/`Edit`/`Glob`/`Grep`. Without that fold the shipped list
+  // matched no capitalized name at all, and `# TOOLS` rendered
+  // `(no tools are available in this session)` on a request that had mounted
+  // six tools. `bash` is listed because the project block states a verify
+  // command: with no shell tool in the prompt the model is told it cannot run
+  // the check, and the step ends on an unverified claim.
+  allowTools: ['read', 'grep', 'glob', 'edit', 'write', 'bash'] as const,
   denyPaths: ['.git', 'node_modules', '.env'] as const,
   verifyCommands: ['pnpm run typecheck'] as const,
   maxToolCallsPerTurn: 1,

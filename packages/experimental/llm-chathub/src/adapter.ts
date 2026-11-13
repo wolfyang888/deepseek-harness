@@ -24,7 +24,7 @@ import {
 } from '@deepseek-ai/dsh-llm'
 import { appendFile } from 'node:fs/promises'
 import { answerMessageText } from '@deepseek-ai/dsh-experimental-chathub-host'
-import { END_MARKER, TOOL_CALL_OPEN, parseAnswer, visibleTextOf } from './protocol.ts'
+import { END_MARKER, TOOL_CALL_OPEN, isToolAllowed, parseAnswer, visibleTextOf } from './protocol.ts'
 import { renderRequest } from './render.ts'
 import { SiteRouter } from './router.ts'
 import {
@@ -863,8 +863,11 @@ export class ChatHubLlmAdapter extends LlmAdapter {
    * @returns The render policy of this mount, clamped to the site's composer ceiling.
    */
   private renderPolicy(options: GenerateOptions, site: string): ChatHubRenderPolicy {
+    // The whitelist filters by name, never by spelling: a mount that lists
+    // `read` still declares the caller's `Read`, which is the name its
+    // registry executes. Filtering on exact case here emptied `# TOOLS`.
     const tools = (options.tools ?? [])
-      .filter(tool => this.config.allowTools.includes(tool.name))
+      .filter(tool => isToolAllowed(this.config, tool.name))
       .map(tool => ({
         name: tool.name,
         description: tool.description,

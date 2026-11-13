@@ -404,14 +404,21 @@ composer 和历史对话都在），`/v1/models` 却四个站点全 `needs-auth`
 也生效（`chathub-host/cordis.patch.yml` 同时认 `DSH_CHATHUB_LOGIN=true` 和
 `DSH_CHATHUB_HEADLESS=false`），不必非走脚本。
 
-**工具名大小写。** `llm-chathub` 用 `allowTools.includes(tool.name)` 精确匹配，默认
-白名单是 `read,grep,glob,edit,write`；外部 agent（WorkBuddy 等）发来的是
-`Read/Write/Edit/Bash/Glob/Grep`，一个都匹配不上，站点根本看不到工具定义，于是只
-剩聊天能力。要用工具就显式覆盖：
+**工具名大小写：原来的坑，现在已改成默认。** 旧行为是 `allowTools.includes(tool.name)`
+精确匹配，默认白名单 `read,grep,glob,edit,write`，而外部 agent（WorkBuddy 等）发来的
+是 `Read/Write/Edit/Bash/Glob/Grep`，一个都匹配不上，站点看不到任何工具定义，`# TOOLS`
+段于是渲染成 `(no tools are available in this session)`——这正是"列出子目录"被模型照抄
+"我无法访问文件系统"拒绝的原因。当时的解法是命令行覆盖：
 
 ```bash
 DSH_CHATHUB_LLM_TOOLS=Read,Write,Edit,Bash,Glob,Grep scripts/run-chathub-gateway.sh
 ```
+
+2026-11-14 起这不再是需要记住的操作：白名单比对忽略大小写，默认名单
+`read,grep,glob,edit,write,bash`，一份名单同时覆盖 `read` 式与 `Read` 式两种拼写，
+不带任何参数就支持上面六个工具。被接受的调用保留调用方的拼写（执行器认那个名字），
+`Bash` 的大小写也参与 `verify:` 是否可执行的判定。变量仍可传，但语义变成**收窄**；
+写成 `Read,Write,...` 也不会坏，逗号前后空白会被裁掉。
 
 即便如此，工具调用仍依赖站点模型自觉输出 `<<<TOOL_CALL … TOOL_CALL>>>` 文本协议，
 `MALFORMED_RESPONSE`（502）就是它没遵守。

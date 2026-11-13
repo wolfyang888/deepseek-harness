@@ -13,12 +13,13 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { ChatHubLlmAdapter } from '../src/adapter.ts'
 import { END_MARKER, TOOL_CALL_CLOSE, TOOL_CALL_OPEN } from '../src/protocol.ts'
-import type {
-  ChatHubLlmConfig,
-  ChatHubTransport,
-  ChatHubTransportSession,
-  ChatHubTransportSource,
-  ChatHubTurnObservation,
+import {
+  DEFAULT_CHATHUB_LLM_CONFIG,
+  type ChatHubLlmConfig,
+  type ChatHubTransport,
+  type ChatHubTransportSession,
+  type ChatHubTransportSource,
+  type ChatHubTurnObservation,
 } from '../src/types.ts'
 
 declare module '@deepseek-ai/dsh-llm/types' {
@@ -469,6 +470,34 @@ describe('ChatHubLlmAdapter turns', () => {
     }))
     expect(source.prompts[0]).toContain('"name":"read"')
     expect(source.prompts[0]).not.toContain('"name":"bash"')
+  })
+
+  it('declares and runs the capitalized tools a host mounts, with no override', async () => {
+    // 2026-11-14: the shipped whitelist is lowercase, WorkBuddy mounts
+    // `Read`/`Edit`/…, and the exact-name filter dropped all six — `# TOOLS`
+    // rendered `(no tools are available in this session)`, so every "list the
+    // subdirectories" turn came back as "I cannot browse directories". The
+    // whitelist now folds case, and the call keeps the mounted spelling.
+    const source = new FakeSource()
+    source.answers = [call('{"name":"Read","arguments":{"file_path":"src/a.ts"}}')]
+    const chunks = await collect(adapter(source, {
+      allowTools: [...DEFAULT_CHATHUB_LLM_CONFIG.allowTools],
+    }).stream({
+      ...request(),
+      tools: [
+        { name: 'Read', description: 'Read a file', parameters: { type: 'object' } },
+        { name: 'Edit', description: 'Change a file', parameters: { type: 'object' } },
+        { name: 'Bash', description: 'Run a command', parameters: { type: 'object' } },
+      ],
+    }))
+    expect(source.prompts[0]).toContain('"name":"Read"')
+    expect(source.prompts[0]).toContain('"name":"Edit"')
+    expect(source.prompts[0]).not.toContain('(no tools are available in this session)')
+    // A mounted `Bash` also lets the project block state the verify command as
+    // runnable, instead of telling the model no shell exists here.
+    expect(source.prompts[0]).not.toContain('no shell tool is available')
+    const delta = chunks.find(chunk => chunk.type === 'tool-call-delta')
+    expect(delta).toMatchObject({ name: 'Read', argumentsDelta: '{"file_path":"src/a.ts"}' })
   })
 
   it('runs without a configured workspace root', async () => {

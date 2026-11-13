@@ -32,7 +32,10 @@ export interface RenderedPrompt {
   readonly droppedEntries: number
 }
 
-/** Tool name that stands for "run a command"; only it can execute `verify`. */
+/**
+ * Tool name that stands for "run a command"; only it can execute `verify`.
+ * Compared case-insensitively: a caller may mount the shell tool as `Bash`.
+ */
 const SHELL_TOOL = 'bash'
 
 /** Fixed role text; the protocol is short so a site never rewrites it. */
@@ -207,7 +210,7 @@ function toolSection(policy: ChatHubRenderPolicy): string {
  * @returns Project lines.
  */
 function projectSection(policy: ChatHubRenderPolicy): string {
-  const canRunCommands = policy.tools.some(tool => tool.name === SHELL_TOOL)
+  const canRunCommands = policy.tools.some(tool => tool.name.toLowerCase() === SHELL_TOOL)
   return [
     `root: ${policy.workspaceRoot ?? '(unknown; use relative paths)'}`,
     policy.verifyCommands.length === 0

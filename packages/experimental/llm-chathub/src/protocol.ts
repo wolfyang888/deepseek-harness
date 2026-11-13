@@ -22,6 +22,40 @@ export const TOOL_CALL_CLOSE = 'TOOL_CALL>>>'
 export const END_MARKER = '<<<END'
 
 /**
+ * Fold a tool name to the key a whitelist lookup compares on.
+ * @param name - tool name, in whatever spelling its registry uses.
+ * @returns The lowercase form.
+ */
+export function toolKey(name: string): string {
+  return name.toLowerCase()
+}
+
+/**
+ * Whether the mount's whitelist lets the model call this tool.
+ *
+ * Names are compared case-insensitively. The shipped whitelist is canonical
+ * lowercase (`read`, `edit`, …) because the harness loop mounts its tools that
+ * way, but the whitelist is only a filter over the tools a caller passes in,
+ * and callers spell them however their own registry does: WorkBuddy mounts
+ * `Read`/`Write`/`Edit`/`Bash`/`Glob`/`Grep`. An exact `includes()` matched
+ * neither spelling across mounts — every capitalized name was dropped from the
+ * prompt, `# TOOLS` rendered `(no tools are available in this session)`, and
+ * the site answered "I cannot list directories" to a request that had mounted
+ * `Glob`. Only this check folds case: the accepted call keeps the name the
+ * reply used, which is the name the caller's registry knows.
+ * @param policy - whitelist of this mount, or any config object carrying it.
+ * @param name - tool name the reply asked for.
+ * @returns `true` when the whitelist carries the name, ignoring case.
+ */
+export function isToolAllowed(
+  policy: { readonly allowTools: readonly string[] },
+  name: string,
+): boolean {
+  const wanted = toolKey(name)
+  return policy.allowTools.some(allowed => toolKey(allowed) === wanted)
+}
+
+/**
  * Narrative tool-call shapes a reply uses to dodge the block format, each with
  * the repair reason it yields. Every shape was a real subject's answer: the
  * history echoes the prompt renders (`[asked for …]`, `tool(…) ->`) copied into
@@ -203,7 +237,7 @@ function repairedNativeCall(
   const nameMatch = NATIVE_NAME.exec(body)
   if (nameMatch === null) return undefined
   const name = nameMatch[1] ?? ''
-  if (!policy.allowTools.includes(name)) return undefined
+  if (!isToolAllowed(policy, name)) return undefined
   let rest = body.slice(nameMatch[0].length).trim()
   if (rest.startsWith('[') && rest.endsWith(']')) rest = rest.slice(1, -1).trim()
   const args = decodeJsonObject(rest)
@@ -228,7 +262,11 @@ const PATH_KEY = /(?:^|_)(?:path|paths|file|files|dir|directory|glob|pattern|cwd
 /** Longest echoed path in a rejection message. */
 const MAX_ECHO_CHARS = 80
 
-/** Tools whose string arguments are file text, where ASCII spelling matters. */
+/**
+ * Tools whose string arguments are file text, where ASCII spelling matters.
+ * Membership is checked through {@link toolKey}, so a caller mounting `Edit`
+ * gets the same fold as one mounting `edit`.
+ */
 const TEXT_TOOLS: ReadonlySet<string> = new Set(['edit', 'write'])
 
 /** Typographic characters a site's Markdown pass substitutes, and their ASCII source. */
@@ -252,7 +290,7 @@ const TYPOGRAPHY_FOLD = /[\u00a0\u2013\u2014]/gu
  * @returns The call with its string arguments folded.
  */
 function repairArguments(call: ChatHubToolCall, warnings: string[]): ChatHubToolCall {
-  if (!TEXT_TOOLS.has(call.name)) return call
+  if (!TEXT_TOOLS.has(toolKey(call.name))) return call
   let folds = 0
   const fold = (value: string): string => value.replace(TYPOGRAPHY_FOLD, (char) => {
     folds += 1
@@ -537,7 +575,7 @@ function readCall(
 ): ChatHubToolCall | string {
   const name = parsed['name']
   if (typeof name !== 'string' || name.length === 0) return 'the tool call block has no tool name'
-  if (!policy.allowTools.includes(name)) {
+  if (!isToolAllowed(policy, name)) {
     return `tool "${clip(name)}" is not allowed; allowed tools: ${policy.allowTools.join(', ')}`
   }
   // A site that serializes tools itself sends `arguments` as a JSON string —

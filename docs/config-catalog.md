@@ -989,13 +989,40 @@ export interface StagehandModelConfig {
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-experimental-browser-use-stagehand-native -->
 
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-experimental-chathub-gateway -->
+<a id="deepseek-aidsh-experimental-chathub-gateway"></a>
+
+## `@deepseek-ai/dsh-experimental-chathub-gateway`
+
+- `inject`: `llm` · `webChatTransport`
+- `source`: [`packages/experimental/chathub-gateway/src/index.ts:25`](../packages/experimental/chathub-gateway/src/index.ts)
+
+```ts config-catalog
+/** Configuration as the mounting profile writes it; defaults fill the rest. */
+export interface Config {
+  /** Bind address; the loopback default keeps the gateway machine-local. */
+  host: string
+  /** Bind port. */
+  port: number
+  /** Bearer key; empty means no check, safe only on a loopback bind. */
+  apiKey: string
+  /** Mounted site ids to expose; empty means every health-known site. */
+  sites: readonly string[]
+  /** Pending requests one site accepts before answering 429. */
+  maxQueuePerSite: number
+  /** Interval between SSE keepalive writes while a site turn runs. */
+  keepaliveMs: number
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-experimental-chathub-gateway -->
+
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-experimental-chathub-host -->
 <a id="deepseek-aidsh-experimental-chathub-host"></a>
 
 ## `@deepseek-ai/dsh-experimental-chathub-host`
 
 - `inject`: `typert` · `storageDomain`
-- `source`: [`packages/experimental/chathub-host/src/types.ts:139`](../packages/experimental/chathub-host/src/types.ts)
+- `source`: [`packages/experimental/chathub-host/src/types.ts:159`](../packages/experimental/chathub-host/src/types.ts)
 
 ```ts config-catalog
 /** Service configuration after schema defaults have been applied. */
@@ -1033,7 +1060,7 @@ export type BrowserRuntimeConfig =
     mode: 'managed'
     /** Persistent Chrome profile directory; required and never defaulted. */
     profileDir: string
-    /** Chrome binary to launch; omitted uses Playwright's registry. */
+    /** Chrome binary to launch; omitted searches the platform's well-known Chrome/Chromium locations. */
     executablePath?: string
     /** Run without a visible window. */
     headless: boolean
@@ -1070,8 +1097,28 @@ export interface SiteDriverConfig {
    * nothing, the container itself is read.
    */
   answerBody?: string
+  /**
+   * Optional selector for the site's visible reasoning / thinking blocks.
+   *
+   * These are deliberately kept out of `answer` (which must contain only the
+   * reply), but a client still wants them: the host reads every match and
+   * exposes the joined text as the turn's reasoning, which the gateway emits
+   * as `reasoning_content` deltas.
+   */
+  reasoning?: string
   /** Element that only appears on a signed-out wall. */
   loginWall?: string
+  /**
+   * Cookie whose presence proves a signed-in session, such as Doubao's
+   * `sessionid`.
+   *
+   * Some sites render the composer for a guest too, so a visible input proves
+   * nothing and no wall element is stable across their DOM churn: those sites
+   * are detected by this cookie instead, at every checkpoint that judges
+   * sign-in — opening a page, the login window's success poll, a send the
+   * site dropped, and the mid-turn wall checks.
+   */
+  loginCookie?: string
   /** Path pattern identifying a login or logout redirect; matched case-insensitively. */
   signedOutPath?: string
   /** Key that submits the rendered prompt. */
@@ -1432,6 +1479,8 @@ export type Config = Omit<
   siteDemoteMs?: number
   /** Capability rank per site, e.g. `{ 'chatgpt-web': 30 }`. */
   siteRank?: Readonly<Record<string, number>>
+  /** Whether a prose reply before any tool run replays on the next site. */
+  proseReplay?: boolean
 }
 
 /**
@@ -1469,7 +1518,11 @@ export interface ChatHubLlmConfig {
   readonly maxSystemChars: number
   /** How many recent conversation entries stay verbatim; older ones collapse. */
   readonly historyTurns: number
-  /** Tool names the model may call; anything else is a rejected answer. */
+  /**
+   * Tool names the model may call; anything else is a rejected answer.
+   * Matching ignores case, so one list serves a `read`-style registry and a
+   * `Read`-style one, and the accepted call keeps the caller's spelling.
+   */
   readonly allowTools: readonly string[]
   /** Path segments no argument may address, e.g. `.git` or `node_modules`. */
   readonly denyPaths: readonly string[]
@@ -1544,6 +1597,13 @@ export interface SiteRoutingPolicy {
   readonly demoteMs: number
   /** Capability rank per site; a higher rank is a stronger model. */
   readonly siteRank: Readonly<Record<string, number>>
+  /**
+   * Whether a plain-prose reply before any tool has run on the topic replays
+   * on the next site. Web models that miss the tool protocol answer with a
+   * refusal question; replaying once is usually enough to get a real call.
+   * The last prose answer is still delivered when every site declines.
+   */
+  readonly proseReplay: boolean
 }
 
 /** One turn's observable facts; no prompt, answer, or argument text. */

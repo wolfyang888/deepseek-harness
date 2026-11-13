@@ -17,9 +17,13 @@
 #   DSH_CHATHUB_LLM_MODEL    model id each route advertises (default `web-model`)
 #   DSH_CHATHUB_LLM_ROOT     absolute workspace root path arguments must stay
 #                            under (default: the host process's cwd)
-#   DSH_CHATHUB_LLM_TOOLS    comma-separated tool whitelist
-#                            (default `read,grep,glob,edit,write`; add `bash` to
-#                            let the model run the verify command itself)
+#   DSH_CHATHUB_LLM_TOOLS    comma-separated tool whitelist, matched against the
+#                            tools the caller mounts without regard to case
+#                            (default `read,grep,glob,edit,write,bash`). The
+#                            shipped names already cover a caller that
+#                            capitalizes: `Read`, `Write`, `Edit`, `Bash`,
+#                            `Glob`, `Grep` all pass. Set this only to narrow
+#                            the set — a name with no mounted tool is inert.
 #   DSH_CHATHUB_LLM_VERIFY   comma-separated verification commands stated in the
 #                            prompt's project block (default `pnpm run typecheck`)
 #   DSH_CHATHUB_LLM_AUXILIARY  `refuse` (default) or `allow`: whether auxiliary
@@ -82,7 +86,7 @@
         model: !!js process.env.DSH_CHATHUB_LLM_MODEL ?? 'web-model'
         contextWindow: !!js Number(process.env.DSH_CHATHUB_LLM_CONTEXT_WINDOW ?? 128000)
         workspaceRoot: !!js process.env.DSH_CHATHUB_LLM_ROOT ?? process.cwd()
-        allowTools: !!js (process.env.DSH_CHATHUB_LLM_TOOLS ?? 'read,grep,glob,edit,write').split(',')
+        allowTools: !!js (process.env.DSH_CHATHUB_LLM_TOOLS ?? 'read,grep,glob,edit,write,bash').split(',').map(tool => tool.trim()).filter(Boolean)
         verifyCommands: !!js (process.env.DSH_CHATHUB_LLM_VERIFY ?? 'pnpm run typecheck').split(',')
         auxiliary: !!js process.env.DSH_CHATHUB_LLM_AUXILIARY ?? 'refuse'
         selection: !!js process.env.DSH_CHATHUB_LLM_SELECTION ?? 'auto'

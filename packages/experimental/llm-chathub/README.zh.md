@@ -51,7 +51,7 @@ kind: "package-bundle"
 pnpm dsh web --patch packages/experimental/chathub-host/cordis.patch.yml --patch packages/experimental/llm-chathub/cordis.patch.yml
 ```
 
-该层插入一行 `llm-chathub`，默认值来自环境变量：`DSH_CHATHUB_LLM_SITE`（默认 `deepseek-web`）、`DSH_CHATHUB_LLM_MODEL`、`DSH_CHATHUB_LLM_ROOT`（默认宿主进程工作目录）、`DSH_CHATHUB_LLM_TOOLS`（默认 `read,grep,glob,edit,write`）、`DSH_CHATHUB_LLM_VERIFY`（默认 `pnpm run typecheck`）。当 `DSH_CHATHUB_LLM_SITES` 列出两个及以上站点时，`DSH_CHATHUB_LLM_SELECTION`（默认 `auto`）决定是否追加聚合路由，其选址可用 `DSH_CHATHUB_LLM_SELECTION_STRATEGY`、`DSH_CHATHUB_LLM_FAILOVER`、`DSH_CHATHUB_LLM_TOPIC_TTL_MS`、`DSH_CHATHUB_LLM_SITE_COOLDOWN_MS`、`DSH_CHATHUB_LLM_ESCALATE_AFTER`、`DSH_CHATHUB_LLM_SITE_DEMOTE_MS`、`DSH_CHATHUB_LLM_SITE_RANK`（`site:rank,…`）调整。`DSH_CHATHUB_LLM_PROMPT_LOG` 与 `DSH_CHATHUB_LLM_ANSWER_LOG` 分别开启"站点读到的完整提示词"与"站点给出的原始回答"两条 JSONL 取证磁带——反复出现的协议拒绝，靠它们变成可分析的证据。第一个智能体步骤才会打开页面；挂载本身不启动浏览器。
+该层插入一行 `llm-chathub`，默认值来自环境变量：`DSH_CHATHUB_LLM_SITE`（默认 `deepseek-web`）、`DSH_CHATHUB_LLM_MODEL`、`DSH_CHATHUB_LLM_ROOT`（默认宿主进程工作目录）、`DSH_CHATHUB_LLM_TOOLS`（默认 `read,grep,glob,edit,write,bash`；与调用方传来的工具名**忽略大小写**比对，所以挂载 `Read`/`Write`/`Edit`/`Bash`/`Glob`/`Grep` 的宿主不必再传这个变量）、`DSH_CHATHUB_LLM_VERIFY`（默认 `pnpm run typecheck`）。当 `DSH_CHATHUB_LLM_SITES` 列出两个及以上站点时，`DSH_CHATHUB_LLM_SELECTION`（默认 `auto`）决定是否追加聚合路由，其选址可用 `DSH_CHATHUB_LLM_SELECTION_STRATEGY`、`DSH_CHATHUB_LLM_FAILOVER`、`DSH_CHATHUB_LLM_TOPIC_TTL_MS`、`DSH_CHATHUB_LLM_SITE_COOLDOWN_MS`、`DSH_CHATHUB_LLM_ESCALATE_AFTER`、`DSH_CHATHUB_LLM_SITE_DEMOTE_MS`、`DSH_CHATHUB_LLM_SITE_RANK`（`site:rank,…`）调整。`DSH_CHATHUB_LLM_PROMPT_LOG` 与 `DSH_CHATHUB_LLM_ANSWER_LOG` 分别开启"站点读到的完整提示词"与"站点给出的原始回答"两条 JSONL 取证磁带——反复出现的协议拒绝，靠它们变成可分析的证据。第一个智能体步骤才会打开页面；挂载本身不启动浏览器。
 
 ### 配置
 
@@ -66,7 +66,7 @@ pnpm dsh web --patch packages/experimental/chathub-host/cordis.patch.yml --patch
     maxToolResultChars: 6000
     maxSystemChars: 4000
     historyTurns: 8
-    allowTools: [read, grep, glob, edit, write]
+    allowTools: [read, grep, glob, edit, write, bash]
     denyPaths: ['.git', node_modules, '.env']
     verifyCommands: [pnpm run typecheck]
     workspaceRoot: /path/to/project
@@ -84,7 +84,7 @@ pnpm dsh web --patch packages/experimental/chathub-host/cordis.patch.yml --patch
 | `maxToolResultChars` | `6000` | 提示内单个工具结果的上限 |
 | `maxSystemChars` | `4000` | 带入提示的 harness 系统提示上限 |
 | `historyTurns` | `8` | 逐字保留的最近对话条目数，更早的条目折叠 |
-| `allowTools` | `read, grep, glob, edit, write` | 模型可调用的工具名，其他名字一律判为非法回答 |
+| `allowTools` | `read, grep, glob, edit, write, bash` | 模型可调用的工具名，其他名字一律判为非法回答。比对忽略大小写，一份名单同时覆盖 `read` 式与 `Read` 式的工具注册表 |
 | `denyPaths` | `.git, node_modules, .env` | 任何参数都不得指向的路径片段 |
 | `verifyCommands` | `pnpm run typecheck` | 提示中声明的完成校验命令，适配器从不执行它们 |
 | `workspaceRoot` | 宿主进程工作目录 | 绝对路径参数必须落在此根目录内 |
@@ -224,7 +224,7 @@ When the task is complete, or when you need the user to decide, reply without a 
 - **轮次内不可取消** —— 传输层没有单轮取消；适配器在两次提问之间检查 `AbortSignal`，并在 finally 里关闭页面，因此进行中的站点轮次会跑到它自己的超时。
 - **单一浏览器 profile** —— 智能体步骤与面板对话共用宿主 profile 与队列，面板繁忙会拖慢改码；需要并行时给适配器另一个 profile 目录。
 - **词法级路径守卫** —— `..`、被拒片段、NUL 字节与落在 `workspaceRoot` 之外的绝对路径会在调用执行前被拒，但守卫不解析符号链接，相对路径由真正执行它的工具判定。
-- **白名单必须与已装工具一致** —— `allowTools` 里写了但没有挂载的工具，其调用会在执行器里失败；循环已发货但白名单没写的工具，模型看不到。
+- **白名单必须与已装工具一致** —— `allowTools` 里写了但没有挂载的工具，其调用会在执行器里失败；循环已发货但白名单没写的工具，模型看不到。名字比对忽略大小写，挂载 `Read` 的调用方不必在 `read` 旁边再写一遍；被接受的调用保留调用方的拼写，因为执行器认的是那个名字。
 - **站点改版即断链** —— 选择器或布局变化会以 `SERVER` 或 `TRANSPORT` 呈现，恢复方式只有更新 ChatHub 宿主层的 driver。
 - **没有完成判定** —— 不带调用块的回答让该步以 `stop` 结束；任务是否真的完成由循环和用户判断，不由本适配器判断。
 - **`verifyCommands` 只是提示文本** —— 适配器从不执行它；循环只运行当前会话审批允许的命令。

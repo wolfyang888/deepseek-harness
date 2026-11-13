@@ -114,6 +114,17 @@ describe('renderRequest', () => {
     expect(prompt).not.toContain('no shell tool is available')
   })
 
+  it('recognizes a capitalized shell tool', () => {
+    // A host that mounts `Bash` can run the check just as well as one that
+    // mounts `bash`; treating the two differently tells the model to give up.
+    const { prompt } = renderRequest(request(user('go')), {
+      ...POLICY,
+      tools: [...POLICY.tools, { name: 'Bash', description: 'Run a command', parameters: { type: 'object' } }],
+    })
+    expect(prompt).toContain('verify: pnpm run typecheck\n')
+    expect(prompt).not.toContain('no shell tool is available')
+  })
+
   it('renders a tool result under the name of the call it answers', () => {
     const callId = ToolCallId('call-1')
     const { prompt } = renderRequest(request(

@@ -457,10 +457,10 @@ modelId 必须填站点 id（`glm-web`），maxOutputTokens 4096 以内。
 把 `/models` 与 `/chat/completions` 作为 `/v1/models` 与 `/v1/chat/completions` 的别名，
 两种填法都能通，但仍推荐填 `.../v1`。配置落在 `~/.workbuddy/models.json` 的 `url` 字段。
 
-两个已知折损（详见 `mddoc/build-setup.md` §2.7）：工具白名单按名精确匹配，默认
-`read,grep,glob,edit,write` 对不上外部 agent 的 `Read/Write/Edit/Bash` 命名，站点收不到工具
-定义、只剩聊天能力；pacing 默认 conservative（20s/轮、40 轮/时），长任务必撞 429，先用
-SSE + `DSH_CHATHUB_PACING=responsive` 或 `off` 试。
+剩下一个已知折损（详见 `mddoc/build-setup.md` §2.7）：pacing 默认 conservative（20s/轮、
+40 轮/时），长任务必撞 429，先用 SSE + `DSH_CHATHUB_PACING=responsive` 或 `off` 试。工具
+白名单的大小写坑已修掉：比对忽略大小写，默认 `read,grep,glob,edit,write,bash` 同时匹配
+外部 agent 的 `Read/Write/Edit/Bash/Glob/Grep`，不必再传 `DSH_CHATHUB_LLM_TOOLS`。
 
 
 **Claude Code**：需要 `/v1/messages` 与 Anthropic 的 SSE 事件词汇，本版未实现，
