@@ -1,5 +1,5 @@
 ---
-description: "Local OpenAI-wire HTTP gateway that exposes mounted ChatHub site routes to external coding agents, with per-site admission and stable failure codes."
+description: "Local OpenAI- and Anthropic-wire HTTP gateway that exposes mounted ChatHub site routes to external coding agents, with per-site admission and stable failure codes."
 kind: "package-bundle"
 ---
 
@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Serve the mounted ChatHub site routes (`glm-web`, `doubao-web`, `gemini-web`, `chatgpt-web`, `qianwen-web`, …) as OpenAI-wire models on a local HTTP port, so external coding agents — Codex, Trae, WorkBuddy, or anything that speaks OpenAI-compatible chat completions — can list and use them through their own model selectors. The gateway owns no browser state and stores nothing: it translates one request into one `ctx.llm` turn on the route the llm-chathub layer already registered, and maps failures into the OpenAI wire with the next action named. Shipped profiles omit it.
+Serve the mounted ChatHub site routes (`glm-web`, `doubao-web`, `gemini-web`, `chatgpt-web`, `qianwen-web`, …) as models on a local HTTP port in two wire protocols, so external coding agents — Claude Code (Anthropic `/v1/messages`), Codex, Trae, WorkBuddy, or anything that speaks OpenAI-compatible chat completions — can list and use them through their own model selectors. The gateway owns no browser state and stores nothing: it translates one request into one `ctx.llm` turn on the route the llm-chathub layer already registered, and maps failures into the caller's wire with the next action named. Shipped profiles omit it.
 
 ## Table of Contents
 
@@ -45,7 +45,17 @@ base_url = "http://127.0.0.1:8787/v1"
 wire_api = "chat"
 ```
 
-Trae and WorkBuddy take the same base URL as a custom OpenAI-compatible provider; `GET /v1/models` lists the site models with their sign-in state. Claude Code needs the Anthropic wire, which is deferred work (see below).
+Trae and WorkBuddy take the same base URL as a custom OpenAI-compatible provider; `GET /v1/models` lists the site models with their sign-in state.
+
+Claude Code speaks the Anthropic wire, which the same listener serves:
+
+```sh
+export ANTHROPIC_BASE_URL=http://127.0.0.1:8787
+export ANTHROPIC_AUTH_TOKEN=<apiKey, or any non-empty value when no key is set>
+claude --model glm-web
+```
+
+`/v1/messages` also accepts `x-api-key`, the header the Anthropic SDK sends. Streaming turns produce the standard event sequence — `message_start`, one content block per adapter block, `message_delta`, `message_stop` — with `ping` events between frames while the site writes.
 
 ### Configuration
 
@@ -56,6 +66,7 @@ Trae and WorkBuddy take the same base URL as a custom OpenAI-compatible provider
     port: 8787
     apiKey: ''
     sites: []
+    wires: [openai, anthropic]
     maxQueuePerSite: 8
     keepaliveMs: 15000
 ```
@@ -64,12 +75,13 @@ Trae and WorkBuddy take the same base URL as a custom OpenAI-compatible provider
 |---|---|---|
 | `host` | `127.0.0.1` | Bind address; loopback keeps the gateway machine-local |
 | `port` | `8787` | Bind port |
-| `apiKey` | `''` | Bearer key every request must present; empty checks nothing, safe only on a loopback bind |
+| `apiKey` | `''` | Key every request must present as `Authorization: Bearer` or `x-api-key`; empty checks nothing, safe only on a loopback bind |
 | `sites` | every health-known site | Mounted site ids to expose; a configured site the transport does not know is dropped from the roster, not listed as needs-auth |
+| `wires` | `[openai, anthropic]` | Wire protocols to serve; a wire left out answers 404 on its routes |
 | `maxQueuePerSite` | `8` | Pending requests one site accepts before answering 429 |
 | `keepaliveMs` | `15000` | Interval between SSE keepalive writes while a site turn runs |
 
-The bundle layer maps `DSH_CHATHUB_GATEWAY_HOST`, `DSH_CHATHUB_GATEWAY_PORT`, `DSH_CHATHUB_GATEWAY_KEY`, `DSH_CHATHUB_GATEWAY_SITES`, `DSH_CHATHUB_GATEWAY_QUEUE`, and `DSH_CHATHUB_GATEWAY_KEEPALIVE_MS` onto the same fields, defaulting the roster from `DSH_CHATHUB_LLM_SITES` / `DSH_CHATHUB_LLM_SITE`.
+The bundle layer maps `DSH_CHATHUB_GATEWAY_HOST`, `DSH_CHATHUB_GATEWAY_PORT`, `DSH_CHATHUB_GATEWAY_KEY`, `DSH_CHATHUB_GATEWAY_SITES`, `DSH_CHATHUB_GATEWAY_WIRES`, `DSH_CHATHUB_GATEWAY_QUEUE`, and `DSH_CHATHUB_GATEWAY_KEEPALIVE_MS` onto the same fields, defaulting the roster from `DSH_CHATHUB_LLM_SITES` / `DSH_CHATHUB_LLM_SITE`.
 
 ### Failure codes
 
@@ -85,22 +97,25 @@ The bundle layer maps `DSH_CHATHUB_GATEWAY_HOST`, `DSH_CHATHUB_GATEWAY_PORT`, `D
 | queue for the site full | 429 | `rate_limit_exceeded`, with `Retry-After` |
 | model not exposed | 404 | `model_not_found` |
 
+The Anthropic wire carries the same HTTP statuses in its own envelope: 401 becomes `authentication_error`, 429 `rate_limit_error`, 400 `invalid_request_error`, and everything else `api_error`.
+
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-`openai-wire.ts` is the one translation seam: `toGenerateOptions` folds wire messages (system, user, assistant text and `tool_calls`, tool results) into `GenerateOptions` with adapter-issued call ids preserved, and `toCompletionResponse` / `sseRenderer` unfold the turn's chunks into the completion object or the per-frame SSE renderers. The first text and the first tool-call block win; the adapter never emits more.
+`openai-wire.ts` and `anthropic-wire.ts` are the two translation seams. Each folds its wire messages (system, user, assistant text and tool calls, tool results) into `GenerateOptions` with adapter-issued call ids preserved, and unfolds the turn's chunks into its response body and SSE frames. The first text and the first tool-call block win; the adapter never emits more. When the newest wire message is a tool result, both folds close the request with one user turn naming that result as the newest state, so the site continues the task instead of repeating the call it already answered. Each wire also exports a `WireCodec`, the presentation interface the server's shared turn loop drives, so the wires differ only in frames and error envelopes.
 
-`server.ts` owns the HTTP surface: request routing, bearer checking, the body size cap (32 MiB), and the SSE lifecycle — headers and one keepalive comment open the stream, each adapter chunk is written as its frame the moment it lands, `keepaliveMs` holds the connection between frames while the site turn runs, and a failed turn surfaces as a wire error event instead of a lost stream. Model resolution goes through the transport health: a `ready` site answers, a `needs-auth` site answers 401 with the panel hint, and an unlisted model answers 404 with a listing hint.
+`server.ts` owns the HTTP surface: request routing, key checking (`Authorization: Bearer` or `x-api-key`), the body size cap (32 MiB), and the SSE lifecycle — headers and one keepalive write open the stream, each adapter chunk is written as its frame the moment it lands, `keepaliveMs` holds the connection between frames while the site turn runs, and a failed turn surfaces as a wire error event instead of a lost stream. Model resolution goes through the transport health: a `ready` site answers, a `needs-auth` site answers 401 with the panel hint, and an unlisted model answers 404 with a listing hint.
 
 `queue.ts` counts pending requests per site and answers 429 over `maxQueuePerSite`; sites count independently. `errors.ts` maps the llm runtime's stable failure codes onto HTTP statuses and user-facing messages that name the next action, never raw site prose. `index.ts` resolves the row into configuration and registers the listener with the context effect, so the port closes with the plugin.
 
 | File | Role |
 |---|---|
 | [`src/types.ts`](src/types.ts) | Configuration, model roster rows, and failure facts |
-| [`src/openai-wire.ts`](src/openai-wire.ts) | Wire request folding and response/SSE unfolding |
+| [`src/openai-wire.ts`](src/openai-wire.ts) | OpenAI request folding and response/SSE unfolding |
+| [`src/anthropic-wire.ts`](src/anthropic-wire.ts) | Anthropic `/v1/messages` folding, message objects, and SSE events |
 | [`src/server.ts`](src/server.ts) | HTTP routing, auth, SSE lifecycle, model resolution |
 | [`src/queue.ts`](src/queue.ts) | Per-site pending counters with the 429 limit |
 | [`src/errors.ts`](src/errors.ts) | Llm failure codes into HTTP and wire errors |
@@ -132,7 +147,7 @@ No direct effect; each gateway request becomes one adapter turn that opens its o
 
 <a id="known-limitations-and-deferred-work"></a>
 
-- **Anthropic wire deferred** — Claude Code needs `/v1/messages` with its own SSE event vocabulary; the OpenAI wire covers Codex, Trae, and WorkBuddy first.
+- **Anthropic reasoning is dropped** — a site that shows a separate thinking trace has it omitted on `/v1/messages`: an Anthropic `thinking` block is only legal with a provider signature, and inventing one would be rejected.
 - **Streaming commits the attempt** — a pinned route streams the answer while the site writes it, so a delta already delivered cannot be transparently repaired: an illegal answer surfaces as a `MALFORMED_RESPONSE` error instead of a re-ask. The aggregate route, compaction turns, and snapshot-less sessions keep the lump delivery with repairs.
 - **No true usage accounting** — a web answer reports no token counts, so `usage` mirrors whatever the adapter estimated.
 - **Queue, not fairness** — per-site admission bounds pending requests but does not reorder them; the host transport still serializes turns on the site page.

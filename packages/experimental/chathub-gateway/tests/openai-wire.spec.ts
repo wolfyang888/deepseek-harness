@@ -38,7 +38,7 @@ describe('toGenerateOptions', () => {
     expect(options.provider).toBe('glm-web-chathub')
     expect(options.model).toBe('glm-web')
     expect(options.system).toBe('be terse')
-    expect(options.messages.map(message => message.role)).toEqual(['system', 'user', 'assistant', 'tool'])
+    expect(options.messages.map(message => message.role)).toEqual(['system', 'user', 'assistant', 'tool', 'user'])
     const assistant = options.messages.at(2)
     if (assistant === undefined || assistant.role !== 'assistant') throw new Error('unreachable')
     expect(assistant.content).toEqual([
@@ -48,6 +48,9 @@ describe('toGenerateOptions', () => {
     if (tool === undefined || tool.role !== 'tool') throw new Error('unreachable')
     expect(tool.toolCallId).toBe('call-1')
     expect(tool.content[0]).toEqual({ type: 'text', text: 'file body' })
+    const continuation = options.messages.at(-1)
+    if (continuation === undefined || continuation.role !== 'user') throw new Error('unreachable')
+    expect(continuation.content[0]).toMatchObject({ type: 'text', text: expect.stringContaining('newest state') })
   })
 
   it('translates tool declarations into schemas', () => {

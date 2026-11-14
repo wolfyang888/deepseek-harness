@@ -23,6 +23,7 @@ import {
   type StreamChunk,
   type ToolSchema,
 } from '@deepseek-ai/dsh-llm'
+import { TOOL_RESULT_CONTINUATION, type GatewayFailure, type WireCodec } from './types.ts'
 
 /** One OpenAI chat message as an external agent posts it. */
 export interface WireMessage {
@@ -117,6 +118,12 @@ export function toGenerateOptions(request: WireCompletionRequest, route: string)
     }
   }
   if (system !== undefined) messages.unshift(createSystemMessage(system))
+  if (messages.at(-1)?.role === 'tool') {
+    messages.push(createUserMessage({
+      content: [{ type: 'text', text: TOOL_RESULT_CONTINUATION }],
+      source: { kind: 'user' },
+    }))
+  }
   const tools: ToolSchema[] | undefined = request.tools === undefined ? undefined : request.tools.map(tool => ({
     name: tool.function.name,
     description: tool.function.description,
@@ -238,6 +245,60 @@ export interface SseRenderer {
   finish(reason: 'stop' | 'tool_calls'): string
   /** @returns The `[DONE]` sentinel. */
   done(): string
+}
+
+/** The OpenAI error envelope every OpenAI-wire failure writes. */
+export interface WireErrorBody {
+  error: { message: string; type: string; code: string }
+}
+
+/**
+ * Render one gateway failure as an OpenAI error envelope.
+ * @param failure - the mapped failure.
+ * @returns The serializable error body.
+ */
+export function openAiErrorBody(failure: GatewayFailure): WireErrorBody {
+  return {
+    error: {
+      message: failure.message,
+      type: failure.status === 401 ? 'authentication_error' : failure.status >= 500 ? 'server_error' : 'invalid_request_error',
+      code: failure.code,
+    },
+  }
+}
+
+/**
+ * OpenAI presentation of one turn: SSE frames, the completion body, and the
+ * error envelopes. Rendering is stateful only in remembering whether a tool
+ * call was emitted, which decides the terminal `finish_reason`.
+ * @param model - model id the caller asked for.
+ * @returns The codec the server's shared turn loop drives.
+ */
+export function openAiWireCodec(model: string): WireCodec {
+  const sse = sseRenderer(model)
+  let toolCall = false
+  return {
+    keepalive: ': keepalive\n\n',
+    openStream: () => [sse.role()],
+    renderChunk: (chunk) => {
+      switch (chunk.type) {
+        case 'text-delta':
+          return [sse.content(chunk.text)]
+        case 'reasoning-delta':
+          return [sse.reasoning(chunk.text)]
+        case 'block-end':
+          if (chunk.block.type !== 'tool-call') return []
+          toolCall = true
+          return [sse.toolCall(chunk.block.id, chunk.block.name, chunk.block.arguments)]
+        default:
+          return []
+      }
+    },
+    closeStream: () => [sse.finish(toolCall ? 'tool_calls' : 'stop'), sse.done()],
+    responseBody: (_model, chunks) => toCompletionResponse(`${model}-chathub`, model, chunks),
+    errorBody: (failure) => JSON.stringify(openAiErrorBody(failure)),
+    streamFailure: (failure) => [`data: ${JSON.stringify(openAiErrorBody(failure))}\n\n`, 'data: [DONE]\n'],
+  }
 }
 
 /** One assembled turn: display text, the single accepted call, and metadata. */

@@ -1,5 +1,5 @@
 ---
-description: "本地 OpenAI 线协议 HTTP 网关，把已挂载的 ChatHub 站点路由暴露给外部编码 agent，带每站点准入与稳定失败码。"
+description: "本地 OpenAI 与 Anthropic 线协议 HTTP 网关，把已挂载的 ChatHub 站点路由暴露给外部编码 agent，带每站点准入与稳定失败码。"
 kind: "package-bundle"
 ---
 
@@ -9,7 +9,7 @@ kind: "package-bundle"
 
 ## 概述
 
-把已挂载的 ChatHub 站点路由（`glm-web`、`doubao-web`、`gemini-web`、`chatgpt-web`、`qianwen-web` 等）以 OpenAI 线协议模型的形式服务在本地 HTTP 端口上，让外部编码 agent——Codex、Trae、WorkBuddy，以及任何说 OpenAI 兼容 chat completions 的客户端——通过它们自己的模型选择器列出并使用这些模型。网关不持有浏览器状态、不存储任何东西：它把一次请求翻译成 llm-chathub 层已注册路由上的一次 `ctx.llm` 轮次，并把失败映射成带下一步动作的 OpenAI 线格式错误。出厂 profile 不包含它。
+把已挂载的 ChatHub 站点路由（`glm-web`、`doubao-web`、`gemini-web`、`chatgpt-web`、`qianwen-web` 等）以两种线协议的形式服务在本地 HTTP 端口上，让外部编码 agent——Claude Code（Anthropic `/v1/messages`）、Codex、Trae、WorkBuddy，以及任何说 OpenAI 兼容 chat completions 的客户端——通过它们自己的模型选择器列出并使用这些模型。网关不持有浏览器状态、不存储任何东西：它把一次请求翻译成 llm-chathub 层已注册路由上的一次 `ctx.llm` 轮次，并把失败映射成带下一步动作的调用方线格式错误。出厂 profile 不包含它。
 
 ## 目录
 
@@ -45,7 +45,17 @@ base_url = "http://127.0.0.1:8787/v1"
 wire_api = "chat"
 ```
 
-Trae 与 WorkBuddy 用同一个 base URL 添加自定义 OpenAI 兼容 provider；`GET /v1/models` 列出站点模型及其登录状态。Claude Code 需要 Anthropic 线协议，属于后续工作（见下）。
+Trae 与 WorkBuddy 用同一个 base URL 添加自定义 OpenAI 兼容 provider；`GET /v1/models` 列出站点模型及其登录状态。
+
+Claude Code 说 Anthropic 线协议，同一个监听器直接提供：
+
+```sh
+export ANTHROPIC_BASE_URL=http://127.0.0.1:8787
+export ANTHROPIC_AUTH_TOKEN=<apiKey, or any non-empty value when no key is set>
+claude --model glm-web
+```
+
+`/v1/messages` 也接受 `x-api-key`，即 Anthropic SDK 发送的请求头。流式轮次产出标准事件序列——`message_start`、每个适配层块一个 content block、`message_delta`、`message_stop`——站点书写期间帧间隙发送 `ping` 事件。
 
 ### Configuration
 
@@ -56,6 +66,7 @@ Trae 与 WorkBuddy 用同一个 base URL 添加自定义 OpenAI 兼容 provider�
     port: 8787
     apiKey: ''
     sites: []
+    wires: [openai, anthropic]
     maxQueuePerSite: 8
     keepaliveMs: 15000
 ```
@@ -64,12 +75,13 @@ Trae 与 WorkBuddy 用同一个 base URL 添加自定义 OpenAI 兼容 provider�
 |---|---|---|
 | `host` | `127.0.0.1` | 绑定地址；回环绑定让网关只在本机可达 |
 | `port` | `8787` | 绑定端口 |
-| `apiKey` | `''` | 每个请求必须携带的 Bearer key；为空则不校验，只在回环绑定下安全 |
+| `apiKey` | `''` | 每个请求必须以 `Authorization: Bearer` 或 `x-api-key` 携带的 key；为空则不校验，只在回环绑定下安全 |
 | `sites` | 全部健康已知站点 | 要暴露的已挂载站点 id；配置了但传输不认识的站点直接从目录里去掉，不会标成 needs-auth |
+| `wires` | `[openai, anthropic]` | 要服务的线协议；未包含的协议在其路由上回 404 |
 | `maxQueuePerSite` | `8` | 单站点接受的待处理请求数，超出回 429 |
 | `keepaliveMs` | `15000` | 站点轮次进行中 SSE keepalive 的写入间隔 |
 
-bundle 层把 `DSH_CHATHUB_GATEWAY_HOST`、`DSH_CHATHUB_GATEWAY_PORT`、`DSH_CHATHUB_GATEWAY_KEY`、`DSH_CHATHUB_GATEWAY_SITES`、`DSH_CHATHUB_GATEWAY_QUEUE`、`DSH_CHATHUB_GATEWAY_KEEPALIVE_MS` 映射到同名字段，站点目录默认取自 `DSH_CHATHUB_LLM_SITES` / `DSH_CHATHUB_LLM_SITE`。
+bundle 层把 `DSH_CHATHUB_GATEWAY_HOST`、`DSH_CHATHUB_GATEWAY_PORT`、`DSH_CHATHUB_GATEWAY_KEY`、`DSH_CHATHUB_GATEWAY_SITES`、`DSH_CHATHUB_GATEWAY_WIRES`、`DSH_CHATHUB_GATEWAY_QUEUE`、`DSH_CHATHUB_GATEWAY_KEEPALIVE_MS` 映射到同名字段，站点目录默认取自 `DSH_CHATHUB_LLM_SITES` / `DSH_CHATHUB_LLM_SITE`。
 
 ### Failure codes
 
@@ -85,22 +97,25 @@ bundle 层把 `DSH_CHATHUB_GATEWAY_HOST`、`DSH_CHATHUB_GATEWAY_PORT`、`DSH_CHA
 | 站点队列已满 | 429 | `rate_limit_exceeded`，附 `Retry-After` |
 | 模型未暴露 | 404 | `model_not_found` |
 
+Anthropic 线协议在自己的错误信封里承载同样的 HTTP 状态：401 为 `authentication_error`，429 为 `rate_limit_error`，400 为 `invalid_request_error`，其余为 `api_error`。
+
 <a id="understand-the-implementation"></a>
 ## 理解实现
 
 <details>
 <summary>实现内部 — 点击展开</summary>
 
-`openai-wire.ts` 是唯一的翻译缝：`toGenerateOptions` 把线格式消息（system、user、assistant 文本与 `tool_calls`、tool 结果）折叠成 `GenerateOptions`，并保留适配层签发的调用 id；`toCompletionResponse` / `sseRenderer` 把该轮的 chunk 展开成 completion 对象或逐帧的 SSE 渲染器。第一个文本块和第一个 tool-call 块胜出；适配层不会产出更多。
+`openai-wire.ts` 与 `anthropic-wire.ts` 是两条翻译缝。各自把本线格式的消息（system、user、assistant 文本与工具调用、tool 结果）折叠成 `GenerateOptions`，并保留适配层签发的调用 id；再把该轮的 chunk 展开成本线格式的响应体与 SSE 帧。第一个文本块和第一个 tool-call 块胜出；适配层不会产出更多。当最新的线格式消息是 tool 结果时，两条折叠都会补一条 user 轮次，说明该结果才是任务的最新状态，避免站点重复执行已经返回过的调用。两者还各自导出 `WireCodec`——服务器共享轮次循环驱动的表示接口，因此两条线只在帧与错误信封上不同。
 
-`server.ts` 拥有 HTTP 面：请求路由、Bearer 校验、请求体大小上限（32 MiB）、SSE 生命周期——响应头加一条 keepalive 注释开流，每个适配层 chunk 落地即刻写成自己的帧，`keepaliveMs` 在站点轮次进行中的帧间隙维持连接，失败的轮次以线格式错误事件呈现而不是断流。模型解析走传输健康状态：`ready` 的站点应答，`needs-auth` 的站点回 401 附面板指引，未列出的模型回 404 附列表指引。
+`server.ts` 拥有 HTTP 面：请求路由、key 校验（`Authorization: Bearer` 或 `x-api-key`）、请求体大小上限（32 MiB）、SSE 生命周期——响应头加一次 keepalive 写入开流，每个适配层 chunk 落地即刻写成自己的帧，`keepaliveMs` 在站点轮次进行中的帧间隙维持连接，失败的轮次以线格式错误事件呈现而不是断流。模型解析走传输健康状态：`ready` 的站点应答，`needs-auth` 的站点回 401 附面板指引，未列出的模型回 404 附列表指引。
 
 `queue.ts` 按站点统计待处理请求，超过 `maxQueuePerSite` 回 429；站点之间互不计数。`errors.ts` 把 llm runtime 的稳定失败码映射到 HTTP 状态与用户可执行的 message——绝不拼接站点原文。`index.ts` 把行解析成配置，并用 context effect 注册监听器，插件停时端口随之关闭。
 
 | 文件 | 作用 |
 |---|---|
 | [`src/types.ts`](src/types.ts) | 配置、模型目录行、失败事实 |
-| [`src/openai-wire.ts`](src/openai-wire.ts) | 线格式请求折叠与响应/SSE 展开 |
+| [`src/openai-wire.ts`](src/openai-wire.ts) | OpenAI 请求折叠与响应/SSE 展开 |
+| [`src/anthropic-wire.ts`](src/anthropic-wire.ts) | Anthropic `/v1/messages` 折叠、消息对象与 SSE 事件 |
 | [`src/server.ts`](src/server.ts) | HTTP 路由、鉴权、SSE 生命周期、模型解析 |
 | [`src/queue.ts`](src/queue.ts) | 每站点待处理计数与 429 上限 |
 | [`src/errors.ts`](src/errors.ts) | llm 失败码到 HTTP 与线格式错误 |
@@ -132,7 +147,7 @@ bundle 层把 `DSH_CHATHUB_GATEWAY_HOST`、`DSH_CHATHUB_GATEWAY_PORT`、`DSH_CHA
 
 <a id="known-limitations-and-deferred-work"></a>
 
-- **Anthropic 线协议待做** — Claude Code 需要 `/v1/messages` 及其自己的 SSE 事件词汇；OpenAI 线协议先覆盖 Codex、Trae、WorkBuddy。
+- **Anthropic 线丢弃推理内容** — 单独展示思考过程的站点在 `/v1/messages` 上会省略它：Anthropic 的 `thinking` 块必须带 provider 签名，凭空构造签名会被客户端拒绝。
 - **流式即提交** — pinned 路由在站点书写的同时流式转发答案，已交付的 delta 无法再透明修复：非法回答以 `MALFORMED_RESPONSE` 错误呈现而不是重问。聚合路由、压缩轮次与无快照的会话保持整块交付并保留修复。
 - **无真实用量统计** — web 回答不带 token 计数，`usage` 只镜像适配层的估算。
 - **是队列，不是公平调度** — 每站点准入只给待处理请求设上限，不重排；站点页面上的轮次仍由宿主传输串行化。

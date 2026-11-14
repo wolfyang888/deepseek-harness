@@ -5,7 +5,7 @@ import { LlmError, type GenerateOptions, type StreamChunk } from '@deepseek-ai/d
 import { describe, expect, it } from 'vitest'
 import { apply } from '../src/index.ts'
 import { ChatHubGateway } from '../src/server.ts'
-import type { ChatHubGatewayConfig } from '../src/types.ts'
+import type { ChatHubGatewayConfig, Wire } from '../src/types.ts'
 
 /** A mounted gateway and the knobs its fakes expose. */
 interface Mounted {
@@ -20,10 +20,15 @@ interface Mounted {
 /**
  * @param apiKey - bearer key the row configures; empty disables checking.
  * @param sites - explicit site roster; empty exposes every health-known site.
+ * @param wires - wire protocols the row serves.
  * @returns The mounted gateway over fake llm and transport services, bound to
  *   an ephemeral port so parallel specs never collide.
  */
-async function mount(apiKey = '', sites: string[] = []): Promise<Mounted> {
+async function mount(
+  apiKey = '',
+  sites: string[] = [],
+  wires: Wire[] = ['openai', 'anthropic'],
+): Promise<Mounted> {
   const ctx = new Context()
   const state = {
     streams: [] as AsyncIterable<StreamChunk>[],
@@ -48,6 +53,7 @@ async function mount(apiKey = '', sites: string[] = []): Promise<Mounted> {
     port: 0,
     apiKey,
     sites,
+    wires,
     maxQueuePerSite: 1,
     keepaliveMs: 15_000,
   }
@@ -322,6 +328,97 @@ describe('ChatHubGateway bare-path aliases', () => {
   })
 })
 
+describe('ChatHubGateway /v1/messages', () => {
+  it('answers a non-streaming message in the Anthropic message shape', async () => {
+    const mounted = await mount()
+    mounted.streams.push(textTurn('hello'))
+    const response = await fetch(`${mounted.url}/v1/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'glm-web', max_tokens: 1024, messages: [{ role: 'user', content: 'hi' }] }),
+    })
+    expect(response.status).toBe(200)
+    const body = await response.json() as { type: string; content: { type: string; text?: string }[]; stop_reason: string }
+    expect(body.type).toBe('message')
+    expect(body.content).toEqual([{ type: 'text', text: 'hello' }])
+    expect(body.stop_reason).toBe('end_turn')
+    expect(mounted.requests.at(0)?.provider).toBe('glm-web-chathub')
+    await mounted.ctx.fiber.dispose()
+  })
+
+  it('streams Anthropic events from message_start to message_stop', async () => {
+    const mounted = await mount()
+    mounted.streams.push(textTurn('streamed'))
+    const response = await fetch(`${mounted.url}/v1/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'glm-web', max_tokens: 1024, stream: true, messages: [{ role: 'user', content: 'hi' }] }),
+    })
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toBe('text/event-stream')
+    const text = await response.text()
+    expect(text).toContain('event: message_start')
+    expect(text).toContain('"type":"text_delta","text":"streamed"')
+    expect(text).toContain('"stop_reason":"end_turn"')
+    expect(text).toContain('event: message_stop')
+    await mounted.ctx.fiber.dispose()
+  })
+
+  it('accepts the Anthropic x-api-key header', async () => {
+    const mounted = await mount('secret')
+    const denied = await fetch(`${mounted.url}/v1/messages`, { method: 'POST', body: '{}' })
+    expect(denied.status).toBe(401)
+    const denial = await denied.json() as { type: string; error: { type: string } }
+    expect(denial.type).toBe('error')
+    expect(denial.error.type).toBe('authentication_error')
+    const allowed = await fetch(`${mounted.url}/v1/messages`, {
+      method: 'POST',
+      headers: { 'x-api-key': 'secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'glm-web', max_tokens: 8, messages: [{ role: 'user', content: 'hi' }] }),
+    })
+    // The key check passes; the fake has no queued stream, so an empty turn
+    // still answers a well-formed message object.
+    expect(allowed.status).toBe(200)
+    await mounted.ctx.fiber.dispose()
+  })
+
+  it('answers an authentication_error envelope for a signed-out site', async () => {
+    const mounted = await mount()
+    mounted.streams.push(signedOutTurn())
+    const response = await fetch(`${mounted.url}/v1/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'glm-web', max_tokens: 8, messages: [{ role: 'user', content: 'hi' }] }),
+    })
+    expect(response.status).toBe(401)
+    const body = await response.json() as { error: { type: string; message: string } }
+    expect(body.error.type).toBe('authentication_error')
+    expect(body.error.message).toContain('ChatHub panel')
+    await mounted.ctx.fiber.dispose()
+  })
+
+  it('serves /messages and answers 404 when the wire is disabled', async () => {
+    const enabled = await mount()
+    enabled.streams.push(textTurn('bare'))
+    const bare = await fetch(`${enabled.url}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'glm-web', max_tokens: 8, messages: [{ role: 'user', content: 'hi' }] }),
+    })
+    expect(bare.status).toBe(200)
+    await enabled.ctx.fiber.dispose()
+
+    const disabled = await mount('', [], ['openai'])
+    const refused = await fetch(`${disabled.url}/v1/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'glm-web', max_tokens: 8, messages: [{ role: 'user', content: 'hi' }] }),
+    })
+    expect(refused.status).toBe(404)
+    await disabled.ctx.fiber.dispose()
+  })
+})
+
 describe('plugin wiring', () => {
   it('apply starts a listener on the row port and stops with the context', async () => {
     const ctx = new Context()
@@ -332,6 +429,7 @@ describe('plugin wiring', () => {
       port: 0,
       apiKey: '',
       sites: [],
+      wires: ['openai', 'anthropic'],
       maxQueuePerSite: 8,
       keepaliveMs: 15_000,
     })

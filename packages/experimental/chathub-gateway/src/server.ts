@@ -1,10 +1,14 @@
 /**
- * The HTTP server: OpenAI wire routes over `ctx.llm` site routes.
+ * The HTTP server: OpenAI and Anthropic wire routes over `ctx.llm` site routes.
  *
- * `/v1/models` lists the exposed sites with their sign-in state, and
- * `/v1/chat/completions` translates one request into one adapter turn; the
- * bare `/models` and `/chat/completions` paths are accepted as aliases for
- * clients that append those suffixes to a root base URL. The
+ * `/v1/models` lists the exposed sites with their sign-in state;
+ * `/v1/chat/completions` and `/v1/messages` translate one request into one
+ * adapter turn and render the answer in the caller's wire. Both wires share
+ * one turn loop and differ only through their {@link WireCodec}, so admission,
+ * routing, queueing, and failure mapping cannot drift between them.
+ *
+ * The bare `/models`, `/chat/completions`, and `/messages` paths are accepted
+ * as aliases for clients that append those suffixes to a root base URL. The
  * server owns no browser state and stores nothing; login lives in the ChatHub
  * host layer and the site answer's identity stays in the external agent's own
  * conversation.
@@ -15,16 +19,35 @@
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 import { createServer } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
-import { LlmError, type FinishReason, type LlmRuntime, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import { LlmError, type FinishReason, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import {
+  anthropicErrorBody,
+  anthropicWireCodec,
+  toGenerateOptionsFromAnthropic,
+  type AnthropicRequest,
+} from './anthropic-wire.ts'
 import { failureFromError } from './errors.ts'
-import { sseRenderer, toCompletionResponse, toGenerateOptions, type SseRenderer, type WireCompletionRequest } from './openai-wire.ts'
+import {
+  openAiErrorBody,
+  openAiWireCodec,
+  toGenerateOptions,
+  type WireCompletionRequest,
+} from './openai-wire.ts'
 import { SiteQueues } from './queue.ts'
-import { GATEWAY_NEEDS_AUTH, GATEWAY_READY, type ChatHubGatewayConfig, type GatewayFailure, type GatewayModelEntry } from './types.ts'
+import {
+  GATEWAY_NEEDS_AUTH,
+  GATEWAY_READY,
+  type ChatHubGatewayConfig,
+  type GatewayFailure,
+  type GatewayModelEntry,
+  type Wire,
+  type WireCodec,
+} from './types.ts'
 
-/** The wire failure body every error path writes. */
-interface WireErrorBody {
-  error: { message: string; type: string; code: string }
-}
+/** One translated request, or the failure that refuses it. */
+type Translation =
+  | { kind: 'request'; model: string; stream: boolean; options: GenerateOptions }
+  | { kind: 'failure'; failure: GatewayFailure }
 
 /**
  * One ChatHub site gateway: HTTP listener plus the site roster it exposes.
@@ -69,8 +92,9 @@ export class ChatHubGateway {
       server.close()
     })
     this.ctx.logger.info(
-      'chathub-gateway: listening on %s, sites: %s',
+      'chathub-gateway: listening on %s, wires: %s, sites: %s',
       this.url,
+      this.config.wires.join(','),
       this.config.sites.length === 0 ? '(all mounted)' : this.config.sites.join(','),
     )
     return this.url
@@ -117,25 +141,35 @@ export class ChatHubGateway {
    * @param response - the response writer.
    */
   private async dispatch(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    let wire: Wire = 'openai'
     try {
       const url = new URL(request.url ?? '/', `http://${this.config.host}`)
       const route = normalizeRoute(url.pathname)
-      this.ctx.logger.info('chathub-gateway: %s %s', request.method, url.pathname)
+      wire = route === '/v1/messages' ? 'anthropic' : 'openai'
+      this.ctx.logger.info('chathub-gateway: %s %s (%s)', request.method, url.pathname, wire)
       const body = await readBody(request)
       if (this.config.apiKey.length > 0 && !this.authorized(request)) {
-        this.writeJson(response, 401, { error: { message: 'Invalid API key.', type: 'invalid_request_error', code: 'invalid_api_key' } } satisfies WireErrorBody)
+        this.writeFailure(response, { status: 401, code: 'invalid_api_key', message: 'Invalid API key.' }, wire)
         return
       }
       if (request.method === 'GET' && route === '/v1/models') {
         this.writeJson(response, 200, { object: 'list', data: await this.models() })
         return
       }
-      if (request.method === 'POST' && route === '/v1/chat/completions') {
-        await this.completions(response, body)
+      if (request.method === 'POST' && route === '/v1/chat/completions' && this.config.wires.includes('openai')) {
+        await this.turn(response, body, 'openai')
+        return
+      }
+      if (request.method === 'POST' && route === '/v1/messages' && this.config.wires.includes('anthropic')) {
+        await this.turn(response, body, 'anthropic')
         return
       }
       this.ctx.logger.warn('chathub-gateway: no route for %s %s', request.method, url.pathname)
-      this.writeJson(response, 404, { error: { message: `No route: ${request.method} ${url.pathname}`, type: 'invalid_request_error', code: 'not_found' } } satisfies WireErrorBody)
+      this.writeFailure(response, {
+        status: 404,
+        code: 'not_found',
+        message: `No route: ${request.method} ${url.pathname}`,
+      }, wire)
     } catch (error) {
       const failure = failureFromError(error)
       // A handler that already answered leaves nothing to write; a second
@@ -144,35 +178,30 @@ export class ChatHubGateway {
         if (!response.writableEnded) response.end()
         return
       }
-      this.writeFailure(response, failure)
+      this.writeFailure(response, failure, wire)
     }
   }
 
   /**
-   * Handle one completion request.
+   * Run one turn of the given wire: translate, admit, stream, and render.
    * @param response - the response writer.
-   * @param body - the parsed or raw request body.
+   * @param body - the raw request body.
+   * @param wire - the wire the route answers in.
    */
-  private async completions(response: ServerResponse, body: string): Promise<void> {
-    let parsed: WireCompletionRequest
-    try {
-      parsed = JSON.parse(body) as WireCompletionRequest
-    } catch {
-      this.writeFailure(response, { status: 400, code: 'invalid_request_error', message: 'The request body is not valid JSON.' })
+  private async turn(response: ServerResponse, body: string, wire: Wire): Promise<void> {
+    const translated = translate(body, wire)
+    if (translated.kind === 'failure') {
+      this.writeFailure(response, translated.failure, wire)
       return
     }
-    if (typeof parsed.model !== 'string' || parsed.model.length === 0) {
-      this.writeFailure(response, { status: 400, code: 'invalid_request_error', message: 'The request must name a model.' })
-      return
-    }
+    const { model, stream, options } = translated
     const models = await this.models()
-    const model = models.find(row => row.id === parsed.model)
-    if (model === undefined) {
+    if (!models.some(row => row.id === model)) {
       this.writeFailure(response, {
         status: 404,
         code: 'model_not_found',
-        message: `Model "${parsed.model}" is not exposed. GET /v1/models lists the exposed site models.`,
-      })
+        message: `Model "${model}" is not exposed. GET /v1/models lists the exposed site models.`,
+      }, wire)
       return
     }
     // Do not reject on `needs-auth`: health probing never opens a browser, so
@@ -182,69 +211,42 @@ export class ChatHubGateway {
     // which failureFromError maps to the same 401 chathub_signed_out. Rejecting
     // here would make a logged-in profile permanently unusable until someone
     // opened the panel by hand.
-    const admission = this.queues.enter(parsed.model)
+    const admission = this.queues.enter(model)
     if (admission.kind === 'queue-full') {
       this.writeFailure(response, {
         status: 429,
         code: 'rate_limit_exceeded',
         message: 'This site already has too many requests waiting. Retry after the delay.',
         retryAfterSeconds: 30,
-      })
+      }, wire)
       return
     }
-    const route = `${parsed.model}-chathub`
-    let options
-    try {
-      options = toGenerateOptions(parsed, route)
-    } catch (error) {
-      this.writeFailure(response, {
-        status: 400,
-        code: 'invalid_request_error',
-        message: error instanceof Error ? error.message : 'The request cannot be translated.',
-      })
-      return
-    }
+    const codec = wire === 'anthropic' ? anthropicWireCodec(model) : openAiWireCodec(model)
     const chunks: StreamChunk[] = []
     let keepalive: ReturnType<typeof setInterval> | undefined
-    let sse: SseRenderer | undefined
     try {
-      if (parsed.stream === true) {
+      if (stream) {
         // Open the SSE stream and hold it with keepalive writes between
         // frames, so a proxy or client does not time the response out while
         // the site turn runs.
         response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', 'connection': 'keep-alive' })
-        response.write(': keepalive\n\n')
-        keepalive = setInterval(() => { response.write(': keepalive\n\n') }, this.config.keepaliveMs)
-        sse = sseRenderer(parsed.model)
-        response.write(sse.role())
+        response.write(codec.keepalive)
+        keepalive = setInterval(() => { response.write(codec.keepalive) }, this.config.keepaliveMs)
+        this.writeFrames(response, codec.openStream())
       }
-      for await (const chunk of this.stream(route, options)) {
+      for await (const chunk of this.ctx.llm.stream(options)) {
         chunks.push(chunk)
-        if (sse === undefined) continue
-        switch (chunk.type) {
-          case 'text-delta':
-            response.write(sse.content(chunk.text))
-            break
-          case 'reasoning-delta':
-            response.write(sse.reasoning(chunk.text))
-            break
-          case 'block-end':
-            if (chunk.block.type === 'tool-call') {
-              response.write(sse.toolCall(chunk.block.id, chunk.block.name, chunk.block.arguments))
-            }
-            break
-          default:
-            break
-        }
+        if (!stream) continue
+        this.writeFrames(response, codec.renderChunk(chunk))
       }
     } catch (error) {
       const failure = failureFromError(error)
       // The SSE stream already carries a 200; the failure has to ride the
       // event stream, because a second status line cannot be sent.
-      if (parsed.stream === true && response.headersSent) {
-        this.writeStreamFailure(response, failure)
+      if (stream && response.headersSent) {
+        this.writeStreamFailure(response, failure, codec)
       } else {
-        this.writeFailure(response, failure)
+        this.writeFailure(response, failure, wire)
       }
       return
     } finally {
@@ -254,50 +256,32 @@ export class ChatHubGateway {
     const finish = terminal(chunks)
     if (finish !== undefined && finish.reason.kind !== 'stop' && finish.reason.kind !== 'tool-calls') {
       const failure = failureFromError(new LlmError(finishReasonMessage(finish.reason), finishFailureCode(finish.reason)))
-      if (parsed.stream === true) {
-        // The SSE stream is already open with a 200; surface the failure as
-        // an error event and close, which OpenAI-compatible clients read.
-        this.writeStreamFailure(response, failure)
+      if (stream) {
+        // The SSE stream is already open with a 200; surface the failure on
+        // the open stream rather than attempting a second status line.
+        this.writeStreamFailure(response, failure, codec)
       } else {
-        this.writeFailure(response, failure)
+        this.writeFailure(response, failure, wire)
       }
       return
     }
-    if (sse !== undefined) {
-      // The adapter contract ends the stream in a finish chunk; the fallback
-      // only covers streams that ended without one.
-      const reason = finish?.reason.kind === 'tool-calls'
-        ? 'tool_calls'
-        : finish?.reason.kind === 'stop'
-          ? 'stop'
-          : chunks.some(chunk => chunk.type === 'block-end' && chunk.block.type === 'tool-call') ? 'tool_calls' : 'stop'
-      response.write(sse.finish(reason))
-      response.write(sse.done())
+    if (stream) {
+      this.writeFrames(response, codec.closeStream())
       response.end()
-    } else {
-      this.writeJson(response, 200, toCompletionResponse(route, parsed.model, chunks))
+      return
     }
+    this.writeJson(response, 200, codec.responseBody(model, chunks))
   }
 
   /**
-   * Read the `ctx.llm` stream for one request; a small seam for tests.
-   * @param route - provider route.
-   * @param options - the translated request.
-   * @returns The runtime's chunk stream.
-   */
-  private stream(route: string, options: Parameters<LlmRuntime['stream']>[0]): AsyncIterable<StreamChunk> {
-    void route
-    return this.ctx.llm.stream(options)
-  }
-
-  /**
-   * Check one request's bearer key.
+   * Check one request's key: OpenAI clients send a bearer token, Anthropic
+   * clients send `x-api-key`.
    * @param request - the incoming request.
-   * @returns Whether the presented key matches.
+   * @returns Whether a presented key matches.
    */
   private authorized(request: IncomingMessage): boolean {
-    const header = request.headers.authorization ?? ''
-    return header === `Bearer ${this.config.apiKey}`
+    if (request.headers.authorization === `Bearer ${this.config.apiKey}`) return true
+    return request.headers['x-api-key'] === this.config.apiKey
   }
 
   /**
@@ -312,36 +296,103 @@ export class ChatHubGateway {
   }
 
   /**
-   * Write one gateway failure as an OpenAI wire error.
+   * Write one SSE frame list in order.
    * @param response - the response writer.
-   * @param failure - the mapped failure.
+   * @param frames - the frames to write.
    */
-  private writeFailure(response: ServerResponse, failure: GatewayFailure): void {
-    const headers: Record<string, string> = { 'content-type': 'application/json' }
-    if (failure.retryAfterSeconds !== undefined) headers['retry-after'] = String(failure.retryAfterSeconds)
-    response.writeHead(failure.status, headers)
-    const body: WireErrorBody = {
-      error: {
-        message: failure.message,
-        type: failure.status === 401 ? 'authentication_error' : failure.status >= 500 ? 'server_error' : 'invalid_request_error',
-        code: failure.code,
-      },
-    }
-    response.end(JSON.stringify(body))
+  private writeFrames(response: ServerResponse, frames: readonly string[]): void {
+    for (const frame of frames) response.write(frame)
   }
 
   /**
-   * Surface a failure on a stream that already answered 200 by writing the
-   * error event OpenAI-compatible clients read, then the closing sentinel.
+   * Write one gateway failure in the wire's error envelope.
+   * @param response - the response writer.
+   * @param failure - the mapped failure.
+   * @param wire - the wire the route answers in.
+   */
+  private writeFailure(response: ServerResponse, failure: GatewayFailure, wire: Wire): void {
+    const headers: Record<string, string> = { 'content-type': 'application/json' }
+    if (failure.retryAfterSeconds !== undefined) headers['retry-after'] = String(failure.retryAfterSeconds)
+    response.writeHead(failure.status, headers)
+    response.end(JSON.stringify(wire === 'anthropic' ? anthropicErrorBody(failure) : openAiErrorBody(failure)))
+  }
+
+  /**
+   * Surface a failure on a stream that already answered 200, using the wire's
+   * error event so the client sees the failure instead of a silent truncation.
    * @param response - the SSE response writer.
    * @param failure - the mapped failure.
+   * @param codec - the codec of the open stream.
    */
-  private writeStreamFailure(response: ServerResponse, failure: GatewayFailure): void {
-    const body: WireErrorBody = { error: { message: failure.message, type: 'server_error', code: failure.code } }
-    response.write(`data: ${JSON.stringify(body)}\n\n`)
-    response.write('data: [DONE]\n')
+  private writeStreamFailure(response: ServerResponse, failure: GatewayFailure, codec: WireCodec): void {
+    this.writeFrames(response, codec.streamFailure(failure))
     response.end()
   }
+}
+
+/**
+ * Translate one request body into adapter options for its wire.
+ * @param body - the raw request body.
+ * @param wire - the wire the route answers in.
+ * @returns The translated request, or a 400 failure naming the first field
+ *   that cannot be translated.
+ */
+function translate(body: string, wire: Wire): Translation {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(body)
+  } catch {
+    return { kind: 'failure', failure: { status: 400, code: 'invalid_request_error', message: 'The request body is not valid JSON.' } }
+  }
+  try {
+    if (wire === 'anthropic') {
+      const request = parsed as AnthropicRequest
+      const model = modelOf(request.model)
+      return {
+        kind: 'request',
+        model,
+        stream: request.stream === true,
+        options: toGenerateOptionsFromAnthropic(request, routeOf(model)),
+      }
+    }
+    const request = parsed as WireCompletionRequest
+    const model = modelOf(request.model)
+    return {
+      kind: 'request',
+      model,
+      stream: request.stream === true,
+      options: toGenerateOptions(request, routeOf(model)),
+    }
+  } catch (error) {
+    return {
+      kind: 'failure',
+      failure: {
+        status: 400,
+        code: 'invalid_request_error',
+        message: error instanceof Error ? error.message : 'The request cannot be translated.',
+      },
+    }
+  }
+}
+
+/**
+ * Read the required model id of one request.
+ * @param model - the parsed model field.
+ * @returns The model id.
+ * @throws Error when the request names no model.
+ */
+function modelOf(model: unknown): string {
+  if (typeof model !== 'string' || model.length === 0) throw new Error('The request must name a model.')
+  return model
+}
+
+/**
+ * Resolve the `llm-chathub` provider route of one site model id.
+ * @param model - site id such as `glm-web`.
+ * @returns The provider route, for example `glm-web-chathub`.
+ */
+function routeOf(model: string): string {
+  return `${model}-chathub`
 }
 
 /**
@@ -351,13 +402,14 @@ export class ChatHubGateway {
  * SDK appends `/chat/completions` to a base that already carries `/v1`, while
  * custom-model forms such as WorkBuddy's append the same suffix to whatever
  * the user typed. A user who enters `http://host:8787` therefore reaches
- * `/chat/completions`, and a GET probe reaches `/models`. Accept those two
- * bare aliases so both conventions work against one gateway.
+ * `/chat/completions`, and a GET probe reaches `/models`. Accept those bare
+ * aliases so both conventions work against one gateway; Anthropic clients get
+ * the same treatment for `/messages`.
  * @param pathname - the requested path.
  * @returns The canonical gateway route.
  */
 function normalizeRoute(pathname: string): string {
-  if (pathname === '/models' || pathname === '/chat/completions') return `/v1${pathname}`
+  if (pathname === '/models' || pathname === '/chat/completions' || pathname === '/messages') return `/v1${pathname}`
   return pathname
 }
 

@@ -17,6 +17,8 @@
 #                             default exposes every site the llm-chathub layer
 #                             mounted (read from DSH_CHATHUB_LLM_SITES, falling
 #                             back to DSH_CHATHUB_LLM_SITE)
+#   DSH_CHATHUB_GATEWAY_WIRES comma-separated wire protocols to serve
+#                             (`openai`, `anthropic`; default both)
 #   DSH_CHATHUB_GATEWAY_QUEUE per-site pending request limit (default 8)
 #   DSH_CHATHUB_GATEWAY_KEEPALIVE_MS  SSE keepalive interval (default 15000)
 - insert:
@@ -30,5 +32,7 @@
           ?? process.env.DSH_CHATHUB_LLM_SITES
           ?? process.env.DSH_CHATHUB_LLM_SITE
           ?? '').split(',').filter(Boolean)
+        wires: !!js (process.env.DSH_CHATHUB_GATEWAY_WIRES ?? 'openai,anthropic')
+          .split(',').map(wire => wire.trim()).filter(Boolean)
         maxQueuePerSite: !!js Number(process.env.DSH_CHATHUB_GATEWAY_QUEUE ?? 8)
         keepaliveMs: !!js Number(process.env.DSH_CHATHUB_GATEWAY_KEEPALIVE_MS ?? 15000)

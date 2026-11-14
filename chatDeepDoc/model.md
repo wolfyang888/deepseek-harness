@@ -112,7 +112,7 @@ Claude Code        Codex / Trae / WorkBuddy
 | `messages[role=system]` / 顶层 `system` | `system`（单发，受 `maxSystemChars` 钳制） |
 | `messages[role=user]` 文本 | user 消息 |
 | assistant 消息里的 `tool_calls` / `tool_use` 块 | 历史里的 `[asked for <tool> <args>]` 条目 |
-| `role=tool` / `tool_result` 块 | tool result 消息（受 `maxToolResultChars` 钳制，长文件结果带续读 offset） |
+| `role=tool` / `tool_result` 块 | tool result 消息（受 `maxToolResultChars` 钳制，长文件结果带续读 offset）；当它是最新一条消息时，折叠末尾补一条 user 轮次说明「该结果即任务最新状态」，否则站点会把原始任务当作当前指令、重复执行已返回过的调用 |
 | `tools[].function` / `tools[].input_schema` | 工具 schema 白名单 |
 
 注意两点：
@@ -236,16 +236,19 @@ wire_api = "chat"
 
 ## 9. 分期落地与验证
 
-**Phase 1 — OpenAI 线（覆盖 Codex / Trae / WorkBuddy）**
+**Phase 1 — OpenAI 线（覆盖 Codex / Trae / WorkBuddy）— 已落地**
 
-- `chathub-gateway` 包骨架：HTTP 服务、`/v1/models`、`/v1/chat/completions`（非流式 + SSE 实时流式，见 §6.4）、per-site 队列、错误映射、鉴权；
+- `chathub-gateway` 包：HTTP 服务、`/v1/models`、`/v1/chat/completions`（非流式 + SSE 实时流式，见 §6.4）、per-site 队列、错误映射、鉴权；
 - 单测：线格式 ↔ `GenerateOptions` 互转、tool call 翻译、错误表、队列上限；
-- 真浏览器验证（轨道规则 3）：Codex 挂 `glm-web`，项目级 prompt、同一话题两轮、一次合法工具调用，报告每轮站点与失败码。
+- 真浏览器验证（轨道规则 3）：glm-web 四轮全 success。
 
-**Phase 2 — Anthropic 线（覆盖 Claude Code）**
+**Phase 2 — Anthropic 线（覆盖 Claude Code）— 已落地**
 
-- `/v1/messages` + SSE（content_block_delta、ping）、system/tools 映射、system 预算校验；
-- 真浏览器验证：Claude Code + `glm-web`，同样口径。
+- `anthropic-wire.ts`：`/v1/messages` 请求折叠（system 合并、`tool_use` → 历史调用、`tool_result` → tool 消息、`tools[].input_schema` → 工具 schema 白名单）、`Message` 响应体、SSE 事件序列（`message_start` / `content_block_start|delta|stop` / `message_delta` / `message_stop` / `ping`）；
+- 两条线共用 `WireCodec` 表示接口驱动同一个轮次循环，只在帧与错误信封上分叉；`x-api-key` 与 `Authorization: Bearer` 同样校验；
+- 配置 `wires`（默认 `[openai, anthropic]`，环境变量 `DSH_CHATHUB_GATEWAY_WIRES`），未开启的协议在其路由回 404；
+- 单测：`anthropic-wire.spec.ts` 12 项 + `server.spec.ts` 的 `/v1/messages` 用例，合计 55 项通过；
+- 真浏览器验证：Claude Code 指向 `ANTHROPIC_BASE_URL=http://127.0.0.1:8787`、`--model glm-web`，两轮同一话题；每轮都完成一次 Bash 工具调用（`num_turns: 2`、`stop_reason: end_turn`），第二轮正确报出 15 个子目录，无失败码。
 
 **Phase 3 — 收尾**
 
@@ -263,7 +266,7 @@ wire_api = "chat"
 |---|---|
 | 站点反爬 / UI 漂移 | 失败码如实上报（`chathub-ui-drift` → 500 明示驱动需更新）；适配层修复轮兜底（流式提交后不再兜底，见 §6.4） |
 | 首 token 延迟取决于站点书写节奏 | SSE 快照实时转发 + keepalive 防超时；文档如实声明实际到达节奏 |
-| Claude Code 大 system prompt | 挂载时预算校验 + 警告；`maxSystemChars`/`maxPromptChars` 在 cordis.yml 调大 |
+| Claude Code 大 system prompt | 网关不静默截断：超预算时适配层抛出并映射成 400 `context_length_exceeded` / `invalid_request_error`；确需放宽时在 cordis.yml 调大 `maxSystemChars`/`maxPromptChars` |
 | 每回复一个工具调用 | `parallel_tool_calls: false` 语义；四个客户端 agent 循环均兼容串行 |
 | 站点模型「编造」（配额/进度幻觉） | 既有防线：块协议 + 修复轮 + ROLE 固定块事实行；网关不额外补救，失败如实返回 |
 | 多客户端同时打同一站点 | per-site FIFO + 队列上限 + 429；宿主 `settleChains` 串行化已保证不互相杀页面 |

@@ -2,10 +2,11 @@
  * Cordis plugin: expose mounted ChatHub site routes over a local OpenAI wire.
  *
  * Mounted after the ChatHub host layer and the llm-chathub adapter, the
- * gateway answers `/v1/models` and `/v1/chat/completions` by forwarding to
- * the `ctx.llm` routes those layers already registered, so an external coding
- * agent (Codex, Trae, WorkBuddy, …) can list and use the site models through
- * its own model selector. Anthropic-wire routes are deferred work.
+ * gateway answers `/v1/models`, `/v1/chat/completions` (OpenAI wire), and
+ * `/v1/messages` (Anthropic wire) by forwarding to the `ctx.llm` routes those
+ * layers already registered, so an external coding agent (Claude Code, Codex,
+ * Trae, WorkBuddy, …) can list and use the site models through its own model
+ * selector.
  *
  * @module @deepseek-ai/dsh-experimental-chathub-gateway
  */
@@ -14,11 +15,24 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-experimental-chathub-host'
 import z from '@deepseek-ai/schemastery'
 import { ChatHubGateway } from './server.ts'
-import type { ChatHubGatewayConfig } from './types.ts'
+import type { ChatHubGatewayConfig, Wire } from './types.ts'
 
 export { ChatHubGateway } from './server.ts'
 export { classifyFailure, failureFromError } from './errors.ts'
-export { sseRenderer, toCompletionResponse, toGenerateOptions } from './openai-wire.ts'
+export {
+  openAiErrorBody,
+  openAiWireCodec,
+  sseRenderer,
+  toCompletionResponse,
+  toGenerateOptions,
+} from './openai-wire.ts'
+export {
+  anthropicErrorBody,
+  anthropicSseRenderer,
+  anthropicWireCodec,
+  toGenerateOptionsFromAnthropic,
+  toMessagesResponse,
+} from './anthropic-wire.ts'
 export * from './types.ts'
 
 /** Configuration as the mounting profile writes it; defaults fill the rest. */
@@ -31,6 +45,8 @@ export interface Config {
   apiKey: string
   /** Mounted site ids to expose; empty means every health-known site. */
   sites: readonly string[]
+  /** Wire protocols to serve; a wire left out answers 404 on its routes. */
+  wires: readonly Wire[]
   /** Pending requests one site accepts before answering 429. */
   maxQueuePerSite: number
   /** Interval between SSE keepalive writes while a site turn runs. */
@@ -43,6 +59,7 @@ export const Config = z.object({
   port: z.natural().max(65_535).default(8787),
   apiKey: z.string().default(''),
   sites: z.array(z.string().min(1)).default([]),
+  wires: z.array(z.union([z.const('openai'), z.const('anthropic')])).default(['openai', 'anthropic']),
   maxQueuePerSite: z.natural().min(1).default(8),
   keepaliveMs: z.natural().min(1).default(15_000),
 })
@@ -62,6 +79,7 @@ export function apply(ctx: Context, config: Config): void {
     port: config.port,
     apiKey: config.apiKey,
     sites: config.sites,
+    wires: config.wires,
     maxQueuePerSite: config.maxQueuePerSite,
     keepaliveMs: config.keepaliveMs,
   }
