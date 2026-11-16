@@ -316,6 +316,8 @@ export interface ChatHubRenderPolicy {
   readonly maxSystemChars: number
   /** How many recent entries stay verbatim. */
   readonly historyTurns: number
+  /** Pre-emptive protocol reminder for known-problem sites (glm-web, qianwen-web). */
+  readonly preemptiveReminder?: string | undefined
 }
 
 /** One turn's observable facts; no prompt, answer, or argument text. */

@@ -92,6 +92,7 @@ export function renderRequest(options: GenerateOptions, policy: ChatHubRenderPol
     ...system.length === 0 ? [] : ['# SYSTEM', system, ''],
     '# TOOLS', toolSection(policy), '',
     '# PROTOCOL', PROTOCOL_TEXT, '',
+    ...policy.preemptiveReminder ? ['# SITE-SPECIFIC PROTOCOL REMINDER', policy.preemptiveReminder, ''] : [],
     '# PROJECT', projectSection(policy), '',
     '# CONVERSATION',
   ]

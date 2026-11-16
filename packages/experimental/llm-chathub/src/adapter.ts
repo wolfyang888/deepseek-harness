@@ -100,6 +100,9 @@ export class ChatHubLlmAdapter extends LlmAdapter {
   /** Placement of a turn across mounted sites; inert on a pinned route. */
   private readonly router: SiteRouter
 
+  /** Repair history per site: site -> number of repair rounds consumed. */
+  private readonly repairHistory = new Map<string, number>()
+
   /**
    * @param source - host layer providing the transport and provider health.
    * @param config - route, budgets, and policy of this mount.
@@ -406,7 +409,10 @@ export class ChatHubLlmAdapter extends LlmAdapter {
         // The repair rounds already ran on this site, so a still-illegal reply
         // is the site's ceiling for this request, not a prompt to send again.
         this.reportAttempt(options, site, rendered, failures + 1, started, CHATHUB_LLM_MALFORMED_CODE)
-        if (pinned !== undefined || failures >= routing.failoverAttempts) {
+        // Escalate more aggressively if this site has a history of consuming repairs.
+        const repairCount = this.repairHistory.get(site) ?? 0
+        const effectiveFailures = failures + (repairCount >= 2 ? 1 : 0)
+        if (pinned !== undefined || effectiveFailures >= routing.failoverAttempts) {
           this.router.fail(key, site)
           return { site, rendered, parsed }
         }
@@ -415,6 +421,8 @@ export class ChatHubLlmAdapter extends LlmAdapter {
         candidates = candidates.filter(candidate => candidate !== site)
         continue
       }
+      // Clear repair history on success — a working turn proves the site is usable.
+      this.repairHistory.delete(site)
       if (
         parsed.call === undefined
         && parsed.text.length > 0
@@ -623,9 +631,19 @@ export class ChatHubLlmAdapter extends LlmAdapter {
           answerChars: answer.length,
         }
       }
+      // Track repair history per site for escalation logic.
+      const repairsUsed = this.repairHistory.get(site) ?? 0
+      this.repairHistory.set(site, repairsUsed + 1)
       // The site cannot be told "that was wrong" in its own vocabulary, so the
       // correction rides the next prompt inside a fresh conversation.
-      question = `${prompt}\n\n# CORRECTION\nThe previous reply was rejected: ${repair.reason}\n${repair.advice}`
+      // Enhanced format: shows attempt count, clear WRONG/CORRECT examples, original task.
+      question = `${prompt}\n\n# PROTOCOL CORRECTION (attempt ${attempt}/${this.config.repairAttempts})
+Your previous reply was rejected: ${repair.reason}
+
+${repair.advice}
+
+# ORIGINAL TASK (unchanged):
+${prompt}`
     }
   }
 
@@ -858,6 +876,48 @@ export class ChatHubLlmAdapter extends LlmAdapter {
   }
 
   /**
+   * Pre-emptive protocol reminder for sites that consistently answer in narrative
+   * tool-call shapes instead of the block format. Added to the rendered prompt
+   * before the model ever sees it, reducing repair rounds.
+   * @param site - site provider id.
+   * @returns Extra protocol text, or empty string for sites without known issues.
+   */
+  private preemptiveProtocolReminder(site: string): string {
+    const open = '<<<TOOL_CALL'
+    const close = 'TOOL_CALL>>>'
+    if (site === 'glm-web') {
+      return [
+        '# SITE-SPECIFIC PROTOCOL REMINDER (glm-web)',
+        'This site expects the EXACT block format. Common mistakes to avoid:',
+        '- Do NOT write: tool(read) -> path/to/file',
+        '- Do NOT write: [asked for read ...]',
+        '- Do NOT write: {"name":"read","arguments":{...}} (bare JSON)',
+        '- Do NOT use <tool_call>...</tool_call> tags',
+        'ONLY this format works:',
+        open,
+        '{"name":"read","arguments":{"file_path":"path/to/file"}}',
+        close,
+        'Put explanation AFTER the block. The block MUST come first in your reply.',
+      ].join('\n')
+    }
+    if (site === 'qianwen-web') {
+      return [
+        '# SITE-SPECIFIC PROTOCOL REMINDER (qianwen-web)',
+        'This site expects the EXACT block format. Common mistakes to avoid:',
+        '- Do NOT write: tool(read) -> path/to/file',
+        '- Do NOT write: [asked for read ...]',
+        '- Do NOT write: {"name":"read","arguments":{...}} (bare JSON)',
+        'ONLY this format works:',
+        open,
+        '{"name":"read","arguments":{"file_path":"path/to/file"}}',
+        close,
+        'Put explanation AFTER the block. The block MUST come first in your reply.',
+      ].join('\n')
+    }
+    return ''
+  }
+
+  /**
    * @param options - assembled request whose tool schemas fill the prompt.
    * @param site - site provider the route selected.
    * @returns The render policy of this mount, clamped to the site's composer ceiling.
@@ -876,6 +936,7 @@ export class ChatHubLlmAdapter extends LlmAdapter {
     // A composer caps insertions silently; rendering above the site's ceiling
     // would only guarantee a truncated prompt on the page.
     const siteLimit = this.transport().maxPromptChars?.(site)
+    const reminder = this.preemptiveProtocolReminder(site)
     return {
       tools,
       ...this.config.workspaceRoot === undefined ? {} : { workspaceRoot: this.config.workspaceRoot },
@@ -884,6 +945,7 @@ export class ChatHubLlmAdapter extends LlmAdapter {
       maxToolResultChars: this.config.maxToolResultChars,
       maxSystemChars: this.config.maxSystemChars,
       historyTurns: this.config.historyTurns,
+      preemptiveReminder: reminder,
     }
   }
 
@@ -1008,7 +1070,7 @@ function repairOf(parsed: ChatHubParsedAnswer, repairs: Repairs): { reason: stri
  * Advice that teaches the defect a rejection names, rather than repeating the
  * whole protocol at it.
  * @param invalid - the rejection reason the reply earned.
- * @returns Advice naming the fix, or the generic protocol reminder.
+ * @returns Advice naming the fix with a concrete example, or the generic protocol reminder.
  */
 function adviceForInvalid(invalid: string): string {
   if (invalid.endsWith('carries no arguments object')) {
@@ -1017,7 +1079,41 @@ function adviceForInvalid(invalid: string): string {
   if (invalid.includes('TOOL_CALL>>>')) {
     return 'Reply again and close the block with a line reading exactly TOOL_CALL>>>'
   }
-  return 'Reply again using only the block format above.'
+  // Narrative tool-call shapes — each with a concrete example
+  if (invalid === 'the reply invents tool output as "tool(…) ->" instead of using the block') {
+    return `You wrote a tool call in the form "tool(name) -> ...". This is NOT the block format.
+Use the <<<TOOL_CALL block instead:
+<<<TOOL_CALL
+{"name":"read","arguments":{"file_path":"src/main.ts"}}
+TOOL_CALL>>>
+Do NOT write: tool(read) -> src/main.ts`
+  }
+  if (invalid === 'the reply writes a tool call as bare JSON outside the block') {
+    return `You wrote a tool call as bare JSON outside the <<<TOOL_CALL block.
+Wrap it in the block:
+<<<TOOL_CALL
+{"name":"glob","arguments":{"pattern":"**/*.ts"}}
+TOOL_CALL>>>
+Do NOT write: {"name":"glob","arguments":{"pattern":"**/*.ts"}}`
+  }
+  if (invalid === 'the reply writes the call in "<tool_call>" tags instead of using the block') {
+    return `You used native <tool_call> tags. The harness only accepts the <<<TOOL_CALL block.
+<<<TOOL_CALL
+{"name":"edit","arguments":{"file_path":"src/main.ts","old_string":"foo","new_string":"bar"}}
+TOOL_CALL>>>
+Do NOT write: <tool_call>edit ...</tool_call>`
+  }
+  if (invalid === 'the reply narrates a tool call as "[asked for …]" instead of using the block') {
+    return `You narrated a tool call as "[asked for …]". This is NOT executable.
+Use the block format:
+<<<TOOL_CALL
+{"name":"grep","arguments":{"pattern":"TODO"}}
+TOOL_CALL>>>
+Do NOT write: [asked for grep ...]`
+  }
+  const open = '<<<TOOL_CALL'
+  const close = 'TOOL_CALL>>>'
+  return 'Reply again using only the ' + open + ' block format. Example:\n' + open + '\n{"name":"read","arguments":{"file_path":"src/main.ts"}}\n' + close
 }
 
 /**

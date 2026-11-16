@@ -82,7 +82,7 @@
       name: '@deepseek-ai/dsh-experimental-llm-chathub'
       config:
         site: !!js process.env.DSH_CHATHUB_LLM_SITE ?? 'deepseek-web'
-        sites: !!js (process.env.DSH_CHATHUB_LLM_SITES ?? '').split(',').filter(Boolean)
+        sites: !!js (process.env.DSH_CHATHUB_LLM_SITES ?? 'glm-web,qianwen-web,gemini-web,chatgpt-web,doubao-web,deepseek-web').split(',').filter(Boolean)
         model: !!js process.env.DSH_CHATHUB_LLM_MODEL ?? 'web-model'
         contextWindow: !!js Number(process.env.DSH_CHATHUB_LLM_CONTEXT_WINDOW ?? 128000)
         workspaceRoot: !!js process.env.DSH_CHATHUB_LLM_ROOT ?? process.cwd()
