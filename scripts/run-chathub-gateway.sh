@@ -31,7 +31,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 : "${DSH_CHATHUB_LOGIN:=false}"
 # off | plain | sse — one completion request after boot to prove the wire.
 : "${DSH_CHATHUB_SMOKE:=off}"
-: "${DSH_CHATHUB_LOG:=}"
+# DSH_CHATHUB_LOG defaults to $ROOT/.dsh-chathub-gateway.log (set below)
 : "${DSH_CHATHUB_GATEWAY_KEY:=}"
 # One site list feeds both layers. They read different variable names, and the
 # gateway's own default is "every health-known site" — with only some sites
@@ -146,31 +146,48 @@ if [ -z "$models" ]; then
 fi
 
 # --- report ------------------------------------------------------------------
-echo "gateway : $GATEWAY/v1"
 panel=$(grep -o 'http://127\.0\.0\.1:[0-9]*/?token=[^ ]*' "$LOG" | tail -1 || true)
-[ -n "$panel" ] && echo "panel   : $panel"
 
+echo ""
+echo "═══════════════════════════════════════════════════════════════"
+echo "  ChatHub Gateway Ready"
+echo "═══════════════════════════════════════════════════════════════"
+echo ""
+echo "  📋  LOGIN PANEL (open in browser to sign in to sites):"
+if [ -n "$panel" ]; then
+  echo "      $panel"
+else
+  echo "      http://127.0.0.1:$DSH_WEB_PORT  (token not yet printed, check log)"
+fi
+echo ""
+echo "  🔌  GATEWAY ENDPOINT (configure in Desktop App → Settings → Models):"
+echo "      OpenAI wire:  $GATEWAY/v1"
+echo "      Anthropic wire: $GATEWAY/anthropic"
+echo ""
+echo "  📦  AVAILABLE MODELS:"
 status=$(printf '%s' "$models" | node -e '
 let s = ""
 process.stdin.on("data", d => (s += d)).on("end", () => {
   const rows = JSON.parse(s).data
-  for (const row of rows) console.log(`  ${row.id.padEnd(14)} ${row.status}`)
+  for (const row of rows) console.log(`      ${row.id.padEnd(22)} ${row.status}`)
   console.log(rows.some(row => row.status === "ready") ? "READY-ANY" : "NONE-READY")
 })')
 echo "$status" | grep -v 'READY-ANY\|NONE-READY' || true
+echo ""
 case "$status" in
   *NONE-READY*)
     cat >&2 <<'EOF'
-run-chathub-gateway: health probing never opens a browser, so `needs-auth`
-  can also mean a signed-in site whose session has not been opened yet. The
-  real sign-in check happens inside the turn; a genuinely signed-out site
-  answers 401 chathub_signed_out. Try one turn, e.g.
-    DSH_CHATHUB_SMOKE=plain scripts/run-chathub-gateway.sh
-  If it does return 401, sign in once with a visible browser:
-    DSH_CHATHUB_LOGIN=true scripts/run-chathub-gateway.sh
+  ⚠️  All sites show "needs-auth" — this is NORMAL for first run.
+      Health probing does not open a browser. Sign in via the panel above,
+      then the next request will work. Or run a test turn:
+        DSH_CHATHUB_SMOKE=plain scripts/run-chathub-gateway.sh
+      If it returns 401 chathub_signed_out, sign in once with visible browser:
+        DSH_CHATHUB_LOGIN=true scripts/run-chathub-gateway.sh
 EOF
     ;;
 esac
+echo "═══════════════════════════════════════════════════════════════"
+echo ""
 
 # --- optional smoke ----------------------------------------------------------
 # Deliberately POST to the prefix-less `/chat/completions`: that is the exact

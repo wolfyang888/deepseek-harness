@@ -1,481 +1,234 @@
-# ChatHub 模型选择器设计：把五个 Web 模型接进 Claude Code / Trae / WorkBuddy / Codex
+# ChatHub Model Usage in Desktop App (No Rebuild Required)
 
-## 1. 目标
+## Problem
 
-让 `glm-web`、`doubao-web`、`gemini-web`、`chatgpt-web`、`qianwen-web` 出现在四个外部编码 agent（Claude Code、Codex、Trae、WorkBuddy）的原生模型选择器里，并被当作普通模型使用：
+The desktop app (`dsh-tauri`) **does not include** ChatHub packages by default:
+- Only bundles `@deepseek-ai/dsh-base` (no web UI, no sidebar)
+- Experimental chathub packages not in desktop runtime
+- Desktop profile doesn't apply required patches
 
-- 外部 agent 的工具调用、多轮对话、流式输出全部正常工作；
-- 登录态、浏览器生命周期、轮次排队仍由 ChatHub 宿主统一管理；
-- 不修改四个既有 chathub 插件的任何行为（本轨道规则 1/2：不动主业务流，靠加插件解决）。
+## Solution: ChatHub Gateway (No Desktop Rebuild Required)
 
-非目标：
+Run a gateway process that exposes browser-backed models as OpenAI/Anthropic APIs, then configure the desktop app to call it.
 
-- 不为四个客户端各写一套 UI 或插件（Claude Code 插件、Trae 插件、VS Code 扩展等）；
-- 不做真 token 级流式（见 §6.4，宿主层是「轮询到稳定」语义，首版只做诚实的中转）；
-- 不做跨客户端的会话共享（每个客户端自己管理自己的历史，HTTP 本来就是无状态的）。
+---
 
-## 2. 现状：四个插件各提供什么
+### 1. Start the Gateway
 
-| 插件 | 职责 | 对本设计的贡献 |
-|---|---|---|
-| `chathub`（库层） | `IModelProvider`、`ProviderRegistry`、`ContextCompiler`、`CheckpointService`、`ModelRouter`、`SessionManager`、`WebChatTransport` 契约；`webProviderAdapters` 已注册五个站点 | 五个站点 provider 现成，`glm-web` 等 id 就是站点 id |
-| `chathub-host`（宿主层） | 浏览器 runtime、每站点 context、登录流程（`loginTimeoutMs`）、轮次队列、`webChat` Remote、storage domain 持久化 | 登录态与页面所有权；gateway 完全不碰浏览器 |
-| `llm-chathub`（适配层） | 把站点变成 `LlmAdapter` 路由：`renderRequest` 自包含提示词、`<<<TOOL_CALL` 块协议、`parseAnswer` 校验、修复轮、失败码映射、`resolveModel`（contextWindow + 接受并忽略 reasoning effort） | **核心复用点**：纯文本站点 → 带工具调用的模型这一最难的问题已经解决 |
-| `client-ui-chathub`（界面层） | Web 面板：provider 健康/登录、会话、模型切换 | 登录入口；后续可加「接入编码 agent」的帮助卡片（§7） |
-
-结论：缺的不是模型能力，而是一个**线协议出口**。四个客户端都会说 HTTP 方言，但没人说 Cordis。
-
-## 3. 核心决策：双协议网关，而非四套集成
-
-四个客户端的模型选择机制本质相同：指向一个 OpenAI 兼容（或 Anthropic 兼容）端点，模型 id 从端点发现或手工填入。因此：
-
-> 新增第五个插件 `chathub-gateway`：一个本地 HTTP 服务，同时说 OpenAI 方言（`/v1/chat/completions`、`/v1/models`）和 Anthropic 方言（`/v1/messages`），把请求翻译成 `llm-chathub` 的 `LlmAdapter.stream()` 调用。
-
-这样「模型选择器」不需要发明：每个客户端的**原生**选择器直接列出五个模型：
-
-- Trae / WorkBuddy：自定义 OpenAI Compatible provider，可从 `/v1/models` 拉列表；
-- Codex：`config.toml` 的 `model_providers` + `model = "glm-web"`；
-- Claude Code：`ANTHROPIC_BASE_URL` + `--model glm-web`。
-
-方案对比（为什么不是别的）：
-
-| 备选 | 否决原因 |
-|---|---|
-| 为每个客户端写插件/扩展 | 四套维护成本，每家 API 变一次全要跟；网关只维护两种线协议 |
-| 让客户端直连浏览器 DevTools 协议 | 登录态、排队、页面生命周期无法共享，等于重写 chathub-host |
-| 复用 `packages/api` 的 gateway | 那是 dsh Web BFF（Typert 远程流），不是模型线协议；混入会污染主业务流 |
-
-## 4. 协议矩阵
-
-| 客户端 | 配置面 | 线协议 | 模型发现 | 备注 |
-|---|---|---|---|---|
-| Claude Code | 环境变量 `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` + `--model` 或 settings | Anthropic Messages（`/v1/messages`，SSE） | 不发现，显式填 id | system prompt 很大（1–2 万 token），见 §6.2 预算 |
-| Codex CLI | `~/.codex/config.toml` 的 `model_providers`（`base_url`/`env_key`/`wire_api`） | OpenAI Chat Completions（`wire_api = "chat"`） | 不发现，显式填 id | 不用 Responses API，`chat` 线协议最稳 |
-| Trae | 设置 → 模型 → 添加自定义模型（OpenAI Compatible） | OpenAI Chat Completions | 可拉 `/v1/models` | |
-| WorkBuddy | 自定义 OpenAI 兼容 provider | OpenAI Chat Completions | 视版本，可手填 id | |
-
-两种线协议覆盖全部四个客户端。网关内部先归一到统一内部请求模型，再分别出两种线格式——**一个翻译缝，两种方言**，与仓库「能力缝完整」的约定一致。
-
-## 5. 架构与请求流
-
-```text
-Claude Code        Codex / Trae / WorkBuddy
-    |  Anthropic wire      |  OpenAI wire
-    v                       v
-+---------------------------------------------+
-| chathub-gateway（新插件，opt-in 挂载）        |
-|  /v1/messages   /v1/chat/completions        |
-|  /v1/models     统一内部请求模型 -> 线格式出   |
-|  per-site FIFO 队列 / SSE keepalive / 鉴权    |
-+----------------------+----------------------+
-                       | ctx.llm（路由 glm-web-chathub 等）
-                       v
-+---------------------------------------------+
-| llm-chathub（不动）                          |
-|  renderRequest / <<<TOOL_CALL 块协议 /        |
-|  parseAnswer / 修复轮 / 失败码                |
-+----------------------+----------------------+
-                       | WebChatTransport
-                       v
-+---------------------------------------------+
-| chathub-host（不动）                          |
-|  浏览器 runtime / 登录 / 轮次队列 / 持久化      |
-+----------------------+----------------------+
-                       |
-        glm-web doubao-web gemini-web
-        chatgpt-web qianwen-web（chathub 库层 provider）
-```
-
-一次请求的完整路径：
-
-1. 客户端 POST `/v1/chat/completions`（或 `/v1/messages`），`model: "glm-web"`，带 tools 和完整历史；
-2. 网关校验鉴权，把线格式消息归一为 `GenerateOptions`（system、messages、tool schemas）；
-3. 网关查 `ctx.llm` 路由表，`glm-web` → provider 路由 `<site>-chathub`（`llm-chathub` 挂载时注册），调 `stream()`；
-4. `llm-chathub` 渲染自包含提示词，经 `chathub-host` 在站点页面上完成一轮（每尝试新开页面）；
-5. 适配层产出一个 text block 和至多一个 tool call；网关翻译回线格式（`finish_reason: "tool_calls"` / `stop_reason: "tool_use"`）；
-6. 流式请求：文字按块以 SSE delta 转发，长轮次期间发 keepalive ping；
-7. 客户端执行工具、回填结果、发起下一请求——每次请求都是全新站点会话，历史由客户端重发，与适配层「每步自包含」的设计天然吻合。
-
-## 6. 网关关键设计
-
-### 6.1 模型目录与 id
-
-- 模型 id 直接用站点 id：`glm-web`、`doubao-web`、`gemini-web`、`chatgpt-web`、`qianwen-web`；
-- `/v1/models` 列 transport 健康探测已知的站点：`ready` 与 `needs-auth` 都列出（后者带标记），`not-started` 不列（与 `client-ui-chathub` 的选择器口径一致）。健康探测**不打开浏览器**，所以 `needs-auth` 只表示「本次进程还没确认过会话」，不代表账号真的登出；网关据此不提前拒绝请求，真正的登录检查在 adapter 里；
-- 每个模型声明 `resolveModel` 的 `contextWindow`，不虚标；
-- 配置项 `sites`：默认全部五个，可裁剪。
-
-### 6.2 请求映射
-
-| 线格式（OpenAI / Anthropic） | 内部（GenerateOptions） |
-|---|---|
-| `messages[role=system]` / 顶层 `system` | `system`（单发，受 `maxSystemChars` 钳制） |
-| `messages[role=user]` 文本 | user 消息 |
-| assistant 消息里的 `tool_calls` / `tool_use` 块 | 历史里的 `[asked for <tool> <args>]` 条目 |
-| `role=tool` / `tool_result` 块 | tool result 消息（受 `maxToolResultChars` 钳制，长文件结果带续读 offset）；当它是最新一条消息时，折叠末尾补一条 user 轮次说明「该结果即任务最新状态」，否则站点会把原始任务当作当前指令、重复执行已返回过的调用 |
-| `tools[].function` / `tools[].input_schema` | 工具 schema 白名单 |
-
-注意两点：
-
-1. **system 预算**：Claude Code 的 system prompt 很大。网关启动时对 `llm-chathub` 的 `maxSystemChars`/`maxPromptChars` 做一次配置校验：若低于阈值（建议 24k/96k 字符），在挂载日志里警告并给出 cordis.yml 示例——错配在网关侧显式暴露，而不是静默截断。
-2. **历史轮数**：`historyTurns` 钳制会丢老历史，客户端会重发全量，网关不补救（这是适配层既有语义）；网关只在响应头/日志里带上 dropped 条目数（复用 `chathub-llm/turn` 事件的 `droppedEntries`）。
-
-### 6.3 工具调用映射
-
-`llm-chathub` 的块协议已经解决「站点无 function calling」问题，网关只做格式翻译：
-
-- 适配层产出的单个 `ChatHubToolCall` → OpenAI `tool_calls[0]`（`function.arguments` 为 JSON 字符串）/ Anthropic `tool_use` 块（`input` 为对象）；
-- `toolCallId`：适配层生成（`chathub-call-N`），网关原样回传，客户端回填时配对；
-- **每回复至多一个调用**是硬约束：网关在 OpenAI 侧可设 `parallel_tool_calls: false` 语义（响应里只给一个 call），四个客户端的 agent 循环都兼容串行调用；
-- 非法回复（超修复预算）→ `MALFORMED_RESPONSE` → HTTP 502（§6.6）。
-
-### 6.4 流式语义（诚实声明）
-
-宿主层是「提交 → 轮询到答案稳定」语义，没有 token 流，但轮询过程中的每次读取都能拿到答案容器的完整快照。网关按快照做实时转发：
-
-- `stream: true` 请求：建立 SSE，立即发 role 事件；站点书写期间，每次轮询的新增可见文本即刻以 delta 事件转发（`chathub-host` 的 `watch` 快照 → 适配层的 holdback 增量 → 网关逐帧写出）；帧间隙每 15s 发注释行或 ping 事件（Anthropic 线有 `ping` 事件类型，OpenAI 线用 `: keepalive` 注释行），防止客户端空闲超时；
-- 增量转发只覆盖 pinned 单站点路由；聚合路由与压缩轮次保持整块交付（轮换与修复机制和增量外泄不兼容）；
-- 流式即提交：一旦有 delta 交付，非法回复以 `MALFORMED_RESPONSE` 呈现而不是透明重问（调用方已经看过一半，重问无法透明）；
-- 标记 holdback：适配层扣留少量字符，跨快照被拆开的 `<<<TOOL_CALL` / `<<<END` 标记绝不作为答案文本外泄；
-- `stream: false` 请求：整轮等待后一次性返回（网关自身的 HTTP 超时要 ≥ 宿主 `turnTimeoutMs` + 余量）；
-- 首延迟取决于站点书写节奏（glm-web 实测首个内容帧约 6s，后续 20 帧在约 11s 内陆续到达），这是浏览器免费模型的物理现实，写入文档而非隐藏。
-
-### 6.5 排队与并发
-
-- `chathub-host` 已按站点序列化轮次（同站点一页一队列）；网关侧维护 per-model FIFO：
-  - 在队请求全部挂起等 SSE/长轮询，不占浏览器；
-  - 队列上限（配置项 `maxQueuePerSite`，默认 8）满时直接回 429 + `Retry-After`；
-- 不同站点之间完全并行（五个站点五条队列）；
-- `chathub-busy` / `chathub-paced`（站点限流）→ 429，把宿主的退避建议写进 `Retry-After`。
-
-### 6.6 错误码映射
-
-| 站点 token / 适配层结果 | HTTP | OpenAI 线 | Anthropic 线 |
-|---|---|---|---|
-| `chathub-signed-out` | 401 | `error.code: "chathub_signed_out"`，message 指引打开 ChatHub 面板登录 | `error.type: "authentication_error"` |
-| `chathub-busy` / `chathub-paced` | 429 | `rate_limit_exceeded` + Retry-After | `rate_limit_error` |
-| `chathub-browser-unavailable` / `chathub-profile-locked` | 503 | `server_error`，可重试 | `api_error` |
-| `chathub-ui-drift` | 500 | message 明说「站点驱动需更新」 | `api_error` |
-| `chathub-network` | 502 | `server_error` | `api_error` |
-| 修复预算耗尽（MALFORMED_RESPONSE） | 502 | message 带拒绝原因 | `api_error` |
-| 提示词超预算（CONTEXT_WINDOW_EXCEEDED） | 400 | `context_length_exceeded` | `invalid_request_error`，message 建议 compaction/缩短 |
-| 网关鉴权失败 | 401 | `invalid_api_key` | `authentication_error` |
-
-原则：message 里写**用户可执行的下一步**（去哪登录、怎么缩短上下文），不拼站点原文——与 `ChatHubController` 的错误语义一致。
-
-### 6.7 鉴权与登录态
-
-- 网关默认只绑 `127.0.0.1`（配置 `host`）；
-- 可选 `apiKey`：配置后校验 `Authorization: Bearer`（OpenAI 客户端）与 `x-api-key`（Claude Code）；未配置则只校验来源地址；
-- 站点登录态完全在 `chathub-host` 的浏览器 profile 里。`/v1/models` 的 `needs-auth` 只是健康探测结果（探测不打开浏览器），**不是请求的前置门禁**：网关照常把请求交给 adapter，由 `transport.open()` / `waitForInput()` 判定，真未登录才抛 `AUTH` 并映射成 401 引导；登录动作发生在 `dsh web` 的 ChatHub 面板（复用 `webChat` Remote），网关不弹窗；
-- 网关自身不落任何 cookie/token。
-
-### 6.8 配置面（Config，全部可从 cordis.yml 覆盖）
-
-```yaml
-# cordis.patch.yml 里挂载（示例）
-- id: chathub-gateway
-  name: '@deepseek-ai/dsh-experimental-chathub-gateway'
-  config:
-    host: 127.0.0.1
-    port: 8787
-    apiKey: ''            # 空 = 不校验（仅本机绑定）
-    sites: [glm-web, doubao-web, gemini-web, chatgpt-web, qianwen-web]
-    maxQueuePerSite: 8
-    keepaliveMs: 15000
-    wires: [openai, anthropic]   # 可只开一种
-```
-
-无硬编码可调项；协议常量（SSE 帧格式）除外。
-
-## 7. 四个客户端的接入配置
-
-网关起来后，每个客户端一次配置：
-
-**Claude Code**
-
-```sh
-export ANTHROPIC_BASE_URL=http://127.0.0.1:8787
-export ANTHROPIC_AUTH_TOKEN=<apiKey 或任意非空>
-claude --model glm-web
-```
-
-**Codex**（`~/.codex/config.toml`）
-
-```toml
-model = "glm-web"
-model_provider = "chathub"
-
-[model_providers.chathub]
-name = "ChatHub"
-base_url = "http://127.0.0.1:8787/v1"
-env_key = "CHATHUB_API_KEY"
-wire_api = "chat"
-```
-
-**Trae / WorkBuddy**
-
-设置 → 模型 → 自定义模型：
-
-- 协议：OpenAI Compatible
-- endpoint：`http://127.0.0.1:8787/v1`
-- apiKey：`<apiKey 或任意非空>`
-- modelId：站点 id（`glm-web`），必须与 `${model}-chathub` 路由前缀一致
-
-字段名、工具白名单与 pacing 的实际折损见 §13.4 和 `mddoc/build-setup.md` §2.7。
-
-
-后续增强（进 `client-ui-chathub`，不动网关）：面板加「接入编码 agent」卡片，展示以上四段配置并带一键复制。
-
-## 8. 与四插件的边界
-
-- **零改动**：`chathub`、`chathub-host`、`llm-chathub`、`client-ui-chathub` 四个包的行为与默认值不变；
-- 网关是第五个 experimental 插件，opt-in 挂载（不挂就完全没有 HTTP 出口）；
-- 网关消费 `ctx.llm`（`llm-chathub` 注册的路由），不直接 import 宿主内部对象，与 `client-ui-chathub` 只走 Remote 的纪律同构；
-- 网关不写 Harness 会话日志（它不是 dsh 会话的一部分），自身指标复用 `chathub-llm/turn` 事件流。
-
-## 9. 分期落地与验证
-
-**Phase 1 — OpenAI 线（覆盖 Codex / Trae / WorkBuddy）— 已落地**
-
-- `chathub-gateway` 包：HTTP 服务、`/v1/models`、`/v1/chat/completions`（非流式 + SSE 实时流式，见 §6.4）、per-site 队列、错误映射、鉴权；
-- 单测：线格式 ↔ `GenerateOptions` 互转、tool call 翻译、错误表、队列上限；
-- 真浏览器验证（轨道规则 3）：glm-web 四轮全 success。
-
-**Phase 2 — Anthropic 线（覆盖 Claude Code）— 已落地**
-
-- `anthropic-wire.ts`：`/v1/messages` 请求折叠（system 合并、`tool_use` → 历史调用、`tool_result` → tool 消息、`tools[].input_schema` → 工具 schema 白名单）、`Message` 响应体、SSE 事件序列（`message_start` / `content_block_start|delta|stop` / `message_delta` / `message_stop` / `ping`）；
-- 两条线共用 `WireCodec` 表示接口驱动同一个轮次循环，只在帧与错误信封上分叉；`x-api-key` 与 `Authorization: Bearer` 同样校验；
-- 配置 `wires`（默认 `[openai, anthropic]`，环境变量 `DSH_CHATHUB_GATEWAY_WIRES`），未开启的协议在其路由回 404；
-- 单测：`anthropic-wire.spec.ts` 12 项 + `server.spec.ts` 的 `/v1/messages` 用例，合计 55 项通过；
-- 真浏览器验证：Claude Code 指向 `ANTHROPIC_BASE_URL=http://127.0.0.1:8787`、`--model glm-web`，两轮同一话题；每轮都完成一次 Bash 工具调用（`num_turns: 2`、`stop_reason: end_turn`），第二轮正确报出 15 个子目录，无失败码。
-
-**Phase 3 — 收尾**
-
-- WorkBuddy 全流程过一遍；keepalive 调优；面板「接入编码 agent」卡片；
-- 观测：网关侧请求计数、排队时长、每站点失败码分布（从 `chathub-llm/turn` 聚合）。
-
-**Deferred（明确不做进首版）**
-
-- 每回复多工具调用（块协议单调用约束）；
-- 网关侧上下文压缩建议（客户端已有各自机制）。
-
-## 10. 风险与已知限制
-
-| 风险/限制 | 应对 |
-|---|---|
-| 站点反爬 / UI 漂移 | 失败码如实上报（`chathub-ui-drift` → 500 明示驱动需更新）；适配层修复轮兜底（流式提交后不再兜底，见 §6.4） |
-| 首 token 延迟取决于站点书写节奏 | SSE 快照实时转发 + keepalive 防超时；文档如实声明实际到达节奏 |
-| Claude Code 大 system prompt | 网关不静默截断：超预算时适配层抛出并映射成 400 `context_length_exceeded` / `invalid_request_error`；确需放宽时在 cordis.yml 调大 `maxSystemChars`/`maxPromptChars` |
-| 每回复一个工具调用 | `parallel_tool_calls: false` 语义；四个客户端 agent 循环均兼容串行 |
-| 站点模型「编造」（配额/进度幻觉） | 既有防线：块协议 + 修复轮 + ROLE 固定块事实行；网关不额外补救，失败如实返回 |
-| 多客户端同时打同一站点 | per-site FIFO + 队列上限 + 429；宿主 `settleChains` 串行化已保证不互相杀页面 |
-| 免费站点 ToS 风险 | 仅本机绑定、单用户自用；不代理他人、不聚合多账号 |
-
-## 11. 结论
-
-四个 chathub 插件已经把「浏览器里的免费模型」变成了带工具调用、有失败语义、可排队的 `LlmAdapter` 路由；缺的只是一层线协议翻译。新增第五个插件 `chathub-gateway`，用 OpenAI + Anthropic 双方言把这五个模型暴露给任意支持自定义端点的编码 agent，就能让 Claude Code、Codex、Trae、WorkBuddy 的原生模型选择器直接列出 `glm-web` 到 `qianwen-web`——不改四个客户端、不改四个既有插件，网关本身约等于「一个翻译缝 + 一个队列 + 一张错误表」。
-
-## 12. 打包与编译
-
-代码在 `packages/experimental/chathub-gateway/`。它的 `main` 指向 `lib/index.js`，
-`files` 只带 `lib/index.js`、`cordis.patch.yml`、`lib/types/**/*.d.ts`，所以**任何
-打包动作之前必须先构建**；直接 `pnpm pack` 会打出缺入口的空壳包。
-
-开发模式（源码 `--patch`）是例外：loader 经 tsx 直跑 `src/`，四个后端包不需要任何
-构建产物；唯一必须的是面板客户端 `client-ui-chathub/lib/client.js`（缺了启动报
-`client-hmr` 等待 `clientModules`）。一键准备用 `scripts/build-chathub-dev.sh`，
-详见 `mddoc/build-setup.md` §2.5。
-
-### 12.1 全量构建（与仓库一致）
+#### Option A: Using the Helper Script (Recommended)
 
 ```bash
-cd deepseek-harness
-pnpm install
-pnpm run build:artifacts      # tsc 出 lib/types + tsdown 出 lib/index.js，含 Typert 生成
+cd /home/ywf/work/code/github/deepseek-harness
+
+# First run: shows browser window for QR code login
+DSH_CHATHUB_LOGIN=true scripts/run-chathub-gateway.sh
+
+# Subsequent runs: headless (uses saved Chrome profile)
+scripts/run-chathub-gateway.sh
+
+# With proxy for blocked sites (Gemini, ChatGPT)
+DSH_CHATHUB_PROXY=http://127.0.0.1:7890 scripts/run-chathub-gateway.sh
+
+# Test one streaming turn after boot (verifies wire works)
+DSH_CHATHUB_SMOKE=sse scripts/run-chathub-gateway.sh
 ```
 
-`build:artifacts` 通过 `scripts/compile-referenced-projects.ts` 的 `host-typert` gate
-跑 `generate-typert.ts`，因此不需要单独执行生成器。gateway 已在 `tsconfig.host.json`
-的 project references 与 `tsconfig.base.json` 的路径映射里，会被一起构建。
+**Script features:**
+- Correct mount order: `chathub-host` → `llm-chathub` → `chathub-gateway`
+- Waits for `/v1/models` health endpoint (up to 60s)
+- Reports gateway URL (`http://127.0.0.1:8787/v1`) and panel URL (with token)
+- Shows model status table (`ready` / `needs-auth`)
+- Cleans up ports on exit (Ctrl-C)
 
-产物：
-
-```
-packages/experimental/chathub-gateway/
-  lib/index.js          # tsdown 打出的运行时入口
-  lib/types/*.d.ts      # tsc 出的声明
-```
-
-### 12.2 只构建 gateway
+#### Option B: Manual Export (All Parameters)
 
 ```bash
-pnpm exec tsx scripts/generate-typert.ts          # 仅当 lib/typert.*.js 缺失时需要
-pnpm exec tsc -b packages/experimental/chathub-gateway/tsconfig.json
-pnpm exec tsdown --config-loader native --env.DSH_BUILD_FACE host \
-  -F "@deepseek-ai/dsh-experimental-chathub-gateway"
-```
+cd /home/ywf/work/code/github/deepseek-harness
 
-`-F` 只接受**完整包名**（内部是精确比较，`/regex/` 字符串不会转成正则）；gateway 的
-`tsconfig.json` 引用了 chathub、chathub-host、llm/llm、vendor/cordis、vendor/schemastery，
-`tsc -b` 会按 references 递归构建它们。
+# Browser/profile config
+export DSH_CHATHUB_PROFILE_DIR=~/.config/dsh/chathub-profile    # Chrome profile dir
+export DSH_CHATHUB_HEADLESS=true                                # Headless browser (false to see window)
+export DSH_CHATHUB_LOGIN=false                                  # Set true to show browser for first login
+export DSH_CHATHUB_CDP_ENDPOINT=                                # Attach to existing Chrome (optional)
+export DSH_CHATHUB_EXECUTABLE_PATH=                             # Custom Chrome binary (optional)
+export DSH_CHATHUB_PROXY=                                       # Proxy for blocked sites (e.g. http://127.0.0.1:7890)
+export DSH_CHATHUB_LOGIN_TIMEOUT_MS=300000                      # Login timeout (5 min)
+export DSH_CHATHUB_TURN_TIMEOUT_MS=300000                       # Turn timeout (5 min)
+export DSH_CHATHUB_ACTION_TIMEOUT_MS=15000                      # Action timeout (15s)
+export DSH_CHATHUB_POLL_MS=500                                  # Poll interval (ms)
+export DSH_CHATHUB_STABLE_POLLS=3                               # Stable polls before done
+export DSH_CHATHUB_MAX_QUEUED_TURNS=2                           # Max queued turns per site
+export DSH_CHATHUB_TYPE_DELAY_MS=0                              # Typing delay (ms)
+export DSH_CHATHUB_PACING=responsive                            # conservative|balanced|responsive|off
+export DSH_CHATHUB_MIN_TURN_GAP_MS=20000                        # Min gap between turns (ms)
+export DSH_CHATHUB_MAX_TURNS_PER_HOUR=40                        # Max turns per hour
+export DSH_CHATHUB_PACING_MAX_WAIT_MS=300000                    # Max wait before refuse (ms)
 
-### 12.3 定向打包五个包
+# LLM adapter config
+export DSH_CHATHUB_LLM_SITE=deepseek-web                        # Default site
+export DSH_CHATHUB_LLM_SITES=glm-web,qianwen-web,gemini-web,chatgpt-web,doubao-web,deepseek-web  # Sites to mount
+export DSH_CHATHUB_LLM_MODEL=web-model                          # Model id advertised
+export DSH_CHATHUB_LLM_CONTEXT_WINDOW=128000                    # Context window (tokens)
+export DSH_CHATHUB_LLM_ROOT=/home/ywf/work/code/github/deepseek-harness  # Workspace root
+export DSH_CHATHUB_LLM_TOOLS=read,grep,glob,edit,write,bash     # Tool whitelist (case-insensitive)
+export DSH_CHATHUB_LLM_VERIFY=pnpm run typecheck                # Verification commands
+export DSH_CHATHUB_LLM_AUXILIARY=refuse                         # refuse|allow auxiliary calls
+export DSH_CHATHUB_LLM_SELECTION=auto                           # auto|fixed (aggregate route)
+export DSH_CHATHUB_LLM_SELECTION_STRATEGY=sticky                # sticky|round-robin
+export DSH_CHATHUB_LLM_AUTO_ROUTE=web-auto-chathub              # Aggregate route id
+export DSH_CHATHUB_LLM_TOPIC_TTL_MS=1800000                     # Topic TTL (30 min)
+export DSH_CHATHUB_LLM_SITE_COOLDOWN_MS=600000                  # Site cooldown (10 min)
+export DSH_CHATHUB_LLM_FAILOVER=1                               # Failover attempts
+export DSH_CHATHUB_LLM_REPAIRS=2                                # Repair rounds
+export DSH_CHATHUB_LLM_ESCALATE_AFTER=2                         # Escalate after failures
+export DSH_CHATHUB_LLM_SITE_DEMOTE_MS=1800000                   # Demote duration (30 min)
+export DSH_CHATHUB_LLM_SITE_RANK=qianwen-web:10,deepseek-web:20,glm-web:20,doubao-web:20,chatgpt-web:30,gemini-web:30
+export DSH_CHATHUB_LLM_PROSE_REPLAY=true                        # Replay prose on site switch
 
-```bash
-node mddoc/pack-chathub.mjs
-```
+# Gateway config
+export DSH_CHATHUB_GATEWAY_HOST=127.0.0.1                       # Bind address
+export DSH_CHATHUB_GATEWAY_PORT=8787                            # Gateway port
+export DSH_CHATHUB_GATEWAY_KEY=                                 # Bearer token (empty = no auth)
+export DSH_CHATHUB_GATEWAY_SITES=                               # Sites to expose (default: all mounted)
+export DSH_CHATHUB_GATEWAY_WIRES=openai,anthropic               # openai|anthropic
+export DSH_CHATHUB_GATEWAY_QUEUE=8                              # Max queue per site
+export DSH_CHATHUB_GATEWAY_KEEPALIVE_MS=15000                   # SSE keepalive (ms)
 
-脚本做三件事：以官方 client 档案跑 `build:artifacts`、按依赖顺序
-（chathub → client-ui-chathub → chathub-host → llm-chathub → chathub-gateway）
-`pnpm pack --recursive --workspace-concurrency=1`、校验每个 tarball（禁止 `package/src/`
-与 source map、禁止残留 `workspace:`），最后写 `publish-order.txt`。
-
-产物在 `dist/npm-chathub/`：
-
-```
-deepseek-ai-dsh-experimental-chathub-0.2.2-alpha.2.tgz
-deepseek-ai-dsh-experimental-client-ui-chathub-0.2.2-alpha.2.tgz
-deepseek-ai-dsh-experimental-chathub-host-0.2.2-alpha.2.tgz
-deepseek-ai-dsh-experimental-llm-chathub-0.2.2-alpha.2.tgz
-deepseek-ai-dsh-experimental-chathub-gateway-0.2.2-alpha.2.tgz
-publish-order.txt
-```
-
-版本约束：脚本要求每个 tarball 的 `version` 等于根 `package.json`（`0.2.2-alpha.2`）。
-gateway 原先是仓库里唯一的 `0.1.0-alpha.1`，已对齐；否则打包在校验阶段直接失败。
-
-手工等价命令：
-
-```bash
-pnpm pack --recursive --workspace-concurrency=1 \
-  --filter=@deepseek-ai/dsh-experimental-chathub \
-  --filter=@deepseek-ai/dsh-experimental-client-ui-chathub \
-  --filter=@deepseek-ai/dsh-experimental-chathub-host \
-  --filter=@deepseek-ai/dsh-experimental-llm-chathub \
-  --filter=@deepseek-ai/dsh-experimental-chathub-gateway \
-  --pack-destination "$(pwd)/dist/npm-chathub"
-```
-
-## 13. 安装与配置
-
-### 13.1 源码检出直接启用（推荐）
-
-```bash
-pnpm install && pnpm run build:artifacts
-
-export DSH_CHATHUB_LLM_SITE=glm-web        # 决定注册哪个 <site>-chathub 路由
-export DSH_CHATHUB_HEADLESS=false          # 首次登录要看浏览器窗口
-
+# Start gateway with all three patches
 pnpm dsh web \
   --patch packages/experimental/chathub-host/cordis.patch.yml \
   --patch packages/experimental/llm-chathub/cordis.patch.yml \
   --patch packages/experimental/chathub-gateway/cordis.patch.yml
 ```
 
-挂载顺序有语义：gateway 的 `/v1/models` 读 host 的登录健康状态，请求转发到
-llm-chathub 注册的 `ctx.llm` 路由，所以两个 patch 必须排在它前面。
+---
 
-### 13.2 用 tarball 安装
+### 2. Sign In to Sites
 
-npm 会把同一批 tarball 里的互相依赖去重到顶层，所以**一次装五个**，不要在仓库树内
-执行（会撞上 pnpm 的 `workspace:` 协议）：
+Open `http://127.0.0.1:3080` → **ChatHub panel** → Click **Login** for each site:
+- `doubao-web` (Doubao/豆包)
+- `glm-web` (GLM/Zhipu/智谱)
+- `deepseek-web` (DeepSeek Chat)
+- `chatgpt-web` (ChatGPT)
+- `gemini-web` (Gemini)
+- `qianwen-web` (Qianwen/通义千问)
 
-```bash
-mkdir -p /tmp/chathub-target && cd /tmp/chathub-target && npm init -y
-npm install --no-audit --no-fund /ABS/dist/npm-chathub/*.tgz
-node -e "console.log(require.resolve('@deepseek-ai/dsh-experimental-chathub-gateway'))"
-```
+---
 
-pnpm 不会把子依赖去重到顶层 `file:` 依赖，必须在 `pnpm-workspace.yaml` 的
-`overrides` 里把 chathub / client-ui-chathub / chathub-host 都指向本地 tarball
-（pnpm 11 起 `overrides` 写在 `pnpm-workspace.yaml`，`package.json` 的 `pnpm` 字段被忽略）。
+### 3. Configure Desktop App
 
-注意：dsh profile（`~/.dsh/profiles/<name>`）也是 pnpm 工程，但它没有
-`@deepseek-ai/cordis`、`@deepseek-ai/dsh-llm` 这些 harness peer；把五个包装进 profile
-后插件 import 会失败。**本地 tarball 只适合验证包内容**，要让 dsh 真正加载，用 13.1，
-或者先把五个包按 `publish-order.txt` 发到 registry 再 `dsh plugin add <name>`。
+In **Settings → Models** → **Add Custom Provider**:
 
-### 13.3 网关配置
+#### Option A: OpenAI Wire (Recommended)
+| Field | Value |
+|-------|-------|
+| Name | `ChatHub Gateway` |
+| Base URL | `http://127.0.0.1:8787/v1` |
+| API Key | *(empty, or set `DSH_CHATHUB_GATEWAY_KEY`)* |
 
-```yaml
-- id: chathub-gateway
-  name: '@deepseek-ai/dsh-experimental-chathub-gateway'
-  config:
-    host: 127.0.0.1
-    port: 8787
-    apiKey: ''                  # 空 = 不校验；只在回环绑定下安全
-    sites: []                   # 空 = 暴露全部已挂载站点
-    maxQueuePerSite: 8
-    keepaliveMs: 15000
-```
+Models auto-discovered: `doubao-web-chathub`, `glm-web-chathub`, `deepseek-web-chathub`, `web-auto-chathub`, etc.
 
-对应环境变量：`DSH_CHATHUB_GATEWAY_HOST`、`_PORT`、`_KEY`、`_SITES`、`_QUEUE`、
-`_KEEPALIVE_MS`；`sites` 的默认值取自 `DSH_CHATHUB_LLM_SITES` 或 `DSH_CHATHUB_LLM_SITE`。
+#### Option B: Anthropic Wire
+| Field | Value |
+|-------|-------|
+| Name | `ChatHub Gateway (Anthropic)` |
+| Base URL | `http://127.0.0.1:8787/anthropic` |
+| API Key | *(empty)* |
 
-起来后先验端点：
+---
+
+### 4. Keep Gateway Running (Background)
 
 ```bash
-curl -s http://127.0.0.1:8787/v1/models | head -c 400
+# Using tmux
+tmux new -s chathub-gateway
+# Run the gateway command above
+# Ctrl+B, D to detach
+
+# Or using screen
+screen -S chathub-gateway
+# Run the gateway command
+# Ctrl+A, D to detach
+
+# Or using systemd (create service file)
+# ~/.config/systemd/user/chathub-gateway.service
 ```
 
-返回空数组说明宿主的 transport 没有任何 provider（`chathub-host` 没挂，或 `sites` 写成了
-不存在的 id）。有行但 `status: "needs-auth"` **不代表站点没登录**：健康探测不打开浏览器，
-一个已登录、只是本次进程还没开过会话的 profile 同样是这个状态（本机实测 ChatGLM 已登录、
-目录四个站点却全 `needs-auth`，真实一轮照常返回 200）。网关不会据此提前 401，真正的判定在
-adapter；只有 completion 自己回 `401 chathub_signed_out` 才需要登录，用可见浏览器跑一次
-`DSH_CHATHUB_LOGIN=true scripts/run-chathub-gateway.sh`，扫码后登录态落在
-`~/.dsh/chathub-profile`。想一步判明，直接发一轮：
-`DSH_CHATHUB_SMOKE=plain DSH_CHATHUB_SMOKE_MODEL=glm-web scripts/run-chathub-gateway.sh`。
+---
 
-注意模型目录读的是 transport 健康状态，不是 `ctx.llm` 的路由表：`DSH_CHATHUB_GATEWAY_SITES`
-指向一个 `DSH_CHATHUB_LLM_SITES` 没挂的站点时，它照样出现在 `/v1/models`，但请求会落到
-不存在的 `${site}-chathub` 路由上，报「未知 provider」而不是 `404 model_not_found`。
-两份列表要一致——`scripts/run-chathub-gateway.sh` 已经用一个 `DSH_CHATHUB_SITES` 同时写这两层。
+## Architecture
 
-
-### 13.4 客户端接入
-
-**Codex**（`~/.codex/config.toml`）
-
-```toml
-model = "glm-web"
-model_provider = "chathub"
-
-[model_providers.chathub]
-name = "ChatHub"
-base_url = "http://127.0.0.1:8787/v1"
-env_key = "CHATHUB_API_KEY"
-wire_api = "chat"
+```
+┌─────────────────┐     HTTP      ┌─────────────────┐
+│  Desktop App    │ ────────────▶ │  ChatHub        │
+│  (dsh-tauri)    │  OpenAI/      │  Gateway        │
+│                 │  Anthropic    │  (terminal)     │
+└─────────────────┘               └────────┬────────┘
+                                           │
+                    ┌──────────────────────┼──────────────────────┐
+                    │                      │                      │
+              ┌─────▼─────┐          ┌─────▼─────┐          ┌─────▼─────┐
+              │  Browser  │          │  Browser  │          │  Browser  │
+              │  Doubao   │          │   GLM     │          │  ...      │
+              └───────────┘          └───────────┘          └───────────┘
 ```
 
-**Trae / WorkBuddy**：设置 → 模型 → 自定义模型（字段：`provider` / `endpoint` / `apiKey` /
-`modelId` / `maxInputTokens` / `maxOutputTokens` + 能力开关）。endpoint 填
-`http://127.0.0.1:8787/v1`，apiKey 与 `DSH_CHATHUB_GATEWAY_KEY` 同值（未设 key 时填任意非空），
-modelId 必须填站点 id（`glm-web`），maxOutputTokens 4096 以内。
+---
 
-注意 WorkBuddy 的 `endpoint` 不是 SDK 的 `baseURL`：它把填的值去掉尾斜杠后直接追加
-`/chat/completions`，**不会自动补 `/v1`**。填根地址 `http://127.0.0.1:8787` 会打出
-`POST /chat/completions`，旧版本回 404 `No route`（客户端显示「模型不可用」）。网关现在
-把 `/models` 与 `/chat/completions` 作为 `/v1/models` 与 `/v1/chat/completions` 的别名，
-两种填法都能通，但仍推荐填 `.../v1`。配置落在 `~/.workbuddy/models.json` 的 `url` 字段。
+## Available Models via Gateway
 
-剩下一个已知折损（详见 `mddoc/build-setup.md` §2.7）：pacing 默认 conservative（20s/轮、
-40 轮/时），长任务必撞 429，先用 SSE + `DSH_CHATHUB_PACING=responsive` 或 `off` 试。工具
-白名单的大小写坑已修掉：比对忽略大小写，默认 `read,grep,glob,edit,write,bash` 同时匹配
-外部 agent 的 `Read/Write/Edit/Bash/Glob/Grep`，不必再传 `DSH_CHATHUB_LLM_TOOLS`。
+| Route ID | Site | Notes |
+|----------|------|-------|
+| `doubao-web-chathub` | Doubao | Chinese, strong coding |
+| `glm-web-chathub` | GLM/Zhipu | Deep thinking mode |
+| `deepseek-web-chathub` | DeepSeek Chat | Official DeepSeek |
+| `chatgpt-web-chathub` | ChatGPT | Requires login |
+| `gemini-web-chathub` | Gemini | Google account |
+| `qianwen-web-chathub` | Qianwen | Alibaba |
+| `web-auto-chathub` | Auto | Picks best site per topic |
 
+---
 
-**Claude Code**：需要 `/v1/messages` 与 Anthropic 的 SSE 事件词汇，本版未实现，
-先不要设 `ANTHROPIC_BASE_URL`（见 §9 Phase 2、§10 已知限制）。
+## Environment Variables Summary
 
-### 13.5 验证清单
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `DSH_CHATHUB_PROFILE_DIR` | `$DSH_HOME/chathub-profile` | Chrome profile dir |
+| `DSH_CHATHUB_HEADLESS` | `true` | Headless browser |
+| `DSH_CHATHUB_LOGIN` | `false` | Show browser for login |
+| `DSH_CHATHUB_PROXY` | *(none)* | Proxy for blocked sites |
+| `DSH_CHATHUB_LLM_SITES` | *all 6 sites* | Sites to mount as routes |
+| `DSH_CHATHUB_GATEWAY_HOST` | `127.0.0.1` | Gateway bind address |
+| `DSH_CHATHUB_GATEWAY_PORT` | `8787` | Gateway port |
+| `DSH_CHATHUB_GATEWAY_KEY` | *(empty)* | Bearer token for auth |
+| `DSH_CHATHUB_GATEWAY_WIRES` | `openai,anthropic` | Wire protocols |
+| `DSH_CHATHUB_PACING` | `conservative` | Anti-abuse profile |
 
-| # | 检查 | 期望 |
-|---|---|---|
-| 1 | `packages/experimental/chathub-gateway/lib/index.js` 存在 | 构建过 |
-| 2 | `pnpm dsh web --dump-config \| grep chathub-gateway` | 有一行 |
-| 3 | `curl /v1/models` | 列出已挂载站点（`ready` / `needs-auth` 都算，**不等于登录判定**） |
-| 4 | `curl /chat/completions` 非流式（客户端常用的无前缀路径） | 200，返回 `choices[0].message.content` |
-| 5 | 带 `"stream": true` | 收到 `data:` 帧，末尾 `data: [DONE]` |
-| 6 | 真未登录站点调用 | 401 `chathub_signed_out`，message 指向 ChatHub 面板；由 adapter 判定，不是目录状态预判 |
+---
+
+## Troubleshooting
+
+**Gateway won't start:** Check Node ≥ 24.9, `pnpm install` done.
+
+**Models not showing in desktop:** Wait for gateway to fully start (check logs), then refresh desktop app model list.
+
+**Login fails:** Open `http://127.0.0.1:3080` manually, sign in, then retry.
+
+**Connection refused:** Ensure gateway port `8787` not blocked by firewall.
+
+**Site blocked (Gemini/ChatGPT):** Set `DSH_CHATHUB_PROXY=http://127.0.0.1:7890` (or your proxy).
+
+**Desktop app shows 401:** Re-sign in via web UI; session may have expired.
+
+---
+
+## Why This Works
+
+| Component | Where it runs | Purpose |
+|-----------|---------------|---------|
+| **chathub-host** | Gateway terminal | Launches browser, manages login state |
+| **llm-chathub** | Gateway terminal | Registers routes like `doubao-web-chathub` |
+| **chathub-gateway** | Gateway terminal | Exposes routes as OpenAI/Anthropic API |
+| **Desktop app** | Your dsh-tauri | Just calls the gateway like any OpenAI API |
+
+The gateway keeps the browser running and signed in. Your desktop app just sends requests to `localhost:8787`.
