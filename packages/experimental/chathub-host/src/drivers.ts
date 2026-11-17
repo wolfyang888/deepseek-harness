@@ -16,6 +16,9 @@ export const DEFAULT_SITE_DRIVERS: Readonly<SiteDrivers> = {
     pending: '问题分析中|正在分析|思考中|正在思考|搜索中|\\d+\\s*(?:s|秒)',
     signedOutPath: SIGNED_OUT_PATH,
     submitKey: 'Enter',
+    // The composer accepts inserted text but drops a synthetic Enter;
+    // the send button next to it is the only path that actually submits.
+    submitButton: 'button[aria-label="发送"]',
   },
   'chatgpt-web': {
     url: 'https://chatgpt.com/',

@@ -2,13 +2,13 @@
 
 覆盖 `packages/experimental/` 下的五个 chathub 插件：
 
-| 包 | npm 名 | 说明 |
-|---|---|---|
-| chathub | `@deepseek-ai/dsh-experimental-chathub` | 多模型会话运行时 |
-| client-ui-chathub | `@deepseek-ai/dsh-experimental-client-ui-chathub` | 浏览器侧边栏面板 |
-| chathub-host | `@deepseek-ai/dsh-experimental-chathub-host` | 宿主浏览器运行时与 Remote |
-| llm-chathub | `@deepseek-ai/dsh-experimental-llm-chathub` | 网页模型 LLM 适配器 |
-| chathub-gateway | `@deepseek-ai/dsh-experimental-chathub-gateway` | 本地 HTTP 网关：把站点路由暴露成 OpenAI 兼容模型 |
+| 包                 | npm 名                                             | 说明                              |
+| ----------------- | ------------------------------------------------- | ------------------------------- |
+| chathub           | `@deepseek-ai/dsh-experimental-chathub`           | 多模型会话运行时                        |
+| client-ui-chathub | `@deepseek-ai/dsh-experimental-client-ui-chathub` | 浏览器侧边栏面板                        |
+| chathub-host      | `@deepseek-ai/dsh-experimental-chathub-host`      | 宿主浏览器运行时与 Remote                |
+| llm-chathub       | `@deepseek-ai/dsh-experimental-llm-chathub`       | 网页模型 LLM 适配器                    |
+| chathub-gateway   | `@deepseek-ai/dsh-experimental-chathub-gateway`   | 本地 HTTP 网关：把站点路由暴露成 OpenAI 兼容模型 |
 
 以下命令除特别说明外，都从仓库根目录 `deepseek-harness/` 执行。
 
@@ -25,20 +25,16 @@ node mddoc/pack-chathub.mjs
 它按顺序做三件事：
 
 1. 以官方 client 档案重建产物，环境变量：
-
    ```bash
    DSH_BUILD_CLIENT_PROFILE=official \
    DSH_CLIENT_COMMIT_HASH="$(git rev-parse HEAD)" \
    DSH_CLIENT_VERSION="$(node -p "require('./package.json').version")" \
    pnpm run build:artifacts
    ```
-
    缺少官方档案时 `pnpm pack` 仍会成功，但产出的 client 产物不是官方档
    （`.dsh-build/client-build-environment.json` 里没有 `DSH_CLIENT_TITLE`），
    仓库的发布校验会拒绝这样的包。
-
 2. 定向打包五个包（保持依赖顺序）：
-
    ```bash
    pnpm pack --recursive --workspace-concurrency=1 \
      --filter=@deepseek-ai/dsh-experimental-chathub \
@@ -48,7 +44,6 @@ node mddoc/pack-chathub.mjs
      --filter=@deepseek-ai/dsh-experimental-chathub-gateway \
      --pack-destination "$(pwd)/dist/npm-chathub"
    ```
-
 3. 校验 tarball：不允许出现 `package/src/`、`*.js.map`、`*.d.ts.map`，不允许残留
    `workspace:` 版本范围，并写出 `publish-order.txt`。
 
@@ -107,7 +102,7 @@ npm error Unsupported URL Type "workspace:": workspace:~
 同理，`npm` 也无法安装这批 tarball 的互相依赖（`chathub-host` 依赖
 `chathub@0.2.2-alpha.2`，该版本尚未发布到 npm registry）。
 
-**结论：让 npm 把某个目录当成项目根，安装即可成功。**两种做法：
+\*\*结论：让 npm 把某个目录当成项目根，安装即可成功。\*\*两种做法：
 
 - 在该目录放一个 `package.json`（本仓库已放好
   `dist/npm-chathub/package.json`，`name: chathub-staging`）；
@@ -154,7 +149,8 @@ npm init -y    # 或写入 {"name":"chathub-staging","private":true}
 
 ```bash
 chmod +x mddoc/install-chathub.sh
-./mddoc/install-chathub.sh /tmp/chathub-install-target
+./mddoc/install-chathub.sh /tmp/
+
 ```
 
 等价命令：
@@ -237,10 +233,10 @@ pnpm install --no-frozen-lockfile
 照样挂载（loader 经 tsx 直跑 `src/`），唯一失败的是面板
 （`client-hmr` 等待 `clientModules` 服务）。所以：
 
-| 产物 | 是否必须 | 谁产出 |
-|---|---|---|
+| 产物                                | 是否必须   | 谁产出                                                                        |
+| --------------------------------- | ------ | -------------------------------------------------------------------------- |
 | `client-ui-chathub/lib/client.js` | **必须** | `pnpm --filter @deepseek-ai/dsh-experimental-client-ui-chathub run bundle` |
-| 其余四包的 `lib/`、typert、tsdown 产物 | 不需要 | 开发模式全走 `src/` |
+| 其余四包的 `lib/`、typert、tsdown 产物     | 不需要    | 开发模式全走 `src/`                                                              |
 
 一键准备脚本：
 
@@ -284,14 +280,14 @@ pnpm dsh web \
 默认监听 `127.0.0.1:8787`，暴露全部已挂载站点，不校验 key。可用环境变量或
 `cordis.patch.yml` 覆盖：
 
-| 环境变量 | 默认 | 含义 |
-|---|---|---|
-| `DSH_CHATHUB_GATEWAY_HOST` | `127.0.0.1` | 绑定地址；非回环时务必配 key |
-| `DSH_CHATHUB_GATEWAY_PORT` | `8787` | 绑定端口 |
-| `DSH_CHATHUB_GATEWAY_KEY` | 空 | 设了之后每个请求必须带 `Authorization: Bearer <key>` |
-| `DSH_CHATHUB_GATEWAY_SITES` | 全部已挂载站点 | 逗号分隔的站点 id，裁剪模型目录 |
-| `DSH_CHATHUB_GATEWAY_QUEUE` | `8` | 单站点待处理请求上限，超出回 429 |
-| `DSH_CHATHUB_GATEWAY_KEEPALIVE_MS` | `15000` | 轮次进行中 SSE keepalive 间隔 |
+| 环境变量                               | 默认          | 含义                                        |
+| ---------------------------------- | ----------- | ----------------------------------------- |
+| `DSH_CHATHUB_GATEWAY_HOST`         | `127.0.0.1` | 绑定地址；非回环时务必配 key                          |
+| `DSH_CHATHUB_GATEWAY_PORT`         | `8787`      | 绑定端口                                      |
+| `DSH_CHATHUB_GATEWAY_KEY`          | 空           | 设了之后每个请求必须带 `Authorization: Bearer <key>` |
+| `DSH_CHATHUB_GATEWAY_SITES`        | 全部已挂载站点     | 逗号分隔的站点 id，裁剪模型目录                         |
+| `DSH_CHATHUB_GATEWAY_QUEUE`        | `8`         | 单站点待处理请求上限，超出回 429                        |
+| `DSH_CHATHUB_GATEWAY_KEEPALIVE_MS` | `15000`     | 轮次进行中 SSE keepalive 间隔                    |
 
 起来之后先验端点，再配客户端：
 
@@ -326,27 +322,28 @@ wire_api = "chat"
 
 **Trae / WorkBuddy**：设置 → 模型 → 自定义模型（WorkBuddy 这一页的字段是
 `provider` / `endpoint` / `apiKey` / `modelId` / `maxInputTokens` / `maxOutputTokens`
-+ 能力开关）：
 
-| 字段 | 填什么 |
-|---|---|
-| endpoint | `http://127.0.0.1:8787/v1` |
-| apiKey | 与 `DSH_CHATHUB_GATEWAY_KEY` 同值；没设 key 时随便填非空 |
-| modelId | **必须等于站点 id**（`glm-web`、`doubao-web`…），gateway 用 `${model}-chathub` 当路由名 |
-| maxOutputTokens | 4096 以内，站点回答有自己的预算 |
+- 能力开关）：
+
+| 字段              | 填什么                                                                      |
+| --------------- | ------------------------------------------------------------------------ |
+| endpoint        | `http://127.0.0.1:8787/v1`                                               |
+| apiKey          | 与 `DSH_CHATHUB_GATEWAY_KEY` 同值；没设 key 时随便填非空                             |
+| modelId         | **必须等于站点 id**（`glm-web`、`doubao-web`…），gateway 用 `${model}-chathub` 当路由名 |
+| maxOutputTokens | 4096 以内，站点回答有自己的预算                                                       |
 
 **endpoint 的拼接规则（踩过坑）。** WorkBuddy 的 `endpoint` 不是 SDK 的 `baseURL`：它把
-你填的值去掉尾斜杠后，**直接追加 `/chat/completions`**，并且**不会**自动补 `/v1`
+你填的值去掉尾斜杠后，**直接追加** **`/chat/completions`**，并且**不会**自动补 `/v1`
 （输入框的 placeholder 就是 `https://api.example.com/v1/chat/completions`）。所以
 
-| 填的值 | 实际请求 | 结果 |
-|---|---|---|
-| `http://127.0.0.1:8787/v1` | `POST /v1/chat/completions` | 正确 |
-| `http://127.0.0.1:8787/v1/chat/completions` | 同上（末尾已有后缀，不重复追加） | 正确 |
-| `http://127.0.0.1:8787` | `POST /chat/completions` | 旧版本 404 `No route`；**现版本已兼容** |
+| 填的值                                         | 实际请求                        | 结果                            |
+| ------------------------------------------- | --------------------------- | ----------------------------- |
+| `http://127.0.0.1:8787/v1`                  | `POST /v1/chat/completions` | 正确                            |
+| `http://127.0.0.1:8787/v1/chat/completions` | 同上（末尾已有后缀，不重复追加）            | 正确                            |
+| `http://127.0.0.1:8787`                     | `POST /chat/completions`    | 旧版本 404 `No route`；**现版本已兼容** |
 
 网关现在同时接受裸路径 `/models` 与 `/chat/completions`（等价于带 `/v1` 的形式），
-所以填根地址也能工作；但**推荐仍填 `/v1`**，与其他 OpenAI 兼容客户端保持一致。
+所以填根地址也能工作；但**推荐仍填** **`/v1`**，与其他 OpenAI 兼容客户端保持一致。
 配置落在 `~/.workbuddy/models.json` 的 `url` 字段，改完若未生效需重启 WorkBuddy。
 
 **Claude Code**：需要 Anthropic 线协议（`/v1/messages`），当前版本未实现，先别配
@@ -379,19 +376,19 @@ run-chathub-gateway: health probing never opens a browser, so `needs-auth`
   can also mean a signed-in site whose session has not been opened yet.
 ```
 
-| 变量 | 默认 | 说明 |
-|---|---|---|
-| `DSH_CHATHUB_SITES` | `glm-web,doubao-web,deepseek-web,qianwen-web` | 脚本会同时写进 `DSH_CHATHUB_LLM_SITES` 和 `DSH_CHATHUB_GATEWAY_SITES`。**两层的变量名不同**，只设 gateway 那份会让 `/v1/models` 列出没有挂载路由的站点 |
-| `DSH_WEB_PORT` | `8899` | dsh web 面板端口 |
-| `DSH_CHATHUB_GATEWAY_PORT` | `8787` | 网关端口 |
-| `DSH_CHATHUB_LOGIN` | `false` | `true` → `DSH_CHATHUB_HEADLESS=false`，浏览器窗口可见 |
-| `DSH_CHATHUB_PACING` | `responsive` | 见下表 |
-| `DSH_CHATHUB_SMOKE` | `off` | `off` / `plain` / `sse`，起完发一轮证明线通；发到**无 `/v1` 前缀**的 `/chat/completions`，顺带验证客户端常用的路径别名 |
-| `DSH_CHATHUB_SMOKE_MODEL` | 目录里第一个 `ready`，否则第一个站点 | 指定 smoke 用哪个站点；`needs-auth` 的站点也能试 |
-| `DSH_CHATHUB_GATEWAY_KEY` | 空 | 设了之后脚本的**自检与 smoke 请求都会自动带上** `Authorization`，否则 `curl -f /v1/models` 会一直吃 401 直到自检超时 |
-| `DSH_CHATHUB_LOG` | `./.dsh-chathub-gateway.log` | 日志；面板 token URL 也从这里取 |
+| 变量                         | 默认                                            | 说明                                                                                                                  |
+| -------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `DSH_CHATHUB_SITES`        | `glm-web,doubao-web,deepseek-web,qianwen-web` | 脚本会同时写进 `DSH_CHATHUB_LLM_SITES` 和 `DSH_CHATHUB_GATEWAY_SITES`。**两层的变量名不同**，只设 gateway 那份会让 `/v1/models` 列出没有挂载路由的站点 |
+| `DSH_WEB_PORT`             | `8899`                                        | dsh web 面板端口                                                                                                        |
+| `DSH_CHATHUB_GATEWAY_PORT` | `8787`                                        | 网关端口                                                                                                                |
+| `DSH_CHATHUB_LOGIN`        | `false`                                       | `true` → `DSH_CHATHUB_HEADLESS=false`，浏览器窗口可见                                                                       |
+| `DSH_CHATHUB_PACING`       | `responsive`                                  | 见下表                                                                                                                 |
+| `DSH_CHATHUB_SMOKE`        | `off`                                         | `off` / `plain` / `sse`，起完发一轮证明线通；发到**无** **`/v1`** **前缀**的 `/chat/completions`，顺带验证客户端常用的路径别名                      |
+| `DSH_CHATHUB_SMOKE_MODEL`  | 目录里第一个 `ready`，否则第一个站点                        | 指定 smoke 用哪个站点；`needs-auth` 的站点也能试                                                                                  |
+| `DSH_CHATHUB_GATEWAY_KEY`  | 空                                             | 设了之后脚本的**自检与 smoke 请求都会自动带上** `Authorization`，否则 `curl -f /v1/models` 会一直吃 401 直到自检超时                               |
+| `DSH_CHATHUB_LOG`          | `./.dsh-chathub-gateway.log`                  | 日志；面板 token URL 也从这里取                                                                                               |
 
-**`needs-auth` 不等于未登录。** `/v1/models` 读的是 transport 的健康状态，而健康探测
+**`needs-auth`** **不等于未登录。** `/v1/models` 读的是 transport 的健康状态，而健康探测
 **不会打开浏览器**；一个 profile 里已经登录、只是本次进程还没开过会话的站点，同样显示
 `needs-auth`。实测本机 `~/.dsh/chathub-profile` 里 ChatGLM 已登录（页面直接进主界面、
 composer 和历史对话都在），`/v1/models` 却四个站点全 `needs-auth`。因此网关**不会**
@@ -433,12 +430,12 @@ DSH_CHATHUB_LLM_TOOLS=Read,Write,Edit,Bash,Glob,Grep scripts/run-chathub-gateway
 两条路径共用同一个单站点准入队列
 （`maxQueuePerSite`，超出 429）和同一套 pacing，但**承压方式不同**：
 
-| | SSE（`stream:true`） | 非 SSE |
-|---|---|---|
-| 首字节 | 立刻 `200` + `: keepalive` | 轮次结束后才有 |
+| <br />     | SSE（`stream:true`）               | 非 SSE           |
+| ---------- | -------------------------------- | --------------- |
+| 首字节        | 立刻 `200` + `: keepalive`         | 轮次结束后才有         |
 | pacing 阻塞期 | 每 `keepaliveMs`（15s）写一次心跳，连接不被判死 | 静默阻塞，客户端自己的超时先到 |
-| 失败载体 | SSE `error` 事件 + `[DONE]` | HTTP 状态码 + JSON |
-| 适合 | 长回答、外网/代理、WorkBuddy 这类会等很久的客户端 | 短问答、脚本 |
+| 失败载体       | SSE `error` 事件 + `[DONE]`        | HTTP 状态码 + JSON |
+| 适合         | 长回答、外网/代理、WorkBuddy 这类会等很久的客户端   | 短问答、脚本          |
 
 pacing 预设：`conservative` 20s/轮、40 轮/时、最多等 30s；`balanced` 10s/90/20s；
 `responsive` 3s/240/10s；`off` 不限。需要的等待超过 `maxWaitMs` 就抛
@@ -450,15 +447,15 @@ pacing 预设：`conservative` 20s/轮、40 轮/时、最多等 30s；`balanced`
 
 ### 2.8 源码 `--patch` 与 tgz 装 profile 的区别
 
-| | 源码 + `--patch` | tgz 装进 dsh profile |
-|---|---|---|
-| 包来自 | 仓库 workspace 软链（`packages/experimental/...`） | `$DSH_HOME/profiles/<name>/node_modules` |
-| 依赖解析 | monorepo 内齐全，不查 registry | pnpm 查 registry，缺一个就失败 |
-| 生效方式 | `tsx` 直跑 TS，改 `src` 重启即生效 | 必须重新打包、重新安装 |
-| 版本门 | 无（同一份仓库同一版本） | `engines.dsh` / dsh peer 版本预检，不匹配直接拒绝，要 `dsh plugin allow-version <pkg>@<ver> --dsh-version <ver> --accept-risk` |
-| 路径写法 | `--patch packages/experimental/chathub-gateway/cordis.patch.yml` | 插件由 profile `package.json` 的 `dsh.profile.bundles` + 包内 `dsh.bundle.patch` 自动挂载，不再写 `--patch` |
-| 适合 | 开发、调试、本机部署 | 分发给别人 |
-| 现状 | ✅ 已验证 | ❌ 目前装不上 |
+| <br /> | 源码 + `--patch`                                                   | tgz 装进 dsh profile                                                                                               |
+| ------ | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| 包来自    | 仓库 workspace 软链（`packages/experimental/...`）                     | `$DSH_HOME/profiles/<name>/node_modules`                                                                         |
+| 依赖解析   | monorepo 内齐全，不查 registry                                         | pnpm 查 registry，缺一个就失败                                                                                           |
+| 生效方式   | `tsx` 直跑 TS，改 `src` 重启即生效                                        | 必须重新打包、重新安装                                                                                                      |
+| 版本门    | 无（同一份仓库同一版本）                                                     | `engines.dsh` / dsh peer 版本预检，不匹配直接拒绝，要 `dsh plugin allow-version <pkg>@<ver> --dsh-version <ver> --accept-risk` |
+| 路径写法   | `--patch packages/experimental/chathub-gateway/cordis.patch.yml` | 插件由 profile `package.json` 的 `dsh.profile.bundles` + 包内 `dsh.bundle.patch` 自动挂载，不再写 `--patch`                    |
+| 适合     | 开发、调试、本机部署                                                       | 分发给别人                                                                                                            |
+| 现状     | ✅ 已验证                                                            | ❌ 目前装不上                                                                                                          |
 
 tgz 装不上不是脚本的问题，是**版本在 registry 上不存在**：
 
@@ -488,20 +485,20 @@ pnpm run release:publish  # 实际发布（需要凭据，通常由 CI 从 dsh-v
 
 ## 4. 排错
 
-| 现象 | 原因 | 处理 |
-|---|---|---|
-| `EUNSUPPORTEDPROTOCOL ... workspace:~` | 在仓库内执行 npm，且遇到 pnpm `workspace:` 协议 | 就地装先在目录补 `package.json`（2.2）；或到仓库外执行（2.3） |
-| `404 @deepseek-ai/dsh-experimental-client-ui-chathub` | pnpm 从 registry 解析子依赖 | 在 `pnpm-workspace.yaml` 加 `overrides`（2.4） |
-| `Cannot find package '@deepseek-ai/dsh-llm'` | profile 内没有 harness peer | 用 2.5 源码方式，或发布后按版本安装 |
-| tarball 缺少 `lib/index.js` | 打包前没跑 `build:artifacts` | 先跑 1.1 的脚本 |
-| client 产物非官方档 | 未设置 `DSH_BUILD_CLIENT_PROFILE=official` | 用 1.1 脚本重建 |
-| `packed version 0.1.0-alpha.1 != 0.2.2-alpha.2` | gateway 版本没跟随仓库基线 | 把 gateway 的 `version` 对齐到根 `package.json`（已对齐） |
-| `EADDRINUSE 127.0.0.1:8787` | 端口被占（另一个 `dsh web` 还活着） | `scripts/run-chathub-gateway.sh` 会打印占用者 PID：在旧终端 Ctrl-C 或 `kill <pid>`；也可换 `DSH_CHATHUB_GATEWAY_PORT=8788 DSH_WEB_PORT=8898` |
-| gateway 返回 401 `chathub_signed_out` | adapter 的 `transport.open()` 真检测到站点未登录（不是 `/v1/models` 的 `needs-auth` 标记） | `DSH_CHATHUB_LOGIN=true` 起可见浏览器，在 ChatHub 面板登录该站点 |
-| `/v1/models` 全是 `needs-auth` 但 completion 正常返回 200 | 正常：健康探测不打开浏览器，profile 里其实已登录 | 不用处理；以真实一轮的结果为准，不要按目录状态提前判死 |
-| gateway 返回 401 `invalid_api_key` | 设了 `DSH_CHATHUB_GATEWAY_KEY` 但请求没带同值 Bearer | `curl -H 'authorization: Bearer <key>'`，WorkBuddy 的 apiKey 填同值 |
-| gateway 返回 404 `model_not_found` | 模型名不在目录里（例如填了 `ywf-web`） | 模型名必须等于站点 id；`GET /v1/models` 是唯一真值来源 |
-| gateway 返回 400 `context_length_exceeded` | 客户端的 system prompt + 工具定义 + 本轮消息超过 `maxPromptChars`（默认 48000 字符，`llm-chathub/src/types.ts`）；`render.ts` 会丢最旧历史，任务本身超预算才抛 | 在 `llm-chathub/cordis.patch.yml` 的 `config` 下加 `maxPromptChars: 96000` 后重启；或关掉客户端的部分工具/精简 system prompt。别只调大不验证，站点输入框也有自己的长度上限 |
-| 客户端显示「模型不可用」+ `404 No route: POST /chat/completions` | endpoint 填了根地址，客户端追加后缀却没补 `/v1` | 填 `http://127.0.0.1:8787/v1`；新版网关已兼容裸路径，但**要重启 dsh** 才加载新代码 |
-| `/v1/models` 有行但 completion 报「未知 provider」 | `GATEWAY_SITES` 列了 `LLM_SITES` 没挂的站点 | 两个列表保持一致（脚本用一份 `DSH_CHATHUB_SITES` 同时写两层） |
-| `/v1/models` 是空数组 | transport 没有任何 provider（host 没挂或 `sites` 全是拼错的 id） | 按 host → llm-chathub → gateway 顺序挂载；**没登录不会导致空数组**，行仍会在，只是 `status: needs-auth` |
+| 现象                                                    | 原因                                                                                                                       | 处理                                                                                                                             |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| `EUNSUPPORTEDPROTOCOL ... workspace:~`                | 在仓库内执行 npm，且遇到 pnpm `workspace:` 协议                                                                                      | 就地装先在目录补 `package.json`（2.2）；或到仓库外执行（2.3）                                                                                      |
+| `404 @deepseek-ai/dsh-experimental-client-ui-chathub` | pnpm 从 registry 解析子依赖                                                                                                    | 在 `pnpm-workspace.yaml` 加 `overrides`（2.4）                                                                                     |
+| `Cannot find package '@deepseek-ai/dsh-llm'`          | profile 内没有 harness peer                                                                                                 | 用 2.5 源码方式，或发布后按版本安装                                                                                                           |
+| tarball 缺少 `lib/index.js`                             | 打包前没跑 `build:artifacts`                                                                                                  | 先跑 1.1 的脚本                                                                                                                     |
+| client 产物非官方档                                         | 未设置 `DSH_BUILD_CLIENT_PROFILE=official`                                                                                  | 用 1.1 脚本重建                                                                                                                     |
+| `packed version 0.1.0-alpha.1 != 0.2.2-alpha.2`       | gateway 版本没跟随仓库基线                                                                                                        | 把 gateway 的 `version` 对齐到根 `package.json`（已对齐）                                                                                 |
+| `EADDRINUSE 127.0.0.1:8787`                           | 端口被占（另一个 `dsh web` 还活着）                                                                                                  | `scripts/run-chathub-gateway.sh` 会打印占用者 PID：在旧终端 Ctrl-C 或 `kill <pid>`；也可换 `DSH_CHATHUB_GATEWAY_PORT=8788 DSH_WEB_PORT=8898`   |
+| gateway 返回 401 `chathub_signed_out`                   | adapter 的 `transport.open()` 真检测到站点未登录（不是 `/v1/models` 的 `needs-auth` 标记）                                                | `DSH_CHATHUB_LOGIN=true` 起可见浏览器，在 ChatHub 面板登录该站点                                                                              |
+| `/v1/models` 全是 `needs-auth` 但 completion 正常返回 200    | 正常：健康探测不打开浏览器，profile 里其实已登录                                                                                             | 不用处理；以真实一轮的结果为准，不要按目录状态提前判死                                                                                                    |
+| gateway 返回 401 `invalid_api_key`                      | 设了 `DSH_CHATHUB_GATEWAY_KEY` 但请求没带同值 Bearer                                                                              | `curl -H 'authorization: Bearer <key>'`，WorkBuddy 的 apiKey 填同值                                                                 |
+| gateway 返回 404 `model_not_found`                      | 模型名不在目录里（例如填了 `ywf-web`）                                                                                                 | 模型名必须等于站点 id；`GET /v1/models` 是唯一真值来源                                                                                          |
+| gateway 返回 400 `context_length_exceeded`              | 客户端的 system prompt + 工具定义 + 本轮消息超过 `maxPromptChars`（默认 48000 字符，`llm-chathub/src/types.ts`）；`render.ts` 会丢最旧历史，任务本身超预算才抛 | 在 `llm-chathub/cordis.patch.yml` 的 `config` 下加 `maxPromptChars: 96000` 后重启；或关掉客户端的部分工具/精简 system prompt。别只调大不验证，站点输入框也有自己的长度上限 |
+| 客户端显示「模型不可用」+ `404 No route: POST /chat/completions`  | endpoint 填了根地址，客户端追加后缀却没补 `/v1`                                                                                          | 填 `http://127.0.0.1:8787/v1`；新版网关已兼容裸路径，但**要重启 dsh** 才加载新代码                                                                    |
+| `/v1/models` 有行但 completion 报「未知 provider」            | `GATEWAY_SITES` 列了 `LLM_SITES` 没挂的站点                                                                                     | 两个列表保持一致（脚本用一份 `DSH_CHATHUB_SITES` 同时写两层）                                                                                      |
+| `/v1/models` 是空数组                                     | transport 没有任何 provider（host 没挂或 `sites` 全是拼错的 id）                                                                       | 按 host → llm-chathub → gateway 顺序挂载；**没登录不会导致空数组**，行仍会在，只是 `status: needs-auth`                                                |
