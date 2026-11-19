@@ -139,6 +139,7 @@ export async function apply(ctx: Context, config?: ConnectionConfig): Promise<vo
     await BrowserAuth.create(ctx.root, ctx.credentials, cookieMaxAgeDays),
   )
   ctx.inject(['webServer'], (webCtx) => {
+    console.log('[client-connection] webServer injected, registering routes')
     assertImageBodyCapacity(webCtx, maxRequestBodyBytes)
     webCtx.on('webserver/index-inject', (table) => {
       table.push({ kind: 'global', name: '__DSH_CONNECTION_RECOVERY__', value: recovery })
@@ -157,7 +158,9 @@ export async function apply(ctx: Context, config?: ConnectionConfig): Promise<vo
         await webCtx.waterfall('connection/request', req, res, () => bridge(req, res, fetchHandler, admission.peer, maxRequestBodyBytes))
       },
     }
-    webCtx.effect(() => webCtx.webServer.register(route), 'client-connection: /api route')
+    const disposer = webCtx.webServer.register(route)
+    console.log('[client-connection] /api route registered, disposer:', typeof disposer)
+    webCtx.effect(() => disposer, 'client-connection: /api route')
     webCtx.effect(() => webCtx.webServer.register({
       kind: 'exact', path: CONNECT_PATH,
       handler: (req, res) => { connection.authorizeConnect(req, res) },
