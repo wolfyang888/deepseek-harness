@@ -77,14 +77,16 @@ function convertMarkdownMedia(text: string, baseUrl?: string): string {
   let match: RegExpExecArray | null
   while ((match = imageRegex.exec(text)) !== null) {
     const [fullMatch, alt, url] = match
-    const absoluteUrl = base !== '' && (url.startsWith('/') || url.startsWith('./'))
-      ? new URL(url, base).href
-      : url
+    const u = url as string
+    const a = alt as string
+    const absoluteUrl = base !== '' && (u.startsWith('/') || u.startsWith('./'))
+      ? new URL(u, base).href
+      : u
     let replacement = fullMatch
-    if (isVideoUrl(url)) {
-      replacement = `<video src="${absoluteUrl}" controls preload="metadata" poster="${absoluteUrl}">${alt || 'Video'}</video>`
-    } else if (isImageUrl(url)) {
-      replacement = `<img src="${absoluteUrl}" alt="${alt}" loading="lazy">`
+    if (isVideoUrl(u)) {
+      replacement = `<video src="${absoluteUrl}" controls preload="metadata" poster="${absoluteUrl}">${a || 'Video'}</video>`
+    } else if (isImageUrl(u)) {
+      replacement = `<img src="${absoluteUrl}" alt="${a}" loading="lazy">`
     }
     if (replacement !== fullMatch) {
       result = result.replace(fullMatch, replacement)
@@ -94,12 +96,14 @@ function convertMarkdownMedia(text: string, baseUrl?: string): string {
   const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g
   while ((match = linkRegex.exec(text)) !== null) {
     const [fullMatch, linkText, url] = match
-    const absoluteUrl = base !== '' && (url.startsWith('/') || url.startsWith('./'))
-      ? new URL(url, base).href
-      : url
+    const u = url as string
+    const lt = linkText as string
+    const absoluteUrl = base !== '' && (u.startsWith('/') || u.startsWith('./'))
+      ? new URL(u, base).href
+      : u
     let replacement = fullMatch
-    if (isVideoUrl(url)) {
-      replacement = `<video src="${absoluteUrl}" controls preload="metadata"><a href="${absoluteUrl}" target="_blank" rel="noopener">${linkText}</a></video>`
+    if (isVideoUrl(u)) {
+      replacement = `<video src="${absoluteUrl}" controls preload="metadata"><a href="${absoluteUrl}" target="_blank" rel="noopener">${lt}</a></video>`
     }
     if (replacement !== fullMatch) {
       result = result.replace(fullMatch, replacement)
