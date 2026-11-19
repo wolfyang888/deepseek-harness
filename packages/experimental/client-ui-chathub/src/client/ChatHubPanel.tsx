@@ -316,7 +316,7 @@ export function ChatHubPanel(props: ChatHubPanelProps): ReactNode {
               {messages.length === 0 ? <p className={css.messageEmpty}>{t('message.empty')}</p> : messages.map((entry, index) => (
                 <div key={index} className={`${css.message} ${entry.role === 'user' ? css.messageUser : css.messageAssistant}`}>
                   {entry.role === 'assistant'
-                    ? <MessageBody text={entry.content} labels={markdownLabels} />
+                    ? <MessageBody text={entry.content} labels={markdownLabels} provider={entry.name} />
                     : entry.content}
                   {messageTime(entry.timestamp) !== '' && (
                     <span className={entry.role === 'user' ? css.messageTimeUser : css.messageTimeAssistant}>

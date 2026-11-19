@@ -1,0 +1,816 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ChatHub Model Comparison</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --bg-elevated: #161b22;
+      --border: #30363d;
+      --text: #e6edf3;
+      --text-muted: #8b949e;
+      --accent: #58a6ff;
+      --accent-hover: #79c0ff;
+      --success: #3fb950;
+      --error: #f85149;
+      --warning: #d29922;
+      --radius: 8px;
+      --shadow: 0 4px 12px rgba(0,0,0,0.4);
+      --font-mono: 'SF Mono', 'Fira Code', 'Fira Mono', Menlo, Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #ffffff;
+        --bg-elevated: #f6f8fa;
+        --border: #d0d7de;
+        --text: #1f2328;
+        --text-muted: #656d76;
+        --accent: #0969da;
+        --accent-hover: #0860ca;
+        --shadow: 0 4px 12px rgba(0,0,0,0.1);
+      }
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 32px;
+      padding-bottom: 24px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+      font-weight: 600;
+    }
+
+    .subtitle {
+      color: var(--text-muted);
+      font-size: 15px;
+    }
+
+    .config-section {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      margin-bottom: 24px;
+    }
+
+    .config-row {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      align-items: flex-end;
+      margin-bottom: 16px;
+    }
+
+    .config-group {
+      flex: 1;
+      min-width: 200px;
+    }
+
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+
+    select, input, textarea {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 14px;
+      padding: 10px 12px;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+
+    select:focus, input:focus, textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 10px 20px;
+      font-size: 14px;
+      font-weight: 500;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: white;
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      background: var(--accent-hover);
+    }
+
+    .btn-primary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .btn-secondary {
+      background: var(--bg-elevated);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    .btn-secondary:hover {
+      background: var(--border);
+    }
+
+    .comparison-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+    }
+
+    @media (max-width: 900px) {
+      .comparison-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .model-column {
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+
+    .model-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .model-title {
+      font-weight: 600;
+      font-size: 15px;
+    }
+
+    .model-status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--border);
+    }
+
+    .status-dot.ready { background: var(--success); }
+    .status-dot.loading { background: var(--warning); animation: pulse 1.5s infinite; }
+    .status-dot.error { background: var(--error); }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .model-content {
+      flex: 1;
+      padding: 20px;
+      overflow-y: auto;
+      min-height: 400px;
+      max-height: 70vh;
+    }
+
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: var(--text-muted);
+      text-align: center;
+      padding: 40px;
+    }
+
+    .empty-icon {
+      font-size: 48px;
+      margin-bottom: 16px;
+      opacity: 0.5;
+    }
+
+    .answer {
+      animation: fadeIn 0.3s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .answer-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .answer-time {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .answer-duration {
+      font-size: 12px;
+      color: var(--text-muted);
+      background: var(--bg);
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-family: var(--font-mono);
+    }
+
+    .answer-body {
+      font-size: 14px;
+      line-height: 1.7;
+    }
+
+    .answer-body pre {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 16px;
+      overflow-x: auto;
+      margin: 12px 0;
+    }
+
+    .answer-body code {
+      font-family: var(--font-mono);
+      font-size: 13px;
+    }
+
+    .answer-body pre code {
+      background: transparent;
+      padding: 0;
+    }
+
+    .answer-body blockquote {
+      border-left: 3px solid var(--accent);
+      padding-left: 16px;
+      margin: 12px 0;
+      color: var(--text-muted);
+      font-style: italic;
+    }
+
+    .answer-body ul, .answer-body ol {
+      padding-left: 24px;
+      margin: 12px 0;
+    }
+
+    .answer-body li {
+      margin: 6px 0;
+    }
+
+    .answer-body a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    .answer-body a:hover {
+      text-decoration: underline;
+    }
+
+    .answer-body table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 16px 0;
+      font-size: 13px;
+    }
+
+    .answer-body th, .answer-body td {
+      border: 1px solid var(--border);
+      padding: 8px 12px;
+      text-align: left;
+    }
+
+    .answer-body th {
+      background: var(--bg);
+      font-weight: 600;
+    }
+
+    .answer-body img {
+      max-width: 100%;
+      border-radius: 6px;
+      margin: 8px 0;
+    }
+
+    .answer-body video {
+      max-width: 100%;
+      border-radius: 6px;
+      margin: 8px 0;
+    }
+
+    .streaming-cursor {
+      display: inline-block;
+      width: 8px;
+      height: 1.2em;
+      background: var(--accent);
+      animation: blink 1s infinite;
+      vertical-align: text-bottom;
+      margin-left: 2px;
+    }
+
+    @keyframes blink {
+      0%, 50% { opacity: 1; }
+      51%, 100% { opacity: 0; }
+    }
+
+    .error-message {
+      background: rgba(248, 81, 73, 0.1);
+      border: 1px solid var(--error);
+      border-radius: 6px;
+      padding: 12px 16px;
+      color: var(--error);
+      margin: 12px 0;
+    }
+
+    .footer {
+      margin-top: 32px;
+      padding-top: 24px;
+      border-top: 1px solid var(--border);
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+
+    .model-select-wrapper {
+      position: relative;
+    }
+
+    .model-select-wrapper select {
+      appearance: none;
+      padding-right: 40px;
+    }
+
+    .model-select-wrapper::after {
+      content: '▼';
+      position: absolute;
+      right: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      pointer-events: none;
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🔄 ChatHub Model Comparison</h1>
+      <p class="subtitle">Send the same prompt to two models side-by-side via ChatHub Gateway</p>
+    </header>
+
+    <section class="config-section">
+      <div class="config-row">
+        <div class="config-group">
+          <label>Gateway Endpoint</label>
+          <input type="text" id="gatewayUrl" value="http://127.0.0.1:8787/v1" placeholder="http://127.0.0.1:8787/v1">
+        </div>
+        <div class="config-group" style="min-width: 120px;">
+          <label>API Key (optional)</label>
+          <input type="password" id="apiKey" placeholder="Bearer token">
+        </div>
+        <div class="config-group" style="min-width: 140px;">
+          <button class="btn btn-secondary" id="fetchModels" onclick="fetchModels()">🔄 Fetch Models</button>
+        </div>
+      </div>
+
+      <div class="config-row">
+        <div class="config-group model-select-wrapper">
+          <label>Model A (Left)</label>
+          <select id="modelA" disabled>
+            <option value="">Select a model...</option>
+          </select>
+        </div>
+        <div class="config-group model-select-wrapper">
+          <label>Model B (Right)</label>
+          <select id="modelB" disabled>
+            <option value="">Select a model...</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="config-row">
+        <div class="config-group" style="flex: 3;">
+          <label>Prompt</label>
+          <textarea id="prompt" rows="3" placeholder="Enter your question here... (e.g., 'PC端和手机端能相互连接并且相互访问的方案')"></textarea>
+        </div>
+        <div class="config-group" style="min-width: 140px;">
+          <button class="btn btn-primary" id="sendBtn" onclick="sendPrompt()" disabled style="height: 86px;">
+            🚀 Compare Models
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <div class="comparison-grid">
+      <section class="model-column" id="columnA">
+        <div class="model-header">
+          <span class="model-title">Model A</span>
+          <div class="model-status">
+            <span class="status-dot" id="statusDotA"></span>
+            <span id="statusTextA">Waiting</span>
+          </div>
+        </div>
+        <div class="model-content" id="contentA">
+          <div class="empty-state">
+            <div class="empty-icon">🤖</div>
+            <p>Select Model A and enter a prompt to start</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="model-column" id="columnB">
+        <div class="model-header">
+          <span class="model-title">Model B</span>
+          <div class="model-status">
+            <span class="status-dot" id="statusDotB"></span>
+            <span id="statusTextB">Waiting</span>
+          </div>
+        </div>
+        <div class="model-content" id="contentB">
+          <div class="empty-state">
+            <div class="empty-icon">🤖</div>
+            <p>Select Model B and enter a prompt to start</p>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <footer class="footer">
+      <p>Powered by ChatHub Gateway · <a href="http://127.0.0.1:8899" target="_blank" style="color: var(--accent);">Open ChatHub Panel (port 8899)</a> to sign in to sites</p>
+      <p style="margin-top: 8px;">Make sure <code>scripts/run-chathub-gateway.sh</code> is running</p>
+    </footer>
+  </div>
+
+  <script>
+    // State
+    let availableModels = [];
+    let abortControllers = { a: null, b: null };
+
+    // DOM elements
+    const gatewayUrlEl = document.getElementById('gatewayUrl');
+    const apiKeyEl = document.getElementById('apiKey');
+    const modelAEl = document.getElementById('modelA');
+    const modelBEl = document.getElementById('modelB');
+    const promptEl = document.getElementById('prompt');
+    const sendBtn = document.getElementById('sendBtn');
+    const fetchModelsBtn = document.getElementById('fetchModels');
+    const statusDotA = document.getElementById('statusDotA');
+    const statusDotB = document.getElementById('statusDotB');
+    const statusTextA = document.getElementById('statusTextA');
+    const statusTextB = document.getElementById('statusTextB');
+    const contentA = document.getElementById('contentA');
+    const contentB = document.getElementById('contentB');
+
+    // Load saved settings
+    function loadSettings() {
+      const saved = localStorage.getItem('chathub-comparison-settings');
+      if (saved) {
+        try {
+          const settings = JSON.parse(saved);
+          gatewayUrlEl.value = settings.gatewayUrl || gatewayUrlEl.value;
+          apiKeyEl.value = settings.apiKey || '';
+          promptEl.value = settings.prompt || '';
+        } catch (e) {}
+      }
+    }
+
+    function saveSettings() {
+      const settings = {
+        gatewayUrl: gatewayUrlEl.value,
+        apiKey: apiKeyEl.value,
+        prompt: promptEl.value
+      };
+      localStorage.setItem('chathub-comparison-settings', JSON.stringify(settings));
+    }
+
+    // Fetch models from gateway
+    async function fetchModels() {
+      const baseUrl = gatewayUrlEl.value.replace(/\/+$/, '');
+      const url = `${baseUrl}/models`;
+      const headers = { 'Content-Type': 'application/json' };
+      if (apiKeyEl.value) headers['Authorization'] = `Bearer ${apiKeyEl.value}`;
+
+      fetchModelsBtn.disabled = true;
+      fetchModelsBtn.textContent = '⏳ Fetching...';
+
+      try {
+        const response = await fetch(url, { headers });
+        if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        const data = await response.json();
+
+        availableModels = data.data || [];
+        populateModelSelects();
+
+        saveSettings();
+        showToast(`Loaded ${availableModels.length} models`, 'success');
+      } catch (error) {
+        showToast(`Failed to fetch models: ${error.message}`, 'error');
+        console.error(error);
+      } finally {
+        fetchModelsBtn.disabled = false;
+        fetchModelsBtn.textContent = '🔄 Fetch Models';
+      }
+    }
+
+    function populateModelSelects() {
+      const modelAVal = modelAEl.value;
+      const modelBVal = modelBEl.value;
+
+      [modelAEl, modelBEl].forEach(select => {
+        select.innerHTML = '<option value="">Select a model...</option>';
+        availableModels.forEach(model => {
+          const option = document.createElement('option');
+          option.value = model.id;
+          const status = model.status === 'ready' ? '✅' : model.status === 'needs-auth' ? '🔐' : '❌';
+          option.textContent = `${status} ${model.id}`;
+          select.appendChild(option);
+        });
+        select.disabled = availableModels.length === 0;
+      });
+
+      if (availableModels.some(m => m.id === modelAVal)) modelAEl.value = modelAVal;
+      if (availableModels.some(m => m.id === modelBVal)) modelBEl.value = modelBVal;
+
+      updateSendButton();
+    }
+
+    function updateSendButton() {
+      const hasModels = modelAEl.value && modelBEl.value;
+      const hasPrompt = promptEl.value.trim().length > 0;
+      sendBtn.disabled = !(hasModels && hasPrompt);
+    }
+
+    // Event listeners
+    gatewayUrlEl.addEventListener('change', saveSettings);
+    apiKeyEl.addEventListener('change', saveSettings);
+    promptEl.addEventListener('input', () => {
+      updateSendButton();
+      saveSettings();
+    });
+    modelAEl.addEventListener('change', updateSendButton);
+    modelBEl.addEventListener('change', updateSendButton);
+
+    // Send prompt to both models
+    async function sendPrompt() {
+      const prompt = promptEl.value.trim();
+      if (!prompt) return;
+
+      const modelA = modelAEl.value;
+      const modelB = modelBEl.value;
+      if (!modelA || !modelB) return;
+
+      // Abort any ongoing requests
+      if (abortControllers.a) abortControllers.a.abort();
+      if (abortControllers.b) abortControllers.b.abort();
+
+      // Reset UI
+      setColumnState('a', 'loading', 'Thinking...');
+      setColumnState('b', 'loading', 'Thinking...');
+      contentA.innerHTML = '<div class="answer"><div class="answer-body"></div></div>';
+      contentB.innerHTML = '<div class="answer"><div class="answer-body"></div></div>';
+      const answerBodyA = contentA.querySelector('.answer-body');
+      const answerBodyB = contentB.querySelector('.answer-body');
+
+      sendBtn.disabled = true;
+      sendBtn.textContent = '⏳ Streaming...';
+
+      const baseUrl = gatewayUrlEl.value.replace(/\/+$/, '');
+      const headers = { 'Content-Type': 'application/json' };
+      if (apiKeyEl.value) headers['Authorization'] = `Bearer ${apiKeyEl.value}`;
+
+      const body = {
+        model: '',
+        messages: [{ role: 'user', content: prompt }],
+        stream: true,
+        temperature: 0.7
+      };
+
+      // Start both requests in parallel
+      const [resultA, resultB] = await Promise.all([
+        streamModel('a', modelA, baseUrl, headers, body, answerBodyA),
+        streamModel('b', modelB, baseUrl, headers, body, answerBodyB)
+      ]);
+
+      // Finalize
+      if (resultA.error) {
+        setColumnState('a', 'error', `Error: ${resultA.error}`);
+        answerBodyA.innerHTML = `<div class="error-message">${escapeHtml(resultA.error)}</div>`;
+      } else {
+        setColumnState('a', 'ready', `Done (${resultA.duration}ms)`);
+      }
+
+      if (resultB.error) {
+        setColumnState('b', 'error', `Error: ${resultB.error}`);
+        answerBodyB.innerHTML = `<div class="error-message">${escapeHtml(resultB.error)}</div>`;
+      } else {
+        setColumnState('b', 'ready', `Done (${resultB.duration}ms)`);
+      }
+
+      sendBtn.disabled = false;
+      sendBtn.textContent = '🚀 Compare Models';
+    }
+
+    async function streamModel(side, modelId, baseUrl, headers, body, answerBodyEl) {
+      const controller = new AbortController();
+      abortControllers[side] = controller;
+
+      const startTime = Date.now();
+      let fullContent = '';
+      let isFirstChunk = true;
+
+      body.model = modelId;
+
+      try {
+        const response = await fetch(`${baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body),
+          signal: controller.signal
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`HTTP ${response.status}: ${errorText}`);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const data = line.slice(6).trim();
+            if (data === '[DONE]') continue;
+
+            try {
+              const parsed = JSON.parse(data);
+              const delta = parsed.choices?.[0]?.delta?.content || '';
+              if (delta) {
+                fullContent += delta;
+                // Update UI incrementally
+                answerBodyEl.innerHTML = renderMarkdown(fullContent) +
+                  (isFirstChunk ? '<span class="streaming-cursor"></span>' : '');
+                isFirstChunk = false;
+                // Auto-scroll
+                answerBodyEl.parentElement.scrollTop = answerBodyEl.parentElement.scrollHeight;
+              }
+            } catch (e) {
+              // Ignore parse errors for partial chunks
+            }
+          }
+        }
+
+        // Final render without cursor
+        answerBodyEl.innerHTML = renderMarkdown(fullContent);
+
+        return { duration: Date.now() - startTime };
+      } catch (error) {
+        if (error.name === 'AbortError') return { error: 'Aborted' };
+        return { error: error.message, duration: Date.now() - startTime };
+      }
+    }
+
+    // Simple markdown renderer (subset)
+    function renderMarkdown(text) {
+      return text
+        .replace(/&/g, '&')
+        .replace(/</g, '<')
+        .replace(/>/g, '>')
+        .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code class="lang-$1">$2</code></pre>')
+        .replace(/`([^`]+)`/g, '<code>$1</code>')
+        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+        .replace(/^### (.*$)/gm, '<h3>$1</h3>')
+        .replace(/^## (.*$)/gm, '<h2>$1</h2>')
+        .replace(/^# (.*$)/gm, '<h1>$1</h1>')
+        .replace(/^\> (.*$)/gm, '<blockquote>$1</blockquote>')
+        .replace(/^- (.*$)/gm, '<li>$1</li>')
+        .replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>')
+        .replace(/^(\d+)\. (.*$)/gm, '<li>$2</li>')
+        .replace(/(<li>.*<\/li>)/s, '<ol>$1</ol>')
+        .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+        .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" loading="lazy">')
+        .replace(/\n\n/g, '</p><p>')
+        .replace(/\n/g, '<br>')
+        .replace(/^/, '<p>')
+        .replace(/$/, '</p>')
+        .replace(/<p><\/p>/g, '')
+        .replace(/<p>(<pre>)/g, '$1')
+        .replace(/<\/pre><\/p>/g, '</pre>')
+        .replace(/<p>(<blockquote>)/g, '$1')
+        .replace(/<\/blockquote><\/p>/g, '</blockquote>')
+        .replace(/<p>(<ul>)/g, '$1')
+        .replace(/<\/ul><\/p>/g, '</ul>')
+        .replace(/<p>(<ol>)/g, '$1')
+        .replace(/<\/ol><\/p>/g, '</ol>')
+        .replace(/<p>(<h[1-3]>)/g, '$1')
+        .replace(/<\/h[1-3]><\/p>/g, '</h1>'); // approximate
+    }
+
+    function setColumnState(side, state, text) {
+      const dot = side === 'a' ? statusDotA : statusDotB;
+      const textEl = side === 'a' ? statusTextA : statusTextB;
+      dot.className = 'status-dot ' + state;
+      textEl.textContent = text;
+    }
+
+    function escapeHtml(text) {
+      return text.replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>');
+    }
+
+    function showToast(message, type) {
+      const toast = document.createElement('div');
+      toast.style.cssText = `
+        position: fixed; bottom: 24px; right: 24px; z-index: 1000;
+        background: var(--bg-elevated); border: 1px solid var(--border);
+        border-left: 4px solid ${type === 'success' ? 'var(--success)' : 'var(--error)'};
+        padding: 12px 20px; border-radius: var(--radius); box-shadow: var(--shadow);
+        animation: slideIn 0.3s ease;
+      `;
+      toast.textContent = message;
+      document.body.appendChild(toast);
+      setTimeout(() => {
+        toast.style.animation = 'slideOut 0.3s ease forwards';
+        setTimeout(() => toast.remove(), 300);
+      }, 3000);
+    }
+
+    // Add toast animations
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+      @keyframes slideOut { to { transform: translateX(100%); opacity: 0; } }
+    `;
+    document.head.appendChild(style);
+
+    // Initialize
+    loadSettings();
+    // Auto-fetch on load if URL is set
+    if (gatewayUrlEl.value) {
+      setTimeout(fetchModels, 100);
+    }
+  </script>
+</body>
+</html>

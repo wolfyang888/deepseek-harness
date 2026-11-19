@@ -73,7 +73,7 @@
 #                            (default `true`); the last prose is still
 #                            delivered when every site declines
 #   DSH_CHATHUB_LLM_CONTEXT_WINDOW  declared context window in tokens used by
-#                            harness compaction (default 128000). Must stay
+#                            harness compaction (default 200000). Must stay
 #                            above the session compaction headroom — 65536 by
 #                            default — or every model switch fails with
 #                            `leaving no pressure budget`.
@@ -84,7 +84,7 @@
         site: !!js process.env.DSH_CHATHUB_LLM_SITE ?? 'deepseek-web'
         sites: !!js (process.env.DSH_CHATHUB_LLM_SITES ?? 'glm-web,qianwen-web,gemini-web,chatgpt-web,doubao-web,deepseek-web').split(',').filter(Boolean)
         model: !!js process.env.DSH_CHATHUB_LLM_MODEL ?? 'web-model'
-        contextWindow: !!js Number(process.env.DSH_CHATHUB_LLM_CONTEXT_WINDOW ?? 128000)
+        contextWindow: !!js Number(process.env.DSH_CHATHUB_LLM_CONTEXT_WINDOW ?? 200000)
         workspaceRoot: !!js process.env.DSH_CHATHUB_LLM_ROOT ?? process.cwd()
         allowTools: !!js (process.env.DSH_CHATHUB_LLM_TOOLS ?? 'read,grep,glob,edit,write,bash').split(',').map(tool => tool.trim()).filter(Boolean)
         verifyCommands: !!js (process.env.DSH_CHATHUB_LLM_VERIFY ?? 'pnpm run typecheck').split(',')
