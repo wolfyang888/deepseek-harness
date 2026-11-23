@@ -1,6 +1,7 @@
 /** Host transport configuration, page-driver facts, and browser automation faces. */
 
 import type {
+  ChatAttachment,
   ChatMessage,
   IModelProvider,
   ModelCapabilities,
@@ -69,6 +70,31 @@ export interface SiteDriverConfig {
    * mentions the phrase still counts as an answer.
    */
   pending?: string
+  /**
+   * Optional control whose click reveals the site's collapsed work steps.
+   *
+   * A deep-thinking site hides its chain of thought behind a toggle. Reading
+   * the reasoning blocks before opening it returns markup with no text, so the
+   * host clicks this once when the newest block reads empty.
+   */
+  reasoningExpand?: string
+  /**
+   * Optional `input[type=file]` selector accepting the turn's attachments.
+   *
+   * A site whose paper clip opens the operating system's picker cannot be
+   * automated through that button; setting this hidden input leaves the site
+   * exactly as a real pick does. A driver without it declares attachments
+   * unsupported.
+   */
+  fileInput?: string
+  /**
+   * Milliseconds the site gets to bind picked attachments to the next message.
+   *
+   * The composer accepts the prompt the instant the files are picked while the
+   * upload is still running, and sending then drops the files; this window
+   * runs between the pick and the first keystroke.
+   */
+  uploadSettleMs?: number
   /** Stable polls required before an answer counts as finished; defaults to the service value. */
   stablePolls?: number
   /** Milliseconds between answer polls; defaults to the service value. */
@@ -253,6 +279,11 @@ export interface BrowserPageLike {
   goto(url: string, options?: { timeout?: number; waitUntil?: 'domcontentloaded' }): Promise<unknown>
   /** @returns Resolves when the page is closed. */
   close(): Promise<void>
+  /**
+   * Raise the page's window and give it focus.
+   * @returns Resolves when the activation request is delivered.
+   */
+  bringToFront(): Promise<void>
   /** Mouse operations on the page viewport. */
   mouse: {
     /**
@@ -343,6 +374,16 @@ export interface LaunchOptions {
   executablePath?: string
 }
 
+/** Decoded attachment bytes the page hands to the site's upload input. */
+export interface FilePayloadLike {
+  /** Filename the site shows in the composer. */
+  name: string
+  /** MIME type the site's upload input validates against. */
+  mimeType: string
+  /** Raw file bytes, decoded once from the payload's base64. */
+  buffer: Uint8Array
+}
+
 /** Page operations one turn needs. */
 export interface TurnPage {
   /** @returns Whether the page has been closed. */
@@ -362,10 +403,19 @@ export interface TurnPage {
   bodyMarkup(): Promise<string>
   /**
    * @param selector - reasoning-block selector declared by the driver.
+   * @param expand - optional control opened before the blocks are read, so a
+   *   site that collapses its work steps still yields their text.
    * @returns The markup of every matching block joined together, or an empty
    *   string when the site shows none; the session converts it to text.
    */
-  reasoningHtml(selector: string): Promise<string>
+  reasoningHtml(selector: string, expand?: string): Promise<string>
+  /**
+   * Upload files through the site's attachment input before the prompt is typed.
+   * @param files - decoded attachments in pick order.
+   * @param driver - site facts: the upload input and its settle window.
+   * @returns Resolves when the site has taken every file.
+   */
+  attach(files: readonly FilePayloadLike[], driver: SiteDriverConfig): Promise<void>
   /**
    * @param selector - signed-out wall selector.
    * @returns Whether the wall is currently visible.
@@ -411,10 +461,22 @@ export interface ChatPageHandle extends TurnPage {
   ): Promise<boolean>
   /** @returns Resolves when the page is closed. */
   close(): Promise<void>
+  /**
+   * Raise the page's window and give it focus, so a manual sign-in page is not
+   * left behind the window the user is working in.
+   * @returns Resolves when the activation request is delivered.
+   */
+  bringToFront(): Promise<void>
 }
 
 /** Per-key turn serialization the session uses. */
 export interface TurnGate {
+  /**
+   * @param key - provider or conversation key.
+   * @param driver - site facts for navigation of a reopened page.
+   * @returns The reusable signed-in page for that key.
+   */
+  acquire(key: string, driver: SiteDriverConfig): Promise<ChatPageHandle>
   /**
    * @param key - provider or conversation key.
    * @param maxQueuedTurns - turns allowed to wait behind the active turn.
@@ -430,12 +492,6 @@ export interface TurnGate {
 
 /** Runtime face the transport drives. */
 export interface TransportRuntime extends TurnGate {
-  /**
-   * @param key - provider or conversation key.
-   * @param driver - site facts for navigation.
-   * @returns The reusable signed-in page for that key.
-   */
-  acquire(key: string, driver: SiteDriverConfig): Promise<ChatPageHandle>
   /**
    * @param providerId - provider whose site page the user signs in on.
    * @param driver - site facts for navigation.
@@ -515,4 +571,43 @@ export interface ChatHubSwitchResult {
   /** Checkpoint written before the target provider saw the task. */
   checkpointId: string
   status: SessionStatus
+}
+
+/** Inputs for one scratch comparison across several models. */
+export interface ChatHubCompareInput {
+  /** The shared prompt every column asks. */
+  content: string
+  /** Model ids to ask, in display order; duplicates collapse. */
+  providers: readonly string[]
+  /** Files uploaded to every column's site before the prompt. */
+  attachments?: readonly ChatAttachment[]
+}
+
+/** One column's final state inside a comparison. */
+export interface ChatHubCompareSide {
+  /** Model id the column asked. */
+  provider: string
+  /** Human-readable model name at the time of the run. */
+  providerName: string
+  /** Whether the column produced an answer or failed on its own. */
+  status: 'done' | 'failed'
+  /** The answer text so far, complete once `status` is `done`. */
+  content?: string
+  /** The site's visible reasoning trace, when it rendered one. */
+  reasoning?: string
+  /** Stable failure code; present only when `status` is `failed`. */
+  lastError?: string
+  /** Milliseconds the column ran. */
+  elapsedMs: number
+}
+
+/** One comparison update: a column's growing text, or its final state. */
+export type ChatHubCompareEvent =
+  | { kind: 'progress'; provider: string; content: string }
+  | { kind: 'settled'; side: ChatHubCompareSide }
+
+/** Every column of one completed comparison. */
+export interface ChatHubCompareResult {
+  /** One entry per requested model, in request order; missing columns are dropped. */
+  sides: ChatHubCompareSide[]
 }

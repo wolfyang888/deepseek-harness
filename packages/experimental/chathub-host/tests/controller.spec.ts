@@ -35,9 +35,9 @@ class TurnProvider implements IModelProvider {
   normalizeError?: (error: unknown) => ProviderErrorCode
   healthStatus?: () => Promise<ProviderStatus>
   private readonly answers: (string | Error)[]
-  private readonly metadata?: Record<string, unknown>
-  private readonly chunks?: readonly ChatStreamChunk[]
-  private readonly hold?: Promise<void>
+  private readonly metadata: Record<string, unknown> | undefined
+  private readonly chunks: readonly ChatStreamChunk[] | undefined
+  private readonly hold: Promise<void> | undefined
 
   constructor(options: {
     id: string
