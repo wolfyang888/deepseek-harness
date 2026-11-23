@@ -3,6 +3,7 @@
 import { ChatHubError, errorMessage, type ChatHubErrorCode } from '../errors.ts'
 import { answerMarkdownOf } from './answer-markdown.ts'
 import type {
+  ChatAttachment,
   ChatFinishReason,
   ChatMessage,
   ChatRequest,
@@ -27,6 +28,8 @@ export interface WebChatPayload {
   messages: ChatMessage[]
   /** Single prompt rendered in the provider's style for the site's chat box. */
   prompt: string
+  /** Files this turn uploads to the site before the prompt is submitted. */
+  attachments?: readonly ChatAttachment[]
   /** Whether the rendered prompt carries compiled task context. */
   meta: { origin: 'semantic-context' | 'raw-messages' }
 }
@@ -62,6 +65,15 @@ export interface WebChatTransportSession {
    * @returns Full answer markup as it stands, once per poll.
    */
   watch?: (payload: WebChatPayload) => AsyncIterable<string>
+  /**
+   * Visible reasoning collected during the most recent turn.
+   *
+   * `send` carries it in `metadata.reasoning`; a streamed turn has no
+   * metadata channel of its own, so the provider reads it here after the
+   * delta stream ends.
+   * @returns The reasoning text; empty when the site rendered none.
+   */
+  lastReasoning?(): string
   /**
    * Release the page or tab backing this session.
    * @returns Resolves when the page is released.
@@ -378,7 +390,10 @@ export abstract class WebModelProvider implements IModelProvider {
           index: 0,
           content: answerMarkdownOf(raw.content),
           finishReason: raw.finishReason ?? 'stop',
-          metadata: raw.usage === undefined ? {} : { usage: raw.usage },
+          metadata: {
+            ...raw.usage === undefined ? {} : { usage: raw.usage },
+            ...raw.metadata,
+          },
         }
         return
       } catch (error) {
@@ -393,7 +408,15 @@ export abstract class WebModelProvider implements IModelProvider {
       throw this.failure(error)
     }
     this.markContextSent()
-    yield { index: 0, finishReason: 'stop' }
+    // The site's reasoning trace is read once the answer settles; a streamed
+    // turn delivers it in the closing chunk because the caller (the live
+    // comparison stream) needs it next to the answer it explains.
+    const reasoning = session.lastReasoning?.() ?? ''
+    yield {
+      index: 0,
+      finishReason: 'stop',
+      ...reasoning.length === 0 ? {} : { metadata: { reasoning } },
+    }
   }
 
   /**
@@ -441,13 +464,20 @@ export abstract class WebModelProvider implements IModelProvider {
   protected normalizeRequest(request: ChatRequest): WebChatPayload {
     const { system: compiled, messages } = splitRequestMessages(request)
     const system = this.#contextPending ? compiled : ''
-    return {
+    const payload: WebChatPayload = {
       providerId: this.id,
       system,
       messages,
       prompt: renderWebPrompt(system, messages, this.promptStyle),
       meta: { origin: system.length > 0 ? 'semantic-context' : 'raw-messages' },
     }
+    // Attachments belong to the turn that carries them: the site keeps the
+    // files with the message they were sent on, so a later turn without any
+    // must not upload them again.
+    if (request.attachments !== undefined && request.attachments.length > 0) {
+      payload.attachments = request.attachments
+    }
+    return payload
   }
 
   /**

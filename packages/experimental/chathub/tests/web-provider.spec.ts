@@ -41,6 +41,8 @@ interface SessionBehavior {
   deltas?: string[] | Error
   /** Deltas yielded before the stream rejects, when the site drops mid-answer. */
   interruptAfter?: number
+  /** Visible reasoning the site rendered during the turn, read after the stream ends. */
+  reasoning?: string
 }
 
 /**
@@ -74,6 +76,10 @@ function fakeSession(behavior: SessionBehavior = {}): FakeSession {
         yield delta
       }
     }
+  }
+  if (behavior.reasoning !== undefined) {
+    const reasoning = behavior.reasoning
+    session.lastReasoning = () => reasoning
   }
   return session
 }
@@ -543,6 +549,24 @@ describe('WebModelProvider streamMessage', () => {
       { index: 0, finishReason: 'stop' },
     ])
     expect(session.payloads[0]!.prompt).toContain('fix the build error')
+  })
+
+  it('reports the site reasoning with the closing chunk', async () => {
+    const transport = new FakeTransport()
+    const session = fakeSession({ deltas: ['root ', 'cause'], reasoning: '搜索了 2 个关键词' })
+    transport.sessions.push(session)
+    const provider = new DeepSeekWebProvider(transport)
+    await provider.init()
+
+    const chunks: ChatStreamChunk[] = []
+    for await (const chunk of provider.streamMessage(chatRequest())) chunks.push(chunk)
+    // A streamed turn has no response metadata channel, so the trace rides the
+    // closing chunk where the comparison reads it.
+    expect(chunks).toEqual([
+      { index: 0, delta: 'root ' },
+      { index: 0, delta: 'cause' },
+      { index: 0, finishReason: 'stop', metadata: { reasoning: '搜索了 2 个关键词' } },
+    ])
   })
 
   it('invokes session.stream with its receiver bound so methods that use this work', async () => {

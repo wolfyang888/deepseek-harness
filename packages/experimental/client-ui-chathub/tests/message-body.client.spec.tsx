@@ -32,14 +32,23 @@ it('drops scripting, styling, and page-level elements with their content', () =>
   expect(clean).not.toContain('id=')
 })
 
-it('drops media the panel cannot play and layout blocks that hold nothing', () => {
+it('keeps media with a resolvable source and drops layout blocks that hold nothing', () => {
+  // Media is allowed through (the panel plays it); what has to go is the
+  // session-bound blob source the page cannot resolve, and empty spacers.
   const clean = sanitizeAnswer(
     '<div></div><p>   </p><video src="blob:https://x/1"></video><audio src="/a.mp3"></audio>'
     + '<p><br></p><p>正文</p>',
+    'deepseek-web',
   )
   expect(clean).toContain('正文')
-  expect(clean).not.toContain('video')
-  expect(clean).not.toContain('audio')
+  expect(clean).not.toContain('blob:')
+  // A relative source is rewritten against the site, so it still plays here.
+  expect(clean).toContain('src="https://chat.deepseek.com/a.mp3"')
+  // Both players stay, with the chrome that makes them playable.
+  expect(clean).toContain('<video')
+  expect(clean).toContain('<audio')
+  expect(clean).toContain('controls')
+  expect(clean).toContain('preload="metadata"')
   expect(clean).not.toContain('<div')
   expect(clean).not.toContain('<br')
 })

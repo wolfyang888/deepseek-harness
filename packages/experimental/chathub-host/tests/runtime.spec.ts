@@ -102,6 +102,21 @@ it('refuses a profile owned by a live process', async () => {
     .rejects.toMatchObject({ token: 'chathub-profile-locked' })
 })
 
+it('shares one launch between keys that race the first turn', async () => {
+  const dir = await profileDir()
+  const { runtime: browser, launcher } = await runtime(managed(dir))
+  // The compare view asks two sites at once, before either has a context.
+  // The losing column used to read the profile lock this process had just
+  // written, see it as a live owner, and fail as provider-unavailable.
+  const [left, right] = await Promise.all([
+    browser.acquire('doubao-web', DRIVER),
+    browser.acquire('qianwen-web', DRIVER),
+  ])
+  expect(launcher.launched).toHaveLength(1)
+  expect(left).not.toBe(right)
+  await browser.dispose()
+})
+
 it('takes over a lock whose process is gone or unreadable', async () => {
   const dir = await profileDir()
   await writeFile(join(dir, 'chathub.lock'), '999999\n')
@@ -343,6 +358,41 @@ it('closes the headful login window when sign-in fails', async () => {
   expect(launcher.launched.map(entry => entry.options.headless)).toEqual([false])
   await expect(browser.acquire('deepseek-web', DRIVER)).resolves.toBeDefined()
   expect(launcher.launched.map(entry => entry.options.headless)).toEqual([false, true])
+  await browser.dispose()
+})
+
+it('raises the login window in headless and headful modes', async () => {
+  for (const headless of [true, false]) {
+    const launcher = new FakeLauncher()
+    let page: FakePage | undefined
+    launcher.contextFactory = () => {
+      const context = new FakeContext()
+      context.pageFactory = () => {
+        page = new FakePage()
+        return page
+      }
+      return context
+    }
+    const { runtime: browser } = await runtime(managed(await profileDir(), { headless }), launcher)
+    await expect(browser.login('deepseek-web', DRIVER, 5, new AbortController().signal)).resolves.toBe(false)
+    expect(page?.bringToFrontCount).toBe(1)
+    await browser.dispose()
+  }
+})
+
+it('keeps the login attempt alive when the window cannot be raised', async () => {
+  const launcher = new FakeLauncher()
+  launcher.contextFactory = () => {
+    const context = new FakeContext()
+    context.pageFactory = () => {
+      const page = new FakePage()
+      page.errors.bringToFront = new Error('the compositor refused activation')
+      return page
+    }
+    return context
+  }
+  const { runtime: browser } = await runtime(managed(await profileDir()), launcher)
+  await expect(browser.login('deepseek-web', DRIVER, 5, new AbortController().signal)).resolves.toBe(false)
   await browser.dispose()
 })
 

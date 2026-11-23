@@ -21,10 +21,10 @@ const HOUR_MS = 3_600_000
 /**
  * Shipped profiles, ordered from most cautious to most permissive.
  *
- * `conservative` is the default: a turn every 20 s and 40 turns an hour fits
+ * `balanced` is the default: a turn every 10 s and 90 turns an hour fits
  * an interactive session with room for the site's own limits, while still
- * letting a multi-file task finish in a working day. `balanced` halves the gap
- * for supervised runs; `responsive` is for short exploratory sessions where
+ * letting a multi-file task finish in a working day. `conservative` is for
+ * unattended runs; `responsive` is for short exploratory sessions where
  * the user is watching every step.
  */
 export const PACING_PRESETS: Readonly<Record<Exclude<PacingProfile, 'off'>, PacingPolicy>> = {

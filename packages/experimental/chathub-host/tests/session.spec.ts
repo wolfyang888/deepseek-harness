@@ -2,7 +2,13 @@
 
 import { expect, it } from 'vitest'
 import { PlaywrightChatSession, answerMarkupText, answerMessageText, answerTextOf } from '../src/session.ts'
-import type { SiteDriverConfig, TransportConfig, TurnGate, TurnPage } from '../src/types.ts'
+import type {
+  FilePayloadLike,
+  SiteDriverConfig,
+  TransportConfig,
+  TurnGate,
+  TurnPage,
+} from '../src/types.ts'
 import type { WebChatPayload } from '@deepseek-ai/dsh-experimental-chathub'
 
 const DRIVER: SiteDriverConfig = {
@@ -27,19 +33,54 @@ function payload(prompt = 'hello'): WebChatPayload {
   return { providerId: 'deepseek-web', system: '', messages: [], prompt, meta: { origin: 'raw-messages' } }
 }
 
+/** One attachment as the provider hands it over: base64 of multi-byte text. */
+const ATTACHMENT = {
+  name: '截图.png',
+  mimeType: 'image/png',
+  data: Buffer.from('图片字节').toString('base64'),
+}
+
 /** Turn page replaying a scripted answer sequence. */
 class ScriptedPage implements TurnPage {
   closed = false
   urlValue = 'https://fake.test/chat'
   submitted: string[] = []
+  /** Filenames each turn uploaded, so an attachment turn is observable. */
+  readonly attached: string[] = []
   reads = 0
   /** Selectors each poll asked for, so a driver's body scope is observable. */
   readonly asked: { selector: string; body: string | undefined }[] = []
   submitError: unknown
+  /** Whether submitting this turn closes the page, as a browser crash would. */
+  closeOnSubmit = false
+  /** Failure the page raises from `attach`, as a site with no upload input does. */
+  attachError: unknown
+  /** Turn steps in order, so the files can be proven to go up before the prompt. */
+  readonly events: string[] = []
+  /** Decoded bytes of each upload, so the base64 hop is observable. */
+  readonly attachedBytes: string[] = []
   /** Answers returned by successive reads; the last answer repeats once exhausted. */
   answers: string[] = []
   /** Text the container already holds before the prompt is submitted. */
   before = ''
+
+  /** Whether a reopened page reports a signed-in composer. */
+  signedIn = true
+
+  /**
+   * @returns Whether the page reports a signed-in chat composer.
+   */
+  async waitForInput(): Promise<boolean> {
+    return this.signedIn
+  }
+
+  /** @returns Resolves after marking the page closed. */
+  async close(): Promise<void> {
+    this.closed = true
+  }
+
+  /** @returns Resolves; the page double has no window to raise. */
+  async bringToFront(): Promise<void> {}
 
   /** @returns Whether the page is closed. */
   isClosed(): boolean {
@@ -86,8 +127,16 @@ class ScriptedPage implements TurnPage {
   /** Visible reasoning text a scripted page reports after the reply settles. */
   reasoningValue = ''
 
-  /** @returns The reasoning markup the site showed. */
-  async reasoningHtml(_selector: string): Promise<string> {
+  /** Expander selector the session handed to the page, when the driver declares one. */
+  reasoningExpander: string | undefined
+
+  /**
+   * @param _selector - reasoning block selector.
+   * @param expand - optional control the session asks the page to open first.
+   * @returns The reasoning markup the site showed.
+   */
+  async reasoningHtml(_selector: string, expand?: string): Promise<string> {
+    this.reasoningExpander = expand
     return this.reasoningValue
   }
 
@@ -117,6 +166,19 @@ class ScriptedPage implements TurnPage {
   async submit(prompt: string): Promise<void> {
     if (this.submitError !== undefined) throw this.submitError
     this.submitted.push(prompt)
+    this.events.push('submit')
+    if (this.closeOnSubmit) this.closed = true
+  }
+
+  /**
+   * @param files - attachments this turn uploaded before its prompt.
+   * @returns Resolves after recording their names.
+   */
+  async attach(files: readonly FilePayloadLike[]): Promise<void> {
+    if (this.attachError !== undefined) throw this.attachError
+    this.attached.push(...files.map(file => file.name))
+    this.attachedBytes.push(...files.map(file => new TextDecoder().decode(file.buffer)))
+    this.events.push(...files.map(file => `attach:${file.name}`))
   }
 }
 
@@ -126,6 +188,10 @@ class FakeGate implements TurnGate {
   acquired: { key: string; maxQueuedTurns: number }[] = []
   released: string[] = []
   leases = 0
+  /** Page a reopened key receives; unset means the double has no page to offer. */
+  reopenPage: ScriptedPage | undefined
+  /** Keys whose page the session asked to reopen. */
+  readonly reopened: string[] = []
 
   /**
    * @param key - provider or conversation key.
@@ -138,6 +204,16 @@ class FakeGate implements TurnGate {
     return () => {
       this.leases += 1
     }
+  }
+
+  /**
+   * @param key - page key whose page was closed by a context swap.
+   * @returns The configured replacement page.
+   */
+  async acquire(key: string): Promise<ScriptedPage> {
+    this.reopened.push(key)
+    if (this.reopenPage === undefined) throw new Error(`no replacement page for ${key}`)
+    return this.reopenPage
   }
 
   /**
@@ -162,16 +238,43 @@ it('sends one prompt and returns the stabilized answer markup', async () => {
   expect(page.submitted).toEqual(['hello'])
 })
 
+it('reopens the page a login context swap closed instead of failing the turn', async () => {
+  const stale = new ScriptedPage()
+  stale.closed = true
+  const fresh = new ScriptedPage()
+  fresh.answers = ['<p>ok</p>', '<p>ok</p>']
+  const gate = new FakeGate()
+  gate.reopenPage = fresh
+  const chat = new PlaywrightChatSession('glm-web', stale, DRIVER, CONFIG, gate)
+  const answer = await chat.send(payload())
+  expect(answer).toEqual({ content: '<p>ok</p>', finishReason: 'stop' })
+  expect(gate.reopened).toEqual(['glm-web'])
+  expect(fresh.submitted).toEqual(['hello'])
+})
+
+it('reports a signed-out site when the reopened page has no session', async () => {
+  const stale = new ScriptedPage()
+  stale.closed = true
+  const fresh = new ScriptedPage()
+  fresh.signedIn = false
+  const gate = new FakeGate()
+  gate.reopenPage = fresh
+  const chat = new PlaywrightChatSession('glm-web', stale, DRIVER, CONFIG, gate)
+  await expect(chat.send(payload())).rejects.toMatchObject({ token: 'chathub-signed-out' })
+})
+
 it('collects the site thinking blocks without mixing them into the answer', async () => {
   const page = new ScriptedPage()
   page.reasoningValue = 'first thought.\n\nsecond thought.'
   page.answers = ['<p>reply</p>', '<p>reply</p>', '<p>reply</p>']
-  const reasoningDriver: SiteDriverConfig = { ...DRIVER, reasoning: '.thinking' }
+  const reasoningDriver: SiteDriverConfig = { ...DRIVER, reasoning: '.thinking', reasoningExpand: '.steps' }
   const { session: chat } = session(page, new FakeGate(), reasoningDriver)
   const answer = await chat.send(payload())
   expect(answer.content).toBe('<p>reply</p>')
   expect(chat.lastReasoning()).toBe('first thought.\n\nsecond thought.')
   expect(answer.metadata).toEqual({ reasoning: 'first thought.\n\nsecond thought.' })
+  // The driver's expander travels with the read so collapsed work steps open.
+  expect(page.reasoningExpander).toBe('.steps')
 })
 
 it('keeps a long streaming answer alive instead of cutting it off at the idle deadline', async () => {
@@ -319,7 +422,7 @@ it('fails a turn that never stabilizes', async () => {
 it('fails when the page closes mid-turn', async () => {
   const { session: chat, page } = session()
   page.answers = ['answer']
-  page.closed = true
+  page.closeOnSubmit = true
   // A closed page is a browser lifecycle failure, not a sign-out: the token
   // keeps the provider off `needs-auth` and lets the route fail over.
   await expect(chat.send(payload())).rejects.toMatchObject({ token: 'chathub-browser-unavailable' })
@@ -446,4 +549,42 @@ it('reads a call block out of the message text the site rendered', () => {
   // to leave the delimiters and the JSON body untouched.
   expect(answerMessageText('<p>&lt;&lt;&lt;TOOL_CALL</p><p>{"name":"read","arguments":{"file_path":"a.ts"}}</p><p>TOOL_CALL&gt;&gt;&gt;</p>'))
     .toBe('<<<TOOL_CALL\n\n{"name":"read","arguments":{"file_path":"a.ts"}}\n\nTOOL_CALL>>>')
+})
+
+it('uploads the turn attachments before the prompt is submitted', async () => {
+  const { session: chat, page } = session()
+  page.answers = ['<p>ok</p>', '<p>ok</p>', '<p>ok</p>']
+  await chat.send({ ...payload(), attachments: [ATTACHMENT] })
+  expect(page.attached).toEqual(['截图.png'])
+  // Order is the contract: a prompt typed first is a turn sent without files.
+  expect(page.events).toEqual(['attach:截图.png', 'submit'])
+  // The transport decodes the base64 once, so the site gets bytes, not text.
+  expect(page.attachedBytes).toEqual(['图片字节'])
+})
+
+it('skips the upload for a turn that carries no attachments', async () => {
+  const { session: chat, page } = session()
+  page.answers = ['<p>ok</p>', '<p>ok</p>', '<p>ok</p>']
+  await chat.send(payload())
+  expect(page.events).toEqual(['submit'])
+})
+
+it('uploads the attachments of a watched turn too', async () => {
+  // watch is a separate submission path; it must not skip the upload.
+  const { session: chat, page } = session()
+  page.answers = ['<p>a</p>', '<p>a</p>', '<p>a</p>']
+  const seen: string[] = []
+  for await (const snapshot of chat.watch({ ...payload(), attachments: [ATTACHMENT] })) seen.push(snapshot)
+  expect(seen).toEqual(['<p>a</p>'])
+  expect(page.attached).toEqual(['截图.png'])
+})
+
+it('fails the turn when the site refuses its attachments', async () => {
+  const { session: chat, page } = session()
+  page.attachError = Object.assign(new Error('no upload input'), { token: 'chathub-attachment-unsupported' })
+  page.answers = ['<p>ok</p>']
+  await expect(chat.send({ ...payload(), attachments: [ATTACHMENT] }))
+    .rejects.toMatchObject({ token: 'chathub-attachment-unsupported' })
+  // A refused attachment does not half-send: the prompt never leaves.
+  expect(page.submitted).toEqual([])
 })

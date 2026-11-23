@@ -190,7 +190,7 @@ export class PlaywrightChatSession implements WebChatTransportSession {
    */
   constructor(
     private readonly key: string,
-    private readonly page: TurnPage,
+    private page: TurnPage,
     private readonly driver: SiteDriverConfig,
     private readonly config: TransportConfig,
     private readonly gate: TurnGate,
@@ -218,6 +218,8 @@ export class PlaywrightChatSession implements WebChatTransportSession {
   async send(payload: WebChatPayload): Promise<WebChatRawResponse> {
     const release = await this.gate.acquireTurn(this.key, this.config.maxQueuedTurns)
     try {
+      await this.ensurePage()
+      await this.attachFor(payload)
       const baseline = await this.answerNow(payload.prompt)
       await this.page.submit(payload.prompt, this.driver, this.config.typeDelayMs)
       const collected: TurnContent = { content: '' }
@@ -240,6 +242,8 @@ export class PlaywrightChatSession implements WebChatTransportSession {
   async *stream(payload: WebChatPayload): AsyncIterable<string> {
     const release = await this.gate.acquireTurn(this.key, this.config.maxQueuedTurns)
     try {
+      await this.ensurePage()
+      await this.attachFor(payload)
       const baseline = await this.answerNow(payload.prompt)
       await this.page.submit(payload.prompt, this.driver, this.config.typeDelayMs)
       yield* this.streamUntilComplete(payload.prompt, { content: '' }, baseline, 'deltas')
@@ -258,6 +262,8 @@ export class PlaywrightChatSession implements WebChatTransportSession {
   async *watch(payload: WebChatPayload): AsyncIterable<string> {
     const release = await this.gate.acquireTurn(this.key, this.config.maxQueuedTurns)
     try {
+      await this.ensurePage()
+      await this.attachFor(payload)
       const baseline = await this.answerNow(payload.prompt)
       await this.page.submit(payload.prompt, this.driver, this.config.typeDelayMs)
       // The last yielded snapshot is the stabilized answer: stabilization only
@@ -267,6 +273,52 @@ export class PlaywrightChatSession implements WebChatTransportSession {
     } finally {
       release()
     }
+  }
+
+  /**
+   * Replace a page the shared browser closed before this turn starts.
+   *
+   * A `managed` service that is signed in through a login window replaces its
+   * whole context: the headful context must stay, so every other key's page is
+   * closed with it. The provider keeps this session object, so without this
+   * check the next turn reads the dead page and fails as
+   * `chathub-browser-unavailable` — reported to the user as one provider being
+   * temporarily unavailable although the site is fine and still signed in.
+   * @returns Resolves when a page bound to this key is open and signed in.
+   * @throws BrowserTransportError with `chathub-signed-out` when the reopened
+   *   page has no session, or `chathub-browser-unavailable` when it cannot open.
+   */
+  private async ensurePage(): Promise<void> {
+    if (!this.page.isClosed()) return
+    const page = await this.gate.acquire(this.key, this.driver)
+    const signedIn = await page.waitForInput(this.driver, this.config.loginTimeoutMs, this.config.pollMs)
+    if (!signedIn) {
+      await page.close()
+      throw new BrowserTransportError('chathub-signed-out', `${this.key}: the reopened page is not signed in`)
+    }
+    this.page = page
+  }
+
+  /**
+   * Put this turn's attachments on the page before its prompt is typed.
+   *
+   * The payload carries base64; the transport decodes it once, here, so
+   * nothing above this layer handles file bytes and nothing below it handles
+   * text.
+   * @param payload - the turn being sent.
+   * @returns Resolves when the page has taken every file.
+   */
+  private async attachFor(payload: WebChatPayload): Promise<void> {
+    const files = payload.attachments
+    if (files === undefined || files.length === 0) return
+    await this.page.attach(
+      files.map(file => ({
+        name: file.name,
+        mimeType: file.mimeType,
+        buffer: Buffer.from(file.data, 'base64'),
+      })),
+      this.driver,
+    )
   }
 
   /** @returns Resolves when the page is released. */
@@ -437,7 +489,7 @@ export class PlaywrightChatSession implements WebChatTransportSession {
   private async collectReasoning(): Promise<void> {
     if (this.driver.reasoning === undefined) return
     try {
-      const markup = await this.page.reasoningHtml(this.driver.reasoning)
+      const markup = await this.page.reasoningHtml(this.driver.reasoning, this.driver.reasoningExpand)
       // Each block is converted on its own so the site's thinking steps stay
       // separated instead of collapsing into one wall of prose.
       this.reasoning = markup

@@ -45,6 +45,11 @@ it('rejects poll bounds below one', () => {
   expect(() => resolveSiteDrivers({ 'gemini-web': { stablePolls: 0 } })).toThrow('stablePolls below 1')
 })
 
+it('rejects an empty reasoning expander', () => {
+  expect(() => resolveSiteDrivers({ 'qianwen-web': { reasoningExpand: '   ' } }))
+    .toThrow('driver "qianwen-web" has an empty reasoningExpand')
+})
+
 it('rejects an uncompilable signed-out path', () => {
   expect(() => resolveSiteDrivers({ 'doubao-web': { signedOutPath: '(' } }))
     .toThrow('driver "doubao-web" has invalid signedOutPath')
@@ -69,6 +74,64 @@ it('uses a real visible guest wall for gemini, not the hidden ServiceLogin link'
   expect(wall).toContain('sidenav-error')
   expect(wall).toContain('.signed-out-buttons')
   expect(DEFAULT_SITE_DRIVERS['gemini-web']?.loginCookie).toBe('SAPISID')
+})
+
+it('pins the account cookie each composer-visible site sets on sign-in', () => {
+  // Verified against a signed-in Chrome profile (2026-11-22): qianwen.com
+  // sets `tongyi_sso_ticket` and chatglm.cn sets `chatglm_refresh_token`.
+  // A wrong name never matches, so login waits out the full deadline and the
+  // panel keeps every other model's sign-in button disabled meanwhile.
+  expect(DEFAULT_SITE_DRIVERS['qianwen-web']?.loginCookie).toBe('tongyi_sso_ticket')
+  expect(DEFAULT_SITE_DRIVERS['glm-web']?.loginCookie).toBe('chatglm_refresh_token')
+})
+
+it('finds answers in the AgentMore layout chatglm.cn serves since 2026-11', () => {
+  // Verified against a live signed-in chatglm.cn turn (2026-11-22): the reply
+  // renders as `.markdown-body` inside `[data-message-role="assistant"]`, and
+  // the reasoning trace is a `.thinking-group` in the same row. The previous
+  // `.answer-content-wrap` markup is gone, so without this the answer is on the
+  // page but no selector matches and every turn runs to its timeout.
+  const answer = DEFAULT_SITE_DRIVERS['glm-web']?.answer ?? ''
+  expect(answer).toContain('[data-message-role="assistant"] .markdown-body')
+  expect(DEFAULT_SITE_DRIVERS['glm-web']?.reasoning).toContain('.thinking-group')
+})
+
+it('reads the qianwen workbench reply only after the card reports complete', () => {
+  // Verified against a live signed-in qianwen.com workbench turn (2026-11-22):
+  // the card first holds a stable acknowledgement ("收到，我将为你查询…") and
+  // only then swaps in the reply, with the work steps moved under
+  // `data-execution-section="process"`. Reading the card without the
+  // complete-status gate ended the turn on the acknowledgement.
+  const answer = DEFAULT_SITE_DRIVERS['qianwen-web']?.answer ?? ''
+  expect(answer).toContain('.chat-answers-card-wrap:has(button[data-status="complete"])')
+  expect(answer).toContain('[data-execution-section="process"]')
+  expect(DEFAULT_SITE_DRIVERS['qianwen-web']?.pending).toContain('问题分析中')
+})
+
+it('opens the qianwen work steps before reading them as reasoning', () => {
+  // Verified against a live workbench turn (2026-11-23): the process section
+  // renders only a divider while `data-collapsed="true"`, so the driver names
+  // the status button that reveals its steps.
+  const driver = DEFAULT_SITE_DRIVERS['qianwen-web']
+  expect(driver?.reasoning).toBe('[data-execution-section="process"]')
+  expect(driver?.reasoningExpand).toContain('button[data-status="complete"][data-expandable="true"]')
+})
+
+it('reads the doubao assistant reply, not the user echo or search strip', () => {
+  // Verified against a live doubao.com searching turn (2026-11-23): the user
+  // message renders its own `message_text_content` inside `.md-box-root`, and
+  // the assistant turn shows a sibling "搜索 3 个关键词，参考 12 篇资料" block
+  // before writing the reply. A selector without the assistant role matched
+  // that echo first and read the whole harness prompt back as the answer.
+  const driver = DEFAULT_SITE_DRIVERS['doubao-web']
+  const answer = driver?.answer ?? ''
+  expect(answer).toContain('[data-testid="receive_message"][data-message-role="assistant"]')
+  expect(answer).not.toMatch(/(?:^|,\s*)\.md-box-root/)
+  expect(driver?.pending).toContain('参考')
+  expect(driver?.reasoning).toContain('search_query_result_block')
+  // The search card renders its sources by default; the same control
+  // collapses it, so naming it would hide the trace.
+  expect(driver?.reasoningExpand).toBeUndefined()
 })
 
 it('accepts a driver without a signed-out path', () => {

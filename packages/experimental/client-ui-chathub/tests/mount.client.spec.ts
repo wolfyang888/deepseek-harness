@@ -8,6 +8,8 @@ import type { StoreHandle } from '@deepseek-ai/dsh-client-store'
 import { RemoteError, type RemoteResult, type TypertRemoteContribution } from '@deepseek-ai/dsh-typert-protocol'
 import type { ChatMessage, ProviderHealth } from '@deepseek-ai/dsh-experimental-chathub'
 import type {
+  ChatHubCompareEvent,
+  ChatHubCompareInput,
   ChatHubPanelState,
   ChatHubSessionView,
   ChatHubSwitchResult,
@@ -69,6 +71,9 @@ function fixture() {
     })),
     switch: vi.fn<() => Promise<RemoteResult<ChatHubSwitchResult>>>(async () => ({ ok: true, value: SWITCHED })),
     delete: vi.fn<() => Promise<RemoteResult<void>>>(async () => ({ ok: true, value: undefined })),
+    compareStream: vi.fn<(input: ChatHubCompareInput, signal?: AbortSignal) => AsyncIterable<ChatHubCompareEvent>>(
+      () => (async function* (): AsyncIterable<ChatHubCompareEvent> {})(),
+    ),
   }
   const webChat = {
     login: vi.fn<() => Promise<RemoteResult<ProviderHealth>>>(async () => ({ ok: true, value: HEALTH })),

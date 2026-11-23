@@ -19,6 +19,7 @@ import {
 import { describe, expect, it } from 'vitest'
 import { MemoryMediaPool, MemoryStorageBackend } from '../../../storage/storage-domain/tests/helpers/memory-backend.ts'
 import { ChatHubController } from '../src/controller.ts'
+import type { ChatHubCompareEvent } from '../src/types.ts'
 
 const AT = Date.UTC(2026, 10, 1, 12)
 
@@ -34,6 +35,9 @@ class TurnProvider implements IModelProvider {
   normalizeError?: (error: unknown) => ProviderErrorCode
   healthStatus?: () => Promise<ProviderStatus>
   private readonly answers: (string | Error)[]
+  private readonly metadata?: Record<string, unknown>
+  private readonly chunks?: readonly ChatStreamChunk[]
+  private readonly hold?: Promise<void>
 
   constructor(options: {
     id: string
@@ -41,10 +45,16 @@ class TurnProvider implements IModelProvider {
     answers?: readonly (string | Error)[]
     code?: ProviderErrorCode
     health?: ProviderStatus | Error
+    metadata?: Record<string, unknown>
+    chunks?: readonly ChatStreamChunk[]
+    hold?: Promise<void>
   }) {
     this.id = options.id
     this.name = options.name ?? options.id
     this.answers = [...(options.answers ?? [])]
+    this.metadata = options.metadata
+    this.chunks = options.chunks
+    this.hold = options.hold
     if (options.code !== undefined) {
       const code = options.code
       this.normalizeError = () => code
@@ -55,15 +65,38 @@ class TurnProvider implements IModelProvider {
     }
   }
 
-  async init(): Promise<void> {}
-  async isReady(): Promise<boolean> { return true }
+  /** Whether the site is already open; a cold one makes the caller open it. */
+  ready = true
+  /** Times `init()` ran, so a cold-site open is observable. */
+  initCount = 0
+  async init(): Promise<void> { this.initCount += 1 }
+  async isReady(): Promise<boolean> { return this.ready }
   async sendMessage(request: ChatRequest): Promise<ChatResponse> {
     this.requests.push(request)
     const answer = this.answers.shift()
     if (answer instanceof Error) throw answer
-    return { providerId: this.id, sessionId: request.sessionId, content: answer ?? `${this.id} answer` }
+    return {
+      providerId: this.id,
+      sessionId: request.sessionId,
+      content: answer ?? `${this.id} answer`,
+      ...this.metadata === undefined ? {} : { metadata: this.metadata },
+    }
   }
-  async *streamMessage(): AsyncIterable<ChatStreamChunk> {}
+  async *streamMessage(request: ChatRequest): AsyncIterable<ChatStreamChunk> {
+    this.requests.push(request)
+    // A held site has not written anything yet: the column must not block the rest.
+    if (this.hold !== undefined) await this.hold
+    if (this.chunks !== undefined) {
+      for (const chunk of this.chunks) yield chunk
+      return
+    }
+    const answer = this.answers.shift()
+    if (answer instanceof Error) throw answer
+    // A real site writes the answer in pieces; one delta plus the closing
+    // chunk is enough to exercise the comparison's accumulation.
+    yield { index: 0, delta: answer ?? `${this.id} answer` }
+    yield { index: 0, finishReason: 'stop', ...this.metadata === undefined ? {} : { metadata: this.metadata } }
+  }
   async close(): Promise<void> {}
 }
 
@@ -421,6 +454,276 @@ describe('ChatHubController recovery', () => {
       await expect(second.controller.resume()).resolves.toEqual(state)
     } finally {
       await second.ctx.fiber.dispose()
+    }
+  })
+})
+
+describe('ChatHubController compare', () => {
+  it('answers every requested model side by side', async () => {
+    const { ctx, controller, providers } = await harness({
+      providers: [
+        new TurnProvider({ id: 'deepseek-web', answers: ['deep answer'] }),
+        new TurnProvider({ id: 'gemini-web', answers: ['gemini answer'] }),
+      ],
+    })
+    try {
+      const result = await controller.compare({ content: 'compare this', providers: ['deepseek-web', 'gemini-web'] })
+      expect(result.sides).toEqual([
+        { provider: 'deepseek-web', providerName: 'deepseek-web', status: 'done', content: 'deep answer', elapsedMs: 0 },
+        { provider: 'gemini-web', providerName: 'gemini-web', status: 'done', content: 'gemini answer', elapsedMs: 0 },
+      ])
+      // Both columns get the same words, and no system prompt or history.
+      expect(providers.map(provider => provider.requests[0]?.messages)).toEqual([
+        [{ role: 'user', content: 'compare this' }],
+        [{ role: 'user', content: 'compare this' }],
+      ])
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('carries the site reasoning trace into its own column', async () => {
+    // A site that renders a search / thinking trace reports it through response
+    // metadata; the compare view shows it next to the answer it explains.
+    const { ctx, controller } = await harness({
+      providers: [
+        new TurnProvider({ id: 'doubao-web', answers: ['answer'], metadata: { reasoning: '搜索了 2 个关键词，参考 9 篇资料' } }),
+        new TurnProvider({ id: 'qianwen-web', answers: ['plain answer'] }),
+      ],
+    })
+    try {
+      const result = await controller.compare({ content: 'x', providers: ['doubao-web', 'qianwen-web'] })
+      expect(result.sides[0]?.reasoning).toBe('搜索了 2 个关键词，参考 9 篇资料')
+      // A site without a trace keeps the column free of an empty expander.
+      expect(result.sides[1]).not.toHaveProperty('reasoning')
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('collapses a repeated model and stops at four columns', async () => {
+    const providers = ['a-web', 'b-web', 'c-web', 'd-web', 'e-web'].map(id => new TurnProvider({ id }))
+    const { ctx, controller } = await harness({ providers })
+    try {
+      const result = await controller.compare({ content: 'x', providers: ['a-web', 'a-web', 'b-web', 'c-web', 'd-web', 'e-web'] })
+      expect(result.sides.map(side => side.provider)).toEqual(['a-web', 'b-web', 'c-web', 'd-web'])
+      // The fifth site is never touched: the ceiling is a fan-out limit, not a queue.
+      expect(providers[4]?.requests).toEqual([])
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('returns no columns for an empty request', async () => {
+    const { ctx, controller } = await harness()
+    try {
+      await expect(controller.compare({ content: 'x', providers: [] })).resolves.toEqual({ sides: [] })
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('reports an unknown model in its own column and still answers the rest', async () => {
+    const { ctx, controller } = await harness({ providers: [new TurnProvider({ id: 'deepseek-web' })] })
+    try {
+      const result = await controller.compare({ content: 'x', providers: ['deepseek-web', 'typo-web'] })
+      expect(result.sides[0]).toMatchObject({ provider: 'deepseek-web', status: 'done' })
+      // A typo costs its own column only; the good answer still comes back.
+      expect(result.sides[1]).toEqual({
+        provider: 'typo-web',
+        providerName: 'typo-web',
+        status: 'failed',
+        lastError: 'chathub-driver-missing',
+        elapsedMs: 0,
+      })
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('isolates a failing model from the answer that arrived', async () => {
+    const failing = new TurnProvider({ id: 'gemini-web', answers: [new Error('site said no')], code: 'rate-limited' })
+    const { ctx, controller } = await harness({
+      providers: [new TurnProvider({ id: 'deepseek-web', answers: ['fine'] }), failing],
+    })
+    try {
+      const result = await controller.compare({ content: 'x', providers: ['deepseek-web', 'gemini-web'] })
+      expect(result.sides.map(side => side.status)).toEqual(['done', 'failed'])
+      expect(result.sides[0]?.content).toBe('fine')
+      // The column carries the adapter's stable code, not its message.
+      expect(result.sides[1]?.lastError).toBe('rate-limited')
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('reports a code the adapter cannot normalize', async () => {
+    const { ctx, controller } = await harness({
+      providers: [new TurnProvider({ id: 'deepseek-web', answers: [new Error('boom')] })],
+    })
+    try {
+      const result = await controller.compare({ content: 'x', providers: ['deepseek-web'] })
+      expect(result.sides[0]).toMatchObject({ status: 'failed', lastError: 'unknown' })
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('opens a site that was never started before asking it', async () => {
+    const cold = new TurnProvider({ id: 'deepseek-web', answers: ['warm answer'] })
+    cold.ready = false
+    const { ctx, controller } = await harness({ providers: [cold] })
+    try {
+      // A comparison often runs before any session opened the site.
+      const result = await controller.compare({ content: 'x', providers: ['deepseek-web'] })
+      expect(result.sides[0]?.content).toBe('warm answer')
+      expect(cold.initCount).toBe(1)
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('leaves an already-open site alone', async () => {
+    const { ctx, controller, providers } = await harness({ providers: [new TurnProvider({ id: 'deepseek-web' })] })
+    try {
+      await controller.compare({ content: 'x', providers: ['deepseek-web'] })
+      expect(providers[0]?.initCount).toBe(0)
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('forwards the shared attachments to every model', async () => {
+    const files = [{ name: 'shot.png', mimeType: 'image/png', data: 'cG5n' }]
+    const { ctx, controller, providers } = await harness()
+    try {
+      await controller.compare({ content: 'x', providers: ['deepseek-web', 'gemini-web'], attachments: files })
+      // One pick, every column: each site uploads the same bytes itself.
+      expect(providers.map(provider => provider.requests[0]?.attachments)).toEqual([files, files])
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('persists nothing: a comparison is a scratch question', async () => {
+    const { ctx, controller } = await harness()
+    try {
+      await controller.compare({ content: 'x', providers: ['deepseek-web', 'gemini-web'] })
+      // No session, no checkpoint, no timeline entry: the panel's list stays empty.
+      expect((await controller.state()).sessions).toEqual([])
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+})
+
+describe('ChatHubController compareStream', () => {
+  /** Collect every event of one stream, so assertions read in order. */
+  async function drain(stream: AsyncIterable<ChatHubCompareEvent>): Promise<ChatHubCompareEvent[]> {
+    const events: ChatHubCompareEvent[] = []
+    for await (const event of stream) events.push(event)
+    return events
+  }
+
+  it('emits the answer as the site grows it, then one settled column', async () => {
+    const { ctx, controller } = await harness({
+      providers: [new TurnProvider({
+        id: 'deepseek-web',
+        chunks: [
+          { index: 0, delta: 'A gro' },
+          // The same markup, longer: a growth suffix replaces the snapshot.
+          { index: 0, delta: 'A growing' },
+          // Unrelated text rebuilds the answer: it is appended.
+          { index: 0, delta: 'B side' },
+        ],
+      })],
+    })
+    try {
+      const events = await drain(controller.compareStream({ content: 'x', providers: ['deepseek-web'] }))
+      expect(events).toEqual([
+        { kind: 'progress', provider: 'deepseek-web', content: 'A gro' },
+        { kind: 'progress', provider: 'deepseek-web', content: 'A growing' },
+        { kind: 'progress', provider: 'deepseek-web', content: 'A growingB side' },
+        {
+          kind: 'settled',
+          side: {
+            provider: 'deepseek-web',
+            providerName: 'deepseek-web',
+            status: 'done',
+            content: 'A growingB side',
+            elapsedMs: 0,
+          },
+        },
+      ])
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('settles a finished column without waiting for a site that is still writing', async () => {
+    let release: () => void = () => {}
+    const hold = new Promise<void>((resolve) => { release = resolve })
+    const { ctx, controller } = await harness({
+      providers: [
+        new TurnProvider({ id: 'deepseek-web', answers: ['fast answer'] }),
+        new TurnProvider({ id: 'qwen-web', answers: ['slow answer'], hold }),
+      ],
+    })
+    try {
+      const events: ChatHubCompareEvent[] = []
+      const consuming = (async (): Promise<void> => {
+        for await (const event of controller.compareStream({ content: 'x', providers: ['deepseek-web', 'qwen-web'] })) {
+          events.push(event)
+        }
+      })()
+      // Let the fast site finish while the slow one is still silent.
+      await new Promise((resolve) => { setTimeout(resolve, 0) })
+      expect(events).toContainEqual({
+        kind: 'settled',
+        side: expect.objectContaining({ provider: 'deepseek-web', content: 'fast answer' }),
+      })
+      expect(events.some(event => event.kind === 'progress' && event.provider === 'qwen-web')).toBe(false)
+      expect(events.some(event => event.kind === 'settled' && event.side.provider === 'qwen-web')).toBe(false)
+      release()
+      await consuming
+      expect(events.at(-1)).toMatchObject({ kind: 'settled', side: { provider: 'qwen-web', content: 'slow answer' } })
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('carries the closing chunk reasoning into the settled column', async () => {
+    const { ctx, controller } = await harness({
+      providers: [new TurnProvider({
+        id: 'doubao-web',
+        chunks: [
+          { index: 0, delta: 'answer' },
+          { index: 0, finishReason: 'stop', metadata: { reasoning: '找到 3 篇资料' } },
+        ],
+      })],
+    })
+    try {
+      const events = await drain(controller.compareStream({ content: 'x', providers: ['doubao-web'] }))
+      expect(events.at(-1)).toMatchObject({
+        kind: 'settled',
+        side: { provider: 'doubao-web', status: 'done', content: 'answer', reasoning: '找到 3 篇资料' },
+      })
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('yields nothing for an already-cancelled comparison', async () => {
+    const { ctx, controller, providers } = await harness({ providers: [new TurnProvider({ id: 'deepseek-web' })] })
+    try {
+      const cancellation = new AbortController()
+      cancellation.abort()
+      const events = await drain(controller.compareStream({ content: 'x', providers: ['deepseek-web'] }, cancellation.signal))
+      expect(events).toEqual([])
+      // No site turn started for a stream nobody is reading.
+      expect(providers[0]?.requests).toEqual([])
+    } finally {
+      await ctx.fiber.dispose()
     }
   })
 })

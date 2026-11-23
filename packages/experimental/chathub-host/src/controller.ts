@@ -25,6 +25,10 @@ import {
 } from '@deepseek-ai/dsh-experimental-chathub'
 import { chatHubDomainSpec, ChatHubRepository } from './storage.ts'
 import type {
+  ChatHubCompareEvent,
+  ChatHubCompareInput,
+  ChatHubCompareResult,
+  ChatHubCompareSide,
   ChatHubCreateInput,
   ChatHubPanelState,
   ChatHubProviderView,
@@ -34,6 +38,16 @@ import type {
   ChatHubTurnResult,
   ProviderStatus as PanelProviderStatus,
 } from './types.ts'
+
+/**
+ * Models one comparison may ask at once.
+ *
+ * Every column is a separate signed-in site drive and a separate site turn, so
+ * a wide comparison is a burst the sites notice; the compare view ships with
+ * two columns and this ceiling keeps a hand-written call from turning the
+ * panel into a scraper.
+ */
+const MAX_COMPARE_MODELS = 4
 
 /** ChatHubController construction inputs. */
 export interface ChatHubControllerOptions {
@@ -185,6 +199,181 @@ export class ChatHubController extends TypertRemoteService {
       this.manager.setStatus(sessionId, 'failed', lastError)
       await this.persistSession(repository, record)
       return { sessionId, status: 'failed', lastError }
+    }
+  }
+
+  /**
+   * Ask several models the same prompt at once and return every answer.
+   *
+   * The panel's compare view needs answers side by side without opening a
+   * session per model: a session is a persisted conversation with its own
+   * checkpoint history, and a comparison is a scratch question. Nothing here
+   * touches the repository, the timeline, or a checkpoint — each column drives
+   * its provider directly, and one failing model leaves the other columns
+   * intact, so a signed-out site reports its code in its own column instead of
+   * failing the whole comparison.
+   * @param input - the prompt, the models to ask, and any files to upload.
+   * @returns One column per requested model, in request order. A provider this
+   *   host does not ship reports `chathub-driver-missing` in its own column
+   *   rather than rejecting the call, so a typo cannot erase the good answer.
+   */
+  @Remote
+  async compare(input: ChatHubCompareInput): Promise<ChatHubCompareResult> {
+    const order = [...new Set(input.providers)].slice(0, MAX_COMPARE_MODELS)
+    const settled = new Map<string, ChatHubCompareSide>()
+    for await (const event of this.compareStream(input)) {
+      if (event.kind === 'settled') settled.set(event.side.provider, event.side)
+    }
+    return { sides: order.flatMap(providerId => settled.get(providerId) ?? []) }
+  }
+
+  /**
+   * Ask several models the same prompt at once, streaming every column.
+   *
+   * Each column is an independent site turn whose answer text is pushed as the
+   * site writes it, so a model that finishes first shows its answer without
+   * waiting for the others. A column settles exactly once, with either its
+   * answer and reasoning trace or its stable failure code. One failing column
+   * leaves the rest running, and cancelling the stream aborts the site turns
+   * that are still in flight.
+   * @param input - the prompt, the models to ask, and any files to upload.
+   * @param signal - consumer cancellation for every column still running.
+   * @returns Interleaved column progress, then one settled event per column.
+   */
+  @Remote({ mode: 'stream' })
+  async *compareStream(input: ChatHubCompareInput, signal?: AbortSignal): AsyncIterable<ChatHubCompareEvent> {
+    const providerIds = [...new Set(input.providers)].slice(0, MAX_COMPARE_MODELS)
+    if (providerIds.length === 0 || signal?.aborted === true) return
+    // The site sees one scratch conversation per comparison; the id only names
+    // that conversation and is never stored.
+    const sessionId = `compare-${this.now()}`
+    const lifetime = new AbortController()
+    const stop = (): void => { lifetime.abort() }
+    signal?.addEventListener('abort', stop, { once: true })
+    const events: ChatHubCompareEvent[] = []
+    let wake: (() => void) | undefined
+    const push = (event: ChatHubCompareEvent): void => {
+      events.push(event)
+      const resume = wake
+      wake = undefined
+      resume?.()
+    }
+    let running = providerIds.length
+    const runs = providerIds.map(async (providerId): Promise<void> => {
+      try {
+        await this.compareColumn(providerId, input, sessionId, lifetime.signal, push)
+      } finally {
+        running -= 1
+        const resume = wake
+        wake = undefined
+        resume?.()
+      }
+    })
+    try {
+      while (true) {
+        const event = events.shift()
+        if (event !== undefined) {
+          yield event
+          continue
+        }
+        if (running === 0) return
+        await new Promise<void>((resolve) => { wake = resolve })
+      }
+    } finally {
+      signal?.removeEventListener('abort', stop)
+      lifetime.abort()
+      // A cancelled turn may reject late; consume it so it stays handled.
+      await Promise.allSettled(runs)
+    }
+  }
+
+  /**
+   * Drive one comparison column to its settled event.
+   * @param providerId - model id to ask.
+   * @param input - the shared prompt and files.
+   * @param sessionId - scratch site conversation id for this comparison.
+   * @param signal - comparison cancellation.
+   * @param push - sink for this column's progress and settlement.
+   * @returns Resolves when the column settled or was cancelled.
+   */
+  private async compareColumn(
+    providerId: string,
+    input: ChatHubCompareInput,
+    sessionId: string,
+    signal: AbortSignal,
+    push: (event: ChatHubCompareEvent) => void,
+  ): Promise<void> {
+    const startedAt = this.now()
+    // An unregistered id fails its own column instead of rejecting the call,
+    // so the answers that did arrive still reach the panel.
+    const provider = this.registry.get(providerId)
+    if (provider === undefined) {
+      push({
+        kind: 'settled',
+        side: {
+          provider: providerId,
+          providerName: providerId,
+          status: 'failed',
+          lastError: 'chathub-driver-missing',
+          elapsedMs: 0,
+        },
+      })
+      return
+    }
+    try {
+      // A comparison often happens before any session exists, so this path
+      // opens the site itself rather than requiring a prior turn to have.
+      if (!(await provider.isReady())) await provider.init()
+      if (signal.aborted) return
+      const request = {
+        sessionId,
+        providerId,
+        messages: [{ role: 'user' as const, content: input.content }],
+        ...input.attachments === undefined ? {} : { attachments: input.attachments },
+      }
+      let content = ''
+      let reasoning = ''
+      for await (const chunk of provider.streamMessage(request)) {
+        if (signal.aborted) return
+        // A site's delta stream is either suffix growth or the container's
+        // whole markup after a rewrite; both reduce to the text so far.
+        if (chunk.delta !== undefined && chunk.delta.length > 0) {
+          content = chunk.delta.length > content.length && chunk.delta.startsWith(content)
+            ? chunk.delta
+            : content + chunk.delta
+          push({ kind: 'progress', provider: providerId, content })
+        } else if (chunk.content !== undefined && chunk.content.length > 0) {
+          content = chunk.content
+          push({ kind: 'progress', provider: providerId, content })
+        }
+        const trace = chunk.metadata?.['reasoning']
+        if (typeof trace === 'string' && trace.length > 0) reasoning = trace
+      }
+      push({
+        kind: 'settled',
+        side: {
+          provider: providerId,
+          providerName: provider.name,
+          status: 'done',
+          content,
+          ...reasoning.length === 0 ? {} : { reasoning },
+          elapsedMs: this.now() - startedAt,
+        },
+      })
+    } catch (error) {
+      // A cancelled turn is not a failure of the column.
+      if (signal.aborted) return
+      // The adapter normalized the rejection; the column shows the code.
+      push({
+        kind: 'settled',
+        side: {
+          provider: providerId,
+          providerName: provider.name,
+          status: 'failed',
+          lastError: provider.normalizeError?.(error) ?? 'unknown',
+          elapsedMs: this.now() - startedAt,
+        },
+      })
     }
   }
 

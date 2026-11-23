@@ -303,3 +303,8 @@
   margin-left: auto;
   white-space: nowrap;
 }
+
+.headerActive {
+  background: var(--dsw-alias-fill-neutral);
+  color: var(--dsw-alias-label-primary);
+}

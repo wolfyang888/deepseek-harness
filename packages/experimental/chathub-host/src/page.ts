@@ -2,7 +2,14 @@
 
 import { setTimeout as sleep } from 'node:timers/promises'
 import { BrowserTransportError, classifyPageError, isOperationTimeout } from './errors.ts'
-import type { BrowserInputLike, BrowserPageLike, ChatPageHandle, SiteDriverConfig } from './types.ts'
+import { answerTextOf } from './session.ts'
+import type {
+  BrowserInputLike,
+  BrowserPageLike,
+  ChatPageHandle,
+  FilePayloadLike,
+  SiteDriverConfig,
+} from './types.ts'
 
 /**
  * How long one submitted composer gets to clear before the send reads as dropped.
@@ -24,6 +31,38 @@ const SEND_SETTLE_MS = 3_000
  * slow hydration still lands inside the same page.
  */
 const SUBMIT_ATTEMPTS = 3
+
+/**
+ * How long a site gets to register uploaded files when its driver names no
+ * window of its own.
+ *
+ * A site shows the filename in the composer as soon as the upload begins, so
+ * this is not a wait for the file to be readable: it is the moment the site
+ * binds the file to the next message rather than the one after it.
+ */
+const DEFAULT_UPLOAD_SETTLE_MS = 2_500
+
+/**
+ * A file input seen through the locator face.
+ *
+ * Playwright's own `setInputFiles` also accepts path strings and single
+ * payloads, which this host never passes: attachments arrive as decoded bytes.
+ * Widening `BrowserInputLike` to that union would make every real Playwright
+ * page stop matching the interface it is declared against, so the upload
+ * signature stays local to the one call site that uses it. The method is
+ * optional because a page supplied by a driver test may expose no upload input
+ * at all, and `attach` reports that case as unsupported.
+ */
+interface UploadInputLike {
+  /** @returns How many nodes match this locator. */
+  count(): Promise<number>
+  /**
+   * @param files - decoded uploads in pick order.
+   * @param options - optional operation timeout.
+   * @returns Resolves when the input knows the files.
+   */
+  setInputFiles?(files: readonly FilePayloadLike[], options?: { timeout?: number }): Promise<void>
+}
 
 /**
  * How long a rendered composer may still lack the session cookie before the
@@ -217,6 +256,14 @@ export class PlaywrightPage implements ChatPageHandle {
   }
 
   /**
+   * Raise the page's window and focus it.
+   * @returns Resolves when the activation request is delivered.
+   */
+  async bringToFront(): Promise<void> {
+    await this.page.bringToFront()
+  }
+
+  /**
    * Read the site's visible chain of thought.
    *
    * Deep-thinking modes keep the reasoning in sibling blocks that the answer
@@ -225,10 +272,15 @@ export class PlaywrightPage implements ChatPageHandle {
    * page on every tick. `innerHTML` is used rather than a text-only helper so
    * this works with the same minimal locator face every other read uses.
    * @param selector - driver-declared reasoning block selector.
+   * @param expand - optional control opened before the blocks are read.
    * @returns Each matching block's markup joined by a blank-line separator.
    */
-  async reasoningHtml(selector: string): Promise<string> {
+  async reasoningHtml(selector: string, expand?: string): Promise<string> {
     try {
+      // The expander is a toggle: a site that opens its steps by default (or
+      // one already opened by an earlier read) must not be clicked shut, which
+      // would leave the trace emptier than before.
+      if (expand !== undefined && await this.newestReasoningEmpty(selector)) await this.revealReasoning(expand)
       const locator = this.page.locator(selector)
       const count = await locator.count()
       const parts: string[] = []
@@ -240,6 +292,39 @@ export class PlaywrightPage implements ChatPageHandle {
       if (isOperationTimeout(error)) return ''
       throw classifyPageError(error, `${this.key}: reading reasoning "${selector}"`)
     }
+  }
+
+  /**
+   * Whether the newest reasoning block renders no visible text.
+   *
+   * A collapsed work-step section keeps its elements and shows only a divider,
+   * so the markup is non-empty while the text is not. No block at all counts as
+   * empty: such a site renders the steps only once they are opened.
+   * @param selector - driver-declared reasoning block selector.
+   * @returns true when there is no text to read yet.
+   */
+  private async newestReasoningEmpty(selector: string): Promise<boolean> {
+    const locator = this.page.locator(selector)
+    const count = await locator.count()
+    if (count === 0) return true
+    const html = await locator.nth(count - 1).innerHTML({ timeout: this.actionTimeoutMs })
+    return answerTextOf(html).length === 0
+  }
+
+  /**
+   * Open the newest work-step control, if the site renders one.
+   *
+   * The newest control is the turn that just finished; earlier cards stay as
+   * they are, so a second turn never collapses the reply read before it. The
+   * caller only reaches here while the newest steps hold no text, so this is
+   * the opening click of a toggle, not a blind click.
+   * @param selector - driver-declared control that reveals the work steps.
+   */
+  private async revealReasoning(selector: string): Promise<void> {
+    const controls = this.page.locator(selector)
+    const count = await controls.count()
+    if (count === 0) return
+    await controls.nth(count - 1).click({ timeout: this.actionTimeoutMs })
   }
 
   /**
@@ -380,6 +465,46 @@ export class PlaywrightPage implements ChatPageHandle {
       // below still guard the turn.
       return ''
     }
+  }
+
+  /**
+   * Upload files to the site's attachment input before the prompt is typed.
+   *
+   * A site's paper-clip button only opens the operating system's file picker,
+   * and no automation can answer that dialog; setting the files on the hidden
+   * input leaves the site in the same state a real pick does, so the composer
+   * carries the same thumbnails and the site uploads on its own.
+   * @param files - decoded attachments in pick order.
+   * @param driver - site facts: the upload input and its settle window.
+   * @throws BrowserTransportError with `chathub-attachment-unsupported` when
+   *   the driver declares no upload input, or the page renders none.
+   */
+  async attach(files: readonly FilePayloadLike[], driver: SiteDriverConfig): Promise<void> {
+    if (files.length === 0) return
+    if (driver.fileInput === undefined) {
+      throw new BrowserTransportError(
+        'chathub-attachment-unsupported',
+        `${this.key}: this site declares no attachment input`,
+      )
+    }
+    const input = this.page.locator(driver.fileInput).first() as unknown as UploadInputLike
+    const setInputFiles = input.setInputFiles?.bind(input)
+    if (setInputFiles === undefined || (await input.count().catch(() => 0)) === 0) {
+      throw new BrowserTransportError(
+        'chathub-attachment-unsupported',
+        `${this.key}: no file input matches "${driver.fileInput}"`,
+      )
+    }
+    try {
+      await setInputFiles(files, { timeout: this.actionTimeoutMs })
+    } catch (error) {
+      throw classifyPageError(error, `${this.key}: uploading attachments`)
+    }
+    // The composer accepts the prompt the moment the files are picked, while
+    // the upload is still running: the site then sends the message without
+    // them. Give the site its window before the text is typed.
+    const settleMs = driver.uploadSettleMs ?? DEFAULT_UPLOAD_SETTLE_MS
+    if (settleMs > 0) await sleep(Math.min(settleMs, this.actionTimeoutMs))
   }
 
   /**

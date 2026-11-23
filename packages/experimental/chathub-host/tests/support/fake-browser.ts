@@ -14,6 +14,7 @@ import type {
 type FakePageOperation =
   | 'goto'
   | 'close'
+  | 'bringToFront'
   | 'count'
   | 'isVisible'
   | 'boundingBox'
@@ -22,6 +23,7 @@ type FakePageOperation =
   | 'type'
   | 'insertText'
   | 'press'
+  | 'setInputFiles'
 
 /** Locator double whose behavior follows its page's maps. */
 class FakeLocator implements BrowserInputLike {
@@ -91,6 +93,26 @@ class FakeLocator implements BrowserInputLike {
     this.page.locatorClicks.push(this.selector)
     if (this.page.clearAfterClicks > 0 && this.page.locatorClicks.length >= this.page.clearAfterClicks) this.page.texts = {}
   }
+
+  /**
+   * @param files - uploads the wrapper hands to this input.
+   * @param _options - timeout the wrapper passes; the fake answers at once.
+   * @returns Resolves after recording the pick, as a real input would.
+   */
+  async setInputFiles(
+    files: readonly { name: string; mimeType: string; buffer: Uint8Array }[],
+    _options?: { timeout?: number },
+  ): Promise<void> {
+    this.page.raise('setInputFiles')
+    for (const file of files) {
+      this.page.uploads.push({
+        selector: this.selector,
+        name: file.name,
+        mimeType: file.mimeType,
+        text: new TextDecoder().decode(file.buffer),
+      })
+    }
+  }
 }
 
 /** Page double recording every interaction the wrapper performs. */
@@ -112,12 +134,16 @@ export class FakePage implements BrowserPageLike {
   visited: string[] = []
   typed: string[] = []
   keys: string[] = []
+  /** Files each locator input accepted, so an upload is observable. */
+  uploads: { selector: string; name: string; mimeType: string; text: string }[] = []
   clicks: { x: number; y: number }[] = []
   /** Submit presses after which the composer empties, as a real site does; 0 keeps the text. */
   clearAfterPresses = 0
   /** Locator clicks after which the composer empties; 0 keeps the text. */
   clearAfterClicks = 0
   closeCount = 0
+  /** Activation requests the runtime sent for this page's window. */
+  bringToFrontCount = 0
   errors: Partial<Record<FakePageOperation, unknown>> = {}
   mouse = {
     click: async (x: number, y: number): Promise<void> => {
@@ -181,6 +207,12 @@ export class FakePage implements BrowserPageLike {
     this.raise('close')
     this.closeCount += 1
     this.closed = true
+  }
+
+  /** @returns Resolves after recording the activation request. */
+  async bringToFront(): Promise<void> {
+    this.raise('bringToFront')
+    this.bringToFrontCount += 1
   }
 
   /**

@@ -117,6 +117,8 @@ export class PlaywrightBrowserRuntime implements TransportRuntime {
   private disposed = false
   private readonly pages = new Map<string, ChatPageHandle>()
   private readonly chains = new Map<string, TurnChain>()
+  /** In-flight first open, shared by every key that races it. */
+  private contextPromise: Promise<BrowserContextLike> | undefined
 
   /**
    * @param config - browser ownership mode and launch inputs.
@@ -178,17 +180,27 @@ export class PlaywrightBrowserRuntime implements TransportRuntime {
     this.assertUsable()
     if (this.config.mode !== 'managed' || !this.config.headless) {
       const page = await this.acquire(providerId, driver)
+      await this.raiseLoginPage(page)
       const signedIn = await this.waitForSignIn(page, driver, timeoutMs, signal)
       if (!signedIn) await this.release(providerId)
       return signedIn
     }
     await this.settleChains()
     await this.dropContext()
-    const context = await this.openContext(false)
-    this.context = context
+    // A turn that starts while this window opens must share it: a second
+    // launch meets the profile lock this one just wrote, owned by this very
+    // process, and fails as provider-unavailable.
+    const opening = this.openContext(false)
+    this.contextPromise = opening
+    try {
+      this.context = await opening
+    } finally {
+      if (this.contextPromise === opening) this.contextPromise = undefined
+    }
     try {
       const page = await this.createPage(providerId, driver)
       this.pages.set(providerId, page)
+      await this.raiseLoginPage(page)
       const signedIn = await this.waitForSignIn(page, driver, timeoutMs, signal)
       if (!signedIn) {
         await this.settleChains()
@@ -199,6 +211,22 @@ export class PlaywrightBrowserRuntime implements TransportRuntime {
       await this.settleChains()
       await this.dropContext()
       throw error
+    }
+  }
+
+  /**
+   * Raise a login page so its window is not left behind the one the user is
+   * working in. Desktop compositors do not necessarily focus a window a
+   * background process launches, and an unfocused login page reads as "no
+   * window appeared".
+   * @param page - page opened for manual sign-in.
+   * @returns Resolves when the activation request is delivered.
+   */
+  private async raiseLoginPage(page: ChatPageHandle): Promise<void> {
+    try {
+      await page.bringToFront()
+    } catch {
+      // A window that cannot be raised still accepts sign-in; the sign-in wait owns real failures.
     }
   }
 
@@ -350,7 +378,14 @@ export class PlaywrightBrowserRuntime implements TransportRuntime {
       // dead context cannot open pages, so the next turn launches a fresh one.
       await this.dropContext()
     }
-    this.context = await this.openContext(this.config.mode === 'managed' && this.config.headless)
+    // Both columns of one comparison reach this before either has a context.
+    // The second launch then meets the profile lock the first call just wrote
+    // — owned by this very process, so it reads as a live lock — and the
+    // losing column fails as provider-unavailable before its site is opened.
+    // The first open is therefore shared instead of repeated.
+    this.contextPromise ??= this.openContext(this.config.mode === 'managed' && this.config.headless)
+      .finally(() => { this.contextPromise = undefined })
+    this.context = await this.contextPromise
     return this.context
   }
 

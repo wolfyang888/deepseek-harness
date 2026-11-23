@@ -10,6 +10,7 @@ import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from
 import { Button, Input, StateDot, type MarkdownLabels, type StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsLocale, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ChatHubCreateInput, ChatHubProviderView, ProviderStatus, SessionStatus } from '@deepseek-ai/dsh-experimental-chathub-host/types'
+import { ComparePane } from './ComparePane.tsx'
 import { MessageBody } from './MessageBody.tsx'
 import type { ChatHubPanelFace } from './mount.ts'
 import type { createPanelStore } from './panel-store.ts'
@@ -131,7 +132,7 @@ interface Draft {
  * @returns the panel element.
  */
 export function ChatHubPanel(props: ChatHubPanelProps): ReactNode {
-  const { t, refresh, open, close, create, send, login, reauthenticate, remove } = props
+  const { t, refresh, open, close, create, send, login, reauthenticate, remove, compare } = props
   const providers = props.useStore(state => state.providers)
   const sessions = props.useStore(state => state.sessions)
   const detail = props.useStore(state => state.detail)
@@ -145,6 +146,9 @@ export function ChatHubPanel(props: ChatHubPanelProps): ReactNode {
   const [draft, setDraft] = useState<Draft>({ title: '', goal: '', provider: undefined })
   const [confirmDelete, setConfirmDelete] = useState<string | undefined>(undefined)
   const [message, setMessage] = useState('')
+  // Comparing is a mode, not a session: it opens no stored conversation and
+  // writes no checkpoint, so the switch lives in the panel's own state.
+  const [compareOpen, setCompareOpen] = useState(false)
   // Markdown chrome for assistant bubbles; stable across renders so the
   // streaming memo does not rebuild its parser on every state change.
   const markdownLabels = useMemo<MarkdownLabels>(() => ({
@@ -196,6 +200,10 @@ export function ChatHubPanel(props: ChatHubPanelProps): ReactNode {
     <div className={css.root}>
       <header className={css.header}>
         <h2 className={css.headerTitle}>{t('title')}</h2>
+        <Button size="sm" variant="ghost" className={compareOpen ? css.headerActive : ''}
+          onClick={() => { setCompareOpen(current => !current) }}>
+          {compareOpen ? t('compare.close') : t('compare.open')}
+        </Button>
         <Button size="sm" disabled={busy} onClick={() => { void refresh() }} aria-label={t('refresh')}>
           {t('refresh')}
         </Button>
@@ -214,7 +222,9 @@ export function ChatHubPanel(props: ChatHubPanelProps): ReactNode {
         </div>
       )}
       <div className={css.scroll}>
-        {detail === undefined ? (
+        {compareOpen ? (
+          <ComparePane providers={readyChoices} labels={markdownLabels} compare={compare} t={t} />
+        ) : detail === undefined ? (
           <>
             <section className={css.section}>
               <h3 className={css.sectionTitle}>{t('session.create')}</h3>

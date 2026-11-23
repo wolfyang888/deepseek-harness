@@ -2,6 +2,7 @@
 
 import { expect, it } from 'vitest'
 import { PlaywrightPage } from '../src/page.ts'
+import type { BrowserPageLike } from '../src/types.ts'
 import { FakePage } from './support/fake-browser.ts'
 
 const KEY = 'deepseek-web'
@@ -10,6 +11,13 @@ const DRIVER = { url: 'https://fake.test/chat', input: '#prompt', answer: '.answ
 const LOGIN_DRIVER = { ...DRIVER, loginWall: '.login-wall' }
 /** Doubao's shape: the composer renders for a guest, so a cookie proves sign-in. */
 const COOKIE_DRIVER = { ...DRIVER, loginCookie: 'sessionid' }
+/** A driver whose site posts a file input; no settle wait keeps these tests fast. */
+const UPLOAD_DRIVER = { ...DRIVER, fileInput: 'input[type=file]', uploadSettleMs: 0 }
+/** Two attachments in pick order, with bytes that prove nothing re-encoded them. */
+const UPLOAD_FILES = [
+  { name: 'shot.png', mimeType: 'image/png', buffer: new TextEncoder().encode('png-bytes') },
+  { name: 'notes.txt', mimeType: 'text/plain', buffer: new TextEncoder().encode('plain text') },
+]
 
 function page(fake = new FakePage()): { wrapper: PlaywrightPage; fake: FakePage } {
   return { wrapper: new PlaywrightPage(fake, KEY, 10), fake }
@@ -208,6 +216,43 @@ it('falls back to the container when the body selector matches nothing', async (
   await expect(wrapper.answerHtml(DRIVER.answer, '.body')).resolves.toBe('<p>whole card</p>')
 })
 
+it('opens the newest work-step control while the steps render no text', async () => {
+  // Qianwen renders nothing but a divider inside its collapsed process
+  // section, so the read clicks the last control first.
+  const { wrapper, fake } = page()
+  fake.counts['.steps'] = 2
+  fake.counts['.thinking'] = 1
+  fake.texts['.thinking'] = '<hr class="divider">'
+  await expect(wrapper.reasoningHtml('.thinking', '.steps')).resolves.toBe('<hr class="divider">')
+  expect(fake.locatorClicks).toEqual(['.steps'])
+})
+
+it('leaves an already-open work-step section open', async () => {
+  // The control is a toggle: clicking it on a section that already shows its
+  // text would hide the very trace the read is collecting.
+  const { wrapper, fake } = page()
+  fake.counts['.steps'] = 1
+  fake.counts['.thinking'] = 1
+  fake.texts['.thinking'] = '<p>step</p>'
+  await expect(wrapper.reasoningHtml('.thinking', '.steps')).resolves.toBe('<p>step</p>')
+  expect(fake.locatorClicks).toEqual([])
+})
+
+it('opens the control when the site renders no reasoning block until then', async () => {
+  const { wrapper, fake } = page()
+  fake.counts['.steps'] = 1
+  await expect(wrapper.reasoningHtml('.thinking', '.steps')).resolves.toBe('')
+  expect(fake.locatorClicks).toEqual(['.steps'])
+})
+
+it('reads reasoning without a click when the driver names no expander', async () => {
+  const { wrapper, fake } = page()
+  fake.counts['.thinking'] = 1
+  fake.texts['.thinking'] = '<p>step</p>'
+  await expect(wrapper.reasoningHtml('.thinking')).resolves.toBe('<p>step</p>')
+  expect(fake.locatorClicks).toEqual([])
+})
+
 it('treats an answer read timeout as no answer yet', async () => {
   const { wrapper, fake } = page()
   fake.counts[DRIVER.answer] = 1
@@ -367,4 +412,60 @@ it('ignores a close rejection for a tab that is already gone', async () => {
   const { wrapper, fake } = page()
   fake.errors.close = new Error('page has been closed')
   await expect(wrapper.close()).resolves.toBeUndefined()
+})
+
+it('uploads the picked files to the site attachment input', async () => {
+  const { wrapper, fake } = page()
+  fake.counts['input[type=file]'] = 1
+  await wrapper.attach(UPLOAD_FILES, UPLOAD_DRIVER)
+  // The same bytes the composer would get from a real pick, in pick order.
+  expect(fake.uploads).toEqual([
+    { selector: 'input[type=file]', name: 'shot.png', mimeType: 'image/png', text: 'png-bytes' },
+    { selector: 'input[type=file]', name: 'notes.txt', mimeType: 'text/plain', text: 'plain text' },
+  ])
+})
+
+it('does nothing for a turn that carries no files', async () => {
+  const { wrapper, fake } = page()
+  await wrapper.attach([], UPLOAD_DRIVER)
+  expect(fake.uploads).toEqual([])
+})
+
+it('refuses a site whose driver declares no attachment input', async () => {
+  const { wrapper, fake } = page()
+  fake.counts['input[type=file]'] = 1
+  // Report the capability, not a half-finished turn: the panel shows this code.
+  await expect(wrapper.attach(UPLOAD_FILES, DRIVER))
+    .rejects.toMatchObject({ token: 'chathub-attachment-unsupported' })
+  expect(fake.uploads).toEqual([])
+})
+
+it('refuses a declared input the page renders none of', async () => {
+  const { wrapper } = page()
+  await expect(wrapper.attach(UPLOAD_FILES, UPLOAD_DRIVER))
+    .rejects.toMatchObject({ token: 'chathub-attachment-unsupported' })
+})
+
+it('refuses a page face whose locator cannot set files', async () => {
+  // A driver test double may expose the composer but no upload call at all;
+  // treating that as "no files" would send the prompt without them.
+  const bare = { locator: () => ({ first: () => ({ count: async () => 1 }) }) } as unknown as BrowserPageLike
+  const wrapper = new PlaywrightPage(bare, KEY, 10)
+  await expect(wrapper.attach(UPLOAD_FILES, UPLOAD_DRIVER))
+    .rejects.toMatchObject({ token: 'chathub-attachment-unsupported' })
+})
+
+it('treats an unreadable input count as no input', async () => {
+  const { wrapper, fake } = page()
+  fake.errors.count = new Error('element is not attached')
+  await expect(wrapper.attach(UPLOAD_FILES, UPLOAD_DRIVER))
+    .rejects.toMatchObject({ token: 'chathub-attachment-unsupported' })
+})
+
+it('classifies an upload the browser rejected', async () => {
+  const { wrapper, fake } = page()
+  fake.counts['input[type=file]'] = 1
+  fake.errors.setInputFiles = new Error('net::ERR_UPLOAD_FILE_CHANGED')
+  await expect(wrapper.attach(UPLOAD_FILES, UPLOAD_DRIVER))
+    .rejects.toMatchObject({ token: 'chathub-network' })
 })

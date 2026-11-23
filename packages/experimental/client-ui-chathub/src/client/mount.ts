@@ -9,7 +9,11 @@ import type { RemoteResult, TypertRemoteContribution } from '@deepseek-ai/dsh-ty
 import type { BoundActions } from '@deepseek-ai/dsh-client-store'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
-import type { ChatHubCreateInput } from '@deepseek-ai/dsh-experimental-chathub-host/types'
+import type { ChatAttachment } from '@deepseek-ai/dsh-experimental-chathub'
+import type {
+  ChatHubCompareEvent,
+  ChatHubCreateInput,
+} from '@deepseek-ai/dsh-experimental-chathub-host/types'
 import { ChatHubPanel } from './ChatHubPanel.tsx'
 import { ChatHubPanelIcon } from './PanelIcon.tsx'
 import { createPanelStore } from './panel-store.ts'
@@ -47,6 +51,25 @@ export interface ChatHubPanelFace {
   reauthenticate: (providerId: string) => Promise<void>
   /** Delete a session with its messages, timeline, and checkpoints. */
   remove: (sessionId: string) => Promise<void>
+  /**
+   * Ask several models the same prompt at once, opening no session.
+   *
+   * A comparison is a scratch question: it must not create a persisted
+   * conversation, switch any session's model, or write a checkpoint. The host
+   * drives each provider directly, so one signed-out model reports its own
+   * failure without taking the other columns down.
+   * @param content - the prompt every model receives.
+   * @param providers - model ids to ask, one column each.
+   * @param attachments - files uploaded to every model before the prompt.
+   * @param signal - cancellation for every column still running.
+   * @returns Interleaved column progress and settlement events.
+   */
+  compare: (
+    content: string,
+    providers: readonly string[],
+    attachments: readonly ChatAttachment[],
+    signal?: AbortSignal,
+  ) => AsyncIterable<ChatHubCompareEvent>
 }
 
 /** Store instance the face mutates; actions are the engine-baked draft mutators. */
@@ -169,6 +192,11 @@ function createFace(ctx: Context, instance: PanelInstance, t: ChatHubTranslate):
         actions.setBusy(false)
       }
     },
+    compare: (content, providers, attachments, signal) => ctx.remote.chatHub.compareStream({
+      content,
+      providers,
+      ...attachments.length === 0 ? {} : { attachments },
+    }, signal),
     remove: async (sessionId) => {
       actions.setBusy(true)
       actions.setError(undefined)

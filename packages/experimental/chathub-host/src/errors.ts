@@ -13,6 +13,7 @@ export type BrowserTransportErrorCode =
   | 'chathub-network'
   | 'chathub-profile-locked'
   | 'chathub-browser-unavailable'
+  | 'chathub-attachment-unsupported'
 
 /** Transport rejection carrying a stable, provider-mappable token. */
 export class BrowserTransportError extends Error {

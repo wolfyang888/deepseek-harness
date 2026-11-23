@@ -51,6 +51,22 @@ export interface ChatMessage {
   toolCallId?: string
 }
 
+/**
+ * One file a turn carries into a provider.
+ *
+ * The bytes travel as base64 without a data-URL prefix: the browser plugin
+ * reads the file the user picked, the host decodes it once, and the site's own
+ * upload input receives it. Nothing on the way re-encodes it as text.
+ */
+export interface ChatAttachment {
+  /** Filename the site shows and the model reads. */
+  name: string
+  /** MIME type the site's upload input validates against. */
+  mimeType: string
+  /** Base64 of the file body, without the `data:` prefix. */
+  data: string
+}
+
 /** One request handed to a provider, with the session's semantic task state. */
 export interface ChatRequest {
   sessionId: string
@@ -59,6 +75,13 @@ export interface ChatRequest {
   systemPrompt?: string
   taskContext?: SemanticContext
   metadata?: Record<string, unknown>
+  /**
+   * Files uploaded to the provider's site before the prompt is submitted.
+   *
+   * Each entry is written to the site's own upload input, so the site reads it
+   * exactly as it reads a file the user picked there by hand.
+   */
+  attachments?: readonly ChatAttachment[]
 }
 
 /** Token counts reported by a provider. */

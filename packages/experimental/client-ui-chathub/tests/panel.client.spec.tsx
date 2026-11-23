@@ -8,7 +8,7 @@ import type { SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/c
 import type { WorkspaceSnapshot } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { GlobalStandardProps } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ChatMessage } from '@deepseek-ai/dsh-experimental-chathub'
-import type { ChatHubProviderView, ChatHubSessionView } from '@deepseek-ai/dsh-experimental-chathub-host/types'
+import type { ChatHubCompareEvent, ChatHubProviderView, ChatHubSessionView } from '@deepseek-ai/dsh-experimental-chathub-host/types'
 import { afterEach, expect, it, vi } from 'vitest'
 import { ChatHubPanel, type ChatHubPanelProps } from '../src/client/ChatHubPanel.tsx'
 import { ChatHubPanelIcon } from '../src/client/PanelIcon.tsx'
@@ -53,6 +53,12 @@ const PROVIDERS: ChatHubProviderView[] = [
 const READY_TARGET: ChatHubProviderView = {
   id: 'qwen-web', name: 'Qwen Web', kind: 'web', capabilities: CAPS, status: 'ready',
 }
+/** Two models that can answer: the comparison needs a pair. */
+const TWO_READY: ChatHubProviderView[] = [{ ...PROVIDERS[0]! }, READY_TARGET]
+/** A PNG-shaped file for the paste and pick paths. */
+function pngFile(name = 'shot.png'): File {
+  return new File(['png'], name, { type: 'image/png' })
+}
 const SUMMARY = { id: 'sess_1', title: 'T', createdAt: 1, updatedAt: 2, currentProvider: 'deepseek-web', status: 'done' as const }
 const DETAIL: ChatHubSessionView = { ...SUMMARY, goal: 'G', providerHistory: ['deepseek-web'] }
 const MESSAGES: ChatMessage[] = [
@@ -61,6 +67,11 @@ const MESSAGES: ChatMessage[] = [
 ]
 
 type Instance = ReturnType<ReturnType<typeof createPanelStore>['create']>
+
+/** A comparison stream that yields its events in order. */
+async function* compareStream(...events: ChatHubCompareEvent[]): AsyncIterable<ChatHubCompareEvent> {
+  for (const event of events) yield event
+}
 
 /** Render the panel over a live store instance seeded through `patch`; face methods are mocks. */
 function fixture(patch: (actions: Instance['actions']) => void = () => {}) {
@@ -75,6 +86,7 @@ function fixture(patch: (actions: Instance['actions']) => void = () => {}) {
     login: vi.fn<ChatHubPanelFace['login']>(async () => {}),
     reauthenticate: vi.fn<ChatHubPanelFace['reauthenticate']>(async () => {}),
     remove: vi.fn<ChatHubPanelFace['remove']>(async () => {}),
+    compare: vi.fn<ChatHubPanelFace['compare']>(() => compareStream()),
   } satisfies ChatHubPanelFace
   const props: ChatHubPanelProps = {
     ...standard,
@@ -447,4 +459,177 @@ it('lists ready providers in the model section without a sign-in button', () => 
   const readyRow = screen.getByText(zh['provider.status.ready']).closest('div')
   assert(readyRow)
   expect(readyRow.querySelector('button')).toBeNull()
+})
+
+it('compares two models from the header without opening a session', () => {
+  const { face } = fixture((actions) => { applyLists(actions, TWO_READY) })
+  fireEvent.click(screen.getByRole('button', { name: zh['compare.open'] }))
+  // The pair is preselected: asking twice before the first question answers none.
+  const picks = screen.getAllByRole('combobox') as HTMLSelectElement[]
+  expect(picks.map(pick => pick.value)).toEqual(['deepseek-web', 'qwen-web'])
+  const composer = screen.getByPlaceholderText(zh['compare.placeholder']) as HTMLTextAreaElement
+  fireEvent.change(composer, { target: { value: '  which is right?  ' } })
+  fireEvent.click(screen.getByRole('button', { name: zh['compare.send'] }))
+  expect(face.compare).toHaveBeenCalledWith('which is right?', ['deepseek-web', 'qwen-web'], [], expect.any(AbortSignal))
+  // Comparing is a mode, not a conversation: nothing is created or stored.
+  expect(face.create).not.toHaveBeenCalled()
+})
+
+it('closes the comparison back to the session list', () => {
+  fixture((actions) => { applyLists(actions, TWO_READY) })
+  fireEvent.click(screen.getByRole('button', { name: zh['compare.open'] }))
+  fireEvent.click(screen.getByRole('button', { name: zh['compare.close'] }))
+  expect(screen.getByRole('button', { name: zh['compare.open'] })).toBeTruthy()
+  expect(screen.queryByPlaceholderText(zh['compare.placeholder'])).toBeNull()
+})
+
+it('prints both answers side by side once the comparison returns', async () => {
+  const { face } = fixture((actions) => { applyLists(actions, TWO_READY) })
+  face.compare.mockReturnValue(compareStream(
+    { kind: 'settled', side: { provider: 'deepseek-web', providerName: 'DeepSeek Web', status: 'done', content: 'A side', elapsedMs: 1200 } },
+    { kind: 'settled', side: { provider: 'qwen-web', providerName: 'Qwen Web', status: 'failed', lastError: 'chathub-signed-out', elapsedMs: 800 } },
+  ))
+  fireEvent.click(screen.getByRole('button', { name: zh['compare.open'] }))
+  fireEvent.change(screen.getByPlaceholderText(zh['compare.placeholder']), { target: { value: 'q' } })
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: zh['compare.send'] }))
+  })
+  // One column answered, the other reports its stable code in place of an answer.
+  expect(await screen.findByText('A side')).toBeTruthy()
+  expect(screen.getByText('chathub-signed-out')).toBeTruthy()
+  expect(screen.getByText('1.2s')).toBeTruthy()
+  expect(screen.getByText('0.8s')).toBeTruthy()
+})
+
+it('shows the column that finished first while the other site is still writing', async () => {
+  const { face } = fixture((actions) => { applyLists(actions, TWO_READY) })
+  let finishRight: () => void = () => {}
+  const gate = new Promise<void>((resolve) => { finishRight = resolve })
+  face.compare.mockReturnValue((async function* (): AsyncIterable<ChatHubCompareEvent> {
+    yield { kind: 'progress', provider: 'deepseek-web', content: 'A gro' }
+    yield { kind: 'progress', provider: 'deepseek-web', content: 'A growing' }
+    yield {
+      kind: 'settled',
+      side: { provider: 'deepseek-web', providerName: 'DeepSeek Web', status: 'done', content: 'A growing', elapsedMs: 900 },
+    }
+    await gate
+    yield {
+      kind: 'settled',
+      side: { provider: 'qwen-web', providerName: 'Qwen Web', status: 'done', content: 'B side', elapsedMs: 5000 },
+    }
+  })())
+  fireEvent.click(screen.getByRole('button', { name: zh['compare.open'] }))
+  fireEvent.change(screen.getByPlaceholderText(zh['compare.placeholder']), { target: { value: 'q' } })
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: zh['compare.send'] }))
+  })
+  // The left column already shows its answer and elapsed time; the right one
+  // still reports that it is thinking, so neither column waits for the other.
+  expect(await screen.findByText('A growing')).toBeTruthy()
+  expect(screen.getByText('0.9s')).toBeTruthy()
+  expect(screen.getByText(zh['compare.thinking'])).toBeTruthy()
+  expect(screen.queryByText('B side')).toBeNull()
+  await act(async () => {
+    finishRight()
+    await gate
+  })
+  expect(await screen.findByText('B side')).toBeTruthy()
+})
+
+it('shows a site reasoning trace above its answer', async () => {
+  const { face } = fixture((actions) => { applyLists(actions, TWO_READY) })
+  face.compare.mockReturnValue(compareStream(
+    {
+      kind: 'settled',
+      side: {
+        provider: 'deepseek-web',
+        providerName: 'DeepSeek Web',
+        status: 'done',
+        content: 'A side',
+        reasoning: '搜索了 2 个关键词，参考 9 篇资料',
+        elapsedMs: 1200,
+      },
+    },
+    { kind: 'settled', side: { provider: 'qwen-web', providerName: 'Qwen Web', status: 'done', content: 'B side', elapsedMs: 900 } },
+  ))
+  fireEvent.click(screen.getByRole('button', { name: zh['compare.open'] }))
+  fireEvent.change(screen.getByPlaceholderText(zh['compare.placeholder']), { target: { value: 'q' } })
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: zh['compare.send'] }))
+  })
+  // The trace is collapsed under its own label; the answer stays the column.
+  expect(await screen.findByText(zh['compare.reasoning'])).toBeTruthy()
+  expect(screen.getByText('搜索了 2 个关键词，参考 9 篇资料')).toBeTruthy()
+  expect(screen.getByText('A side')).toBeTruthy()
+  // A column without a trace has no expander.
+  expect(screen.getAllByText(zh['compare.reasoning'])).toHaveLength(1)
+})
+
+it('keeps the asked question above the answers after the composer clears', async () => {
+  const { face } = fixture((actions) => { applyLists(actions, TWO_READY) })
+  face.compare.mockReturnValue(compareStream(
+    { kind: 'settled', side: { provider: 'deepseek-web', providerName: 'DeepSeek Web', status: 'done', content: 'A side', elapsedMs: 1200 } },
+    { kind: 'settled', side: { provider: 'qwen-web', providerName: 'Qwen Web', status: 'done', content: 'B side', elapsedMs: 900 } },
+  ))
+  fireEvent.click(screen.getByRole('button', { name: zh['compare.open'] }))
+  fireEvent.change(screen.getByPlaceholderText(zh['compare.placeholder']), { target: { value: 'which is right?' } })
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: zh['compare.send'] }))
+  })
+  // The composer clears on submit; the question stays above both columns.
+  expect(await screen.findByText(zh['compare.question'])).toBeTruthy()
+  expect(screen.getByText('which is right?')).toBeTruthy()
+  expect((screen.getByPlaceholderText(zh['compare.placeholder']) as HTMLTextAreaElement).value).toBe('')
+})
+
+it('stages a pasted image and uploads it with the question', async () => {
+  const { face } = fixture((actions) => { applyLists(actions, TWO_READY) })
+  face.compare.mockReturnValue(compareStream())
+  fireEvent.click(screen.getByRole('button', { name: zh['compare.open'] }))
+  const composer = screen.getByPlaceholderText(zh['compare.placeholder']) as HTMLTextAreaElement
+  await act(async () => {
+    fireEvent.paste(composer, { clipboardData: { files: [pngFile()] } })
+  })
+  // The chip proves the paste became a file, not literal text in the prompt.
+  expect(await screen.findByText('shot.png')).toBeTruthy()
+  fireEvent.change(composer, { target: { value: 'what is this?' } })
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: zh['compare.send'] }))
+  })
+  expect(face.compare).toHaveBeenCalledWith(
+    'what is this?',
+    ['deepseek-web', 'qwen-web'],
+    [{ name: 'shot.png', mimeType: 'image/png', data: 'cG5n' }],
+    expect.any(AbortSignal),
+  )
+})
+
+it('drops a staged file before sending', async () => {
+  const { face } = fixture((actions) => { applyLists(actions, TWO_READY) })
+  face.compare.mockReturnValue(compareStream())
+  fireEvent.click(screen.getByRole('button', { name: zh['compare.open'] }))
+  const composer = screen.getByPlaceholderText(zh['compare.placeholder'])
+  await act(async () => {
+    fireEvent.paste(composer, { clipboardData: { files: [pngFile()] } })
+  })
+  const remove = await screen.findByRole('button', { name: `${zh['compare.remove']} shot.png` })
+  fireEvent.click(remove)
+  expect(screen.queryByText('shot.png')).toBeNull()
+  fireEvent.change(composer, { target: { value: 'q' } })
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: zh['compare.send'] }))
+  })
+  expect(face.compare).toHaveBeenCalledWith('q', ['deepseek-web', 'qwen-web'], [], expect.any(AbortSignal))
+})
+
+it('asks for a second model when only one is ready', () => {
+  const { face } = fixture((actions) => { applyLists(actions) })
+  fireEvent.click(screen.getByRole('button', { name: zh['compare.open'] }))
+  expect(screen.getByText(zh['compare.needTwo'])).toBeTruthy()
+  const composer = screen.getByPlaceholderText(zh['compare.placeholder'])
+  fireEvent.change(composer, { target: { value: 'q' } })
+  fireEvent.click(screen.getByRole('button', { name: zh['compare.send'] }))
+  // The pair needs two distinct models; the pane says so instead of asking twice.
+  expect(face.compare).not.toHaveBeenCalled()
+  expect(screen.getByRole('alert').textContent).toBe(zh['compare.needTwo'])
 })

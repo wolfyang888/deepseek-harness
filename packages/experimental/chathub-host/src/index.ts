@@ -151,7 +151,7 @@ export class WebChatTransportService extends TypertRemoteService {
     // The anti-abuse envelope is on by default: a web model is not an API, and
     // an unpaced agent loop is the pattern that gets an account flagged.
     pacing: z.object({
-      profile: z.union(['conservative', 'balanced', 'responsive', 'off'] as const).default('conservative'),
+      profile: z.union(['conservative', 'balanced', 'responsive', 'off'] as const).default('balanced'),
       minTurnGapMs: z.natural(),
       maxTurnsPerHour: z.natural(),
       maxWaitMs: z.natural(),
@@ -167,6 +167,8 @@ export class WebChatTransportService extends TypertRemoteService {
       stablePolls: z.natural().min(1),
       pollMs: z.natural().min(1),
       maxPromptChars: z.natural().min(1),
+      fileInput: z.string().min(1),
+      uploadSettleMs: z.natural(),
     })).default({}),
   })
 
