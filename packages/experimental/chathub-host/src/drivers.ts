@@ -26,10 +26,26 @@ export const DEFAULT_SITE_DRIVERS: Readonly<SiteDrivers> = {
   },
   'chatgpt-web': {
     url: 'https://chatgpt.com/',
-    input: '#prompt-textarea',
+    // The 2026-11 redesign (verified against a logged-in profile with a real
+    // browser) replaced the `<textarea id="prompt-textarea">` composer with a
+    // ProseMirror editor: the home screen renders `<textarea
+    // id="pending-home-input">`, while an open conversation renders
+    // `<div contenteditable role="textbox" aria-label="Ask ChatGPT">`. Both
+    // must match because login detection runs on the home screen and the send
+    // runs inside a conversation. The old id matches nothing now, so without
+    // the union a signed-in page polls to the deadline and reports needs-auth.
+    input: '#pending-home-input, [role="textbox"][aria-label="Ask ChatGPT"]',
     fileInput: 'input[type="file"]',
-    answer: '[data-message-author-role="assistant"] .markdown',
-    loginWall: '[data-testid="login-button"]',
+    // The same redesign dropped `data-message-author-role`; each assistant
+    // reply now roots at `<div data-dil-response data-dil-message-id="…">`.
+    // The legacy selector is kept as a fallback for pages that still render
+    // the old markup; `answerHtml` reads the last match, which is the newest
+    // reply in either layout.
+    answer: '[data-dil-response], [data-message-author-role="assistant"] .markdown',
+    // The signed-out CTA moved from `data-testid="login-button"` to
+    // `data-login-button` (verified on the guest page, where the header and
+    // banner buttons both carry it and are visible).
+    loginWall: '[data-login-button]',
     signedOutPath: SIGNED_OUT_PATH,
     submitKey: 'Enter',
   },
