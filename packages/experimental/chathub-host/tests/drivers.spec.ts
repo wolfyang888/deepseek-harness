@@ -40,6 +40,27 @@ it.each(['url', 'input', 'answer', 'submitKey'] as const)('rejects an empty %s',
     .toThrow(`driver "deepseek-web" has an empty ${field}`)
 })
 
+it.each(['fileInput', 'uploadTrigger', 'uploadMenuItem'] as const)('rejects an empty %s', (field) => {
+  // An empty attachment selector reads as "this site takes no files", which is
+  // silent; a blank one is a configuration mistake.
+  expect(() => resolveSiteDrivers({ 'deepseek-web': { [field]: '  ' } }))
+    .toThrow(`driver "deepseek-web" has an empty ${field}`)
+})
+
+it('declares an upload path for every site whose inputs mount late', () => {
+  // 2026-11-24: gemini mounts its inputs only when the upload menu opens,
+  // chatgpt mounts four with the image-only ones first, and doubao/qianwen
+  // mount none until their menu is used. A driver for any of them that named
+  // only `fileInput` left a turn with attachments unsupported or silently
+  // file-less.
+  for (const providerId of ['chatgpt-web', 'gemini-web', 'doubao-web', 'qianwen-web']) {
+    expect(DEFAULT_SITE_DRIVERS[providerId]?.uploadTrigger).toBeTruthy()
+  }
+  // A menu entry is only named where clicking it starts a real pick; gemini's
+  // menu mounts the inputs instead, so its entry would be dead weight.
+  expect(DEFAULT_SITE_DRIVERS['gemini-web']?.uploadMenuItem).toBeUndefined()
+})
+
 it('rejects poll bounds below one', () => {
   expect(() => resolveSiteDrivers({ 'gemini-web': { pollMs: 0 } })).toThrow('pollMs below 1')
   expect(() => resolveSiteDrivers({ 'gemini-web': { stablePolls: 0 } })).toThrow('stablePolls below 1')
@@ -106,6 +127,18 @@ it('reads the qianwen workbench reply only after the card reports complete', () 
   expect(answer).toContain('.chat-answers-card-wrap:has(button[data-status="complete"])')
   expect(answer).toContain('[data-execution-section="process"]')
   expect(DEFAULT_SITE_DRIVERS['qianwen-web']?.pending).toContain('问题分析中')
+})
+
+it('also reads the qianwen card the 2026-11 workbench renders', () => {
+  // Verified against a live workbench turn (2026-11-24): nothing on the page
+  // carries `data-status` or `data-execution-section` any more, so the gated
+  // selector alone matched nothing and a finished turn read as an empty
+  // answer. The reply lives under `.answer-common-card` and is painted whole
+  // instead of streaming (0 chars at t+2s, 201 at t+3s, unchanged after).
+  const answer = DEFAULT_SITE_DRIVERS['qianwen-web']?.answer ?? ''
+  expect(answer).toContain('.answer-common-card .qk-markdown')
+  // The gate stays ahead of it for accounts still on the older build.
+  expect(answer.indexOf('.chat-answers-card-wrap')).toBeLessThan(answer.indexOf('.answer-common-card'))
 })
 
 it('opens the qianwen work steps before reading them as reasoning', () => {

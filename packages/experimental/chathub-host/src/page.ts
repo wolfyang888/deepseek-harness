@@ -7,6 +7,7 @@ import type {
   BrowserInputLike,
   BrowserPageLike,
   ChatPageHandle,
+  FileChooserLike,
   FilePayloadLike,
   SiteDriverConfig,
 } from './types.ts'
@@ -43,6 +44,17 @@ const SUBMIT_ATTEMPTS = 3
 const DEFAULT_UPLOAD_SETTLE_MS = 2_500
 
 /**
+ * How long an attachment menu gets to paint its entries.
+ *
+ * The menu is rendered after the trigger's own handler runs, so it is a beat
+ * behind the click: doubao's "上传文件或图片" entry was still absent when the
+ * host clicked it straight away, and the click then waited out the whole
+ * operation budget on a node that did not exist yet (2026-11-24). Polling
+ * covers the paint without turning a missing entry into a long stall.
+ */
+const MENU_REVEAL_MS = 5_000
+
+/**
  * A file input seen through the locator face.
  *
  * Playwright's own `setInputFiles` also accepts path strings and single
@@ -62,6 +74,51 @@ interface UploadInputLike {
    * @returns Resolves when the input knows the files.
    */
   setInputFiles?(files: readonly FilePayloadLike[], options?: { timeout?: number }): Promise<void>
+  /**
+   * @param name - attribute name.
+   * @param options - optional operation timeout.
+   * @returns The attribute value, or `null`.
+   */
+  getAttribute?(name: string, options?: { timeout?: number }): Promise<string | null>
+}
+
+/**
+ * Narrow a page event result to a file pick.
+ * @param value - whatever `waitForEvent('filechooser')` reported.
+ * @returns The pick, or `undefined` when the value carries no `setFiles`.
+ */
+function asFileChooser(value: unknown): FileChooserLike | undefined {
+  if (value === null || typeof value !== 'object') return undefined
+  const candidate = value as Partial<FileChooserLike>
+  return typeof candidate.setFiles === 'function' ? candidate as FileChooserLike : undefined
+}
+
+/**
+ * Whether one input's `accept` admits every file the turn carries.
+ *
+ * The attribute is a comma-separated list of extensions (`.docx`), media types
+ * (`application/pdf`), or families (`image/*`); its absence means the input
+ * takes anything. A browser does not enforce the list when files are set
+ * programmatically, so the site's own handler is what drops a mismatch — and
+ * it drops it silently.
+ * @param accept - the input's `accept` attribute, or `null` when it has none.
+ * @param files - files the turn carries.
+ * @returns Whether every file is covered by at least one entry.
+ */
+function acceptsFiles(accept: string | null, files: readonly FilePayloadLike[]): boolean {
+  if (accept === null || accept.trim().length === 0) return true
+  const entries = accept.split(',')
+    .map(entry => entry.trim().toLowerCase())
+    .filter(entry => entry.length > 0)
+  return files.every((file) => {
+    const name = file.name.toLowerCase()
+    const type = file.mimeType.toLowerCase()
+    return entries.some((entry) => {
+      if (entry.startsWith('.')) return name.endsWith(entry)
+      if (entry.endsWith('/*')) return type.startsWith(entry.slice(0, entry.length - 1))
+      return entry === type
+    })
+  })
 }
 
 /**
@@ -468,43 +525,263 @@ export class PlaywrightPage implements ChatPageHandle {
   }
 
   /**
-   * Upload files to the site's attachment input before the prompt is typed.
+   * Upload files to the site before the prompt is typed.
    *
    * A site's paper-clip button only opens the operating system's file picker,
-   * and no automation can answer that dialog; setting the files on the hidden
-   * input leaves the site in the same state a real pick does, so the composer
-   * carries the same thumbnails and the site uploads on its own.
+   * and no automation can answer that dialog; both routes below reach the same
+   * end state a real pick does, through the site's own handlers. A driver that
+   * names an {@linkcode SiteDriverConfig.uploadTrigger} is driven the way a
+   * user drives it — open the menu, choose the entry, answer the pick it
+   * starts — while a driver that only names a file input has the files set on
+   * that input directly.
+   *
+   * Which input is set matters as much as how: chatgpt mounts four
+   * `input[type=file]` nodes with the image-only ones first, and a document
+   * written to one of those is dropped by the site without an error, so the
+   * turn then asks its question about a file that was never uploaded
+   * (2026-11-24). Selection therefore reads `accept` and skips an input that
+   * does not admit every file.
    * @param files - decoded attachments in pick order.
-   * @param driver - site facts: the upload input and its settle window.
+   * @param driver - site facts: the upload trigger, menu entry, and input.
    * @throws BrowserTransportError with `chathub-attachment-unsupported` when
-   *   the driver declares no upload input, or the page renders none.
+   *   the driver names no upload path, or the page offers none of it.
    */
   async attach(files: readonly FilePayloadLike[], driver: SiteDriverConfig): Promise<void> {
     if (files.length === 0) return
-    if (driver.fileInput === undefined) {
+    const trigger = driver.uploadTrigger
+    const input = driver.fileInput
+    if (trigger === undefined && input === undefined) {
       throw new BrowserTransportError(
         'chathub-attachment-unsupported',
         `${this.key}: this site declares no attachment input`,
       )
     }
-    const input = this.page.locator(driver.fileInput).first() as unknown as UploadInputLike
-    const setInputFiles = input.setInputFiles?.bind(input)
-    if (setInputFiles === undefined || (await input.count().catch(() => 0)) === 0) {
-      throw new BrowserTransportError(
-        'chathub-attachment-unsupported',
-        `${this.key}: no file input matches "${driver.fileInput}"`,
-      )
-    }
-    try {
-      await setInputFiles(files, { timeout: this.actionTimeoutMs })
-    } catch (error) {
-      throw classifyPageError(error, `${this.key}: uploading attachments`)
-    }
+    if (trigger !== undefined) await this.pickThroughMenu(files, driver, trigger)
+    else if (input !== undefined) await this.setMountedFiles(files, input)
     // The composer accepts the prompt the moment the files are picked, while
     // the upload is still running: the site then sends the message without
     // them. Give the site its window before the text is typed.
     const settleMs = driver.uploadSettleMs ?? DEFAULT_UPLOAD_SETTLE_MS
     if (settleMs > 0) await sleep(Math.min(settleMs, this.actionTimeoutMs))
+  }
+
+  /**
+   * Open the driver's attachment menu and answer the pick it starts.
+   *
+   * Two shapes exist. A menu entry that starts a native pick (chatgpt, doubao,
+   * qianwen) is answered through the chooser it opens; a menu that merely
+   * mounts the file inputs (gemini) is answered by writing the files into one
+   * of them. The driver separates them: a declared entry means the pick comes
+   * from clicking it, and no entry means the inputs are the answer.
+   * @param files - decoded attachments in pick order.
+   * @param driver - site facts carrying the trigger, entry, and input.
+   * @param trigger - the attachment control the caller resolved from the driver.
+   * @throws BrowserTransportError when neither a pick nor a usable input appears.
+   */
+  private async pickThroughMenu(
+    files: readonly FilePayloadLike[],
+    driver: SiteDriverConfig,
+    trigger: string,
+  ): Promise<void> {
+    // Armed before the click: the pick the site starts is a one-shot event, and
+    // a listener attached afterwards would miss it on a fast site. A site that
+    // never starts one resolves to `undefined`, so a menu that only mounts
+    // inputs leaves no rejection behind.
+    const pending = this.waitForPick()
+    await this.clickLocator(trigger, `${this.key}: opening the site's attachment menu`)
+    if (driver.uploadMenuItem === undefined) {
+      // No entry to click: the menu mounts the inputs itself, so poll for one
+      // instead of waiting out a pick that this site never starts. Reading the
+      // pick first cost gemini a full operation budget on a chooser that never
+      // came (2026-11-24).
+      if (driver.fileInput !== undefined && await this.setMountedWhenReady(files, driver.fileInput)) return
+      const chooser = await pending
+      if (chooser !== undefined) {
+        await this.answerChooser(chooser, files)
+        return
+      }
+      throw new BrowserTransportError(
+        'chathub-attachment-unsupported',
+        `${this.key}: the attachment menu started no file pick and mounted no input admitting ${this.namesOf(files)}`,
+      )
+    }
+    await this.clickWhenVisible(driver.uploadMenuItem, `${this.key}: choosing the site's attachment entry`)
+    const chooser = await pending
+    if (chooser !== undefined) {
+      await this.answerChooser(chooser, files)
+      return
+    }
+    // A site can also answer the entry by mounting inputs instead of picking.
+    if (driver.fileInput !== undefined && await this.trySetMountedFiles(files, driver.fileInput)) return
+    throw new BrowserTransportError(
+      'chathub-attachment-unsupported',
+      `${this.key}: the attachment menu started no file pick and mounted no input admitting ${this.namesOf(files)}`,
+    )
+  }
+
+  /**
+   * Arm a wait for the pick a site is about to start.
+   *
+   * The listener is registered before the caller's click — a pick is a
+   * one-shot event, and a listener attached afterwards would miss it — and a
+   * site that never starts one resolves to `undefined` instead of rejecting.
+   * A page face with no event source (a driver test double) has nothing to
+   * arm, which is also `undefined`.
+   * @returns The pending pick, or `undefined` when this page reports none.
+   */
+  private waitForPick(): Promise<FileChooserLike | undefined> | undefined {
+    if (this.page.waitForEvent === undefined) return undefined
+    return this.page.waitForEvent('filechooser', { timeout: this.actionTimeoutMs })
+      .then(value => asFileChooser(value), () => undefined)
+  }
+
+  /**
+   * Answer the pick the site started.
+   * @param chooser - the pick.
+   * @param files - decoded attachments in pick order.
+   * @throws BrowserTransportError classified from the rejected write.
+   */
+  private async answerChooser(chooser: FileChooserLike, files: readonly FilePayloadLike[]): Promise<void> {
+    try {
+      await chooser.setFiles(files, { timeout: this.actionTimeoutMs })
+    } catch (error) {
+      throw classifyPageError(error, `${this.key}: uploading attachments`)
+    }
+  }
+
+  /**
+   * Click one element the driver names, reporting a failure against it.
+   * @param selector - selector to click.
+   * @param detail - structural context for the failure message.
+   * @returns Resolves when the click is delivered.
+   */
+  private async clickLocator(selector: string, detail: string): Promise<void> {
+    try {
+      await this.page.locator(selector).first().click({ timeout: this.actionTimeoutMs })
+    } catch (error) {
+      throw classifyPageError(error, detail)
+    }
+  }
+
+  /**
+   * Click an element a just-opened menu paints, polling instead of waiting on
+   * the click's own timeout.
+   * @param selector - selector to click.
+   * @param detail - structural context for the failure message.
+   * @returns Resolves when the click is delivered.
+   * @throws BrowserTransportError with `chathub-ui-drift` when the menu never
+   *   paints an element matching the selector.
+   */
+  private async clickWhenVisible(selector: string, detail: string): Promise<void> {
+    const locator = this.page.locator(selector).first()
+    const deadline = Date.now() + Math.min(MENU_REVEAL_MS, this.actionTimeoutMs)
+    for (;;) {
+      if (await locator.isVisible().catch(() => false)) break
+      if (Date.now() >= deadline) {
+        throw new BrowserTransportError('chathub-ui-drift', `${detail}: nothing matching "${selector}" appeared`)
+      }
+      await sleep(100)
+    }
+    await this.clickLocator(selector, detail)
+  }
+
+  /**
+   * Write the files into the first mounted input that admits all of them.
+   * @param files - decoded attachments in pick order.
+   * @param selector - the driver's file-input selector.
+   * @returns Whether an input took the files.
+   * @throws BrowserTransportError when the input exists but rejected the write.
+   */
+  private async trySetMountedFiles(files: readonly FilePayloadLike[], selector: string): Promise<boolean> {
+    const input = await this.acceptingInput(files, selector)
+    if (input === undefined) return false
+    const write = input.setInputFiles?.bind(input)
+    if (write === undefined) return false
+    try {
+      await write(files, { timeout: this.actionTimeoutMs })
+    } catch (error) {
+      throw classifyPageError(error, `${this.key}: uploading attachments`)
+    }
+    return true
+  }
+
+  /**
+   * Write the files into a mounted input, polling while the menu mounts it.
+   *
+   * The inputs of a menu that reveals them (gemini) appear a beat after the
+   * trigger is clicked, so a single probe reads the page before they exist.
+   * @param files - decoded attachments in pick order.
+   * @param selector - the driver's file-input selector.
+   * @returns Whether an input took the files.
+   * @throws BrowserTransportError when an input exists but rejected the write.
+   */
+  private async setMountedWhenReady(files: readonly FilePayloadLike[], selector: string): Promise<boolean> {
+    const deadline = Date.now() + Math.min(MENU_REVEAL_MS, this.actionTimeoutMs)
+    for (;;) {
+      if (await this.trySetMountedFiles(files, selector)) return true
+      if (Date.now() >= deadline) return false
+      await sleep(100)
+    }
+  }
+
+  /**
+   * Write the files into a mounted input, failing when the page offers none.
+   * @param files - decoded attachments in pick order.
+   * @param selector - the driver's file-input selector.
+   * @returns Resolves when the input took the files.
+   * @throws BrowserTransportError with `chathub-attachment-unsupported` when no
+   *   matching input exists or every one of them declines the files.
+   */
+  private async setMountedFiles(files: readonly FilePayloadLike[], selector: string): Promise<void> {
+    if (await this.trySetMountedFiles(files, selector)) return
+    throw new BrowserTransportError(
+      'chathub-attachment-unsupported',
+      `${this.key}: no file input matches "${selector}" and accepts ${this.namesOf(files)}`,
+    )
+  }
+
+  /**
+   * Resolve the first matching input whose `accept` admits every file.
+   *
+   * An input without an `accept` attribute takes anything, and one that
+   * declares types is only written when each file's extension or MIME type is
+   * among them: a site ignores a file its own input never accepted, and the
+   * turn would then ask about an attachment the model cannot see.
+   * @param files - decoded attachments in pick order.
+   * @param selector - the driver's file-input selector.
+   * @returns The input to write, or `undefined` when none matches.
+   */
+  private async acceptingInput(
+    files: readonly FilePayloadLike[],
+    selector: string,
+  ): Promise<UploadInputLike | undefined> {
+    const locator = this.page.locator(selector)
+    // A page face that cannot even report a match count (a driver test double)
+    // offers nothing to write to; the caller reports that as unsupported
+    // instead of sending the prompt without its files.
+    let count = 0
+    try {
+      const probed = await locator.count()
+      count = typeof probed === 'number' ? probed : 0
+    } catch {
+      count = 0
+    }
+    for (let index = 0; index < count; index += 1) {
+      const candidate = locator.nth(index) as unknown as UploadInputLike
+      if (candidate.setInputFiles === undefined) continue
+      const accept = await candidate.getAttribute?.('accept', { timeout: this.actionTimeoutMs })
+        .catch(() => null) ?? null
+      if (acceptsFiles(accept, files)) return candidate
+    }
+    return undefined
+  }
+
+  /**
+   * @param files - files the turn carries.
+   * @returns Their names, for a failure message the panel can show.
+   */
+  private namesOf(files: readonly FilePayloadLike[]): string {
+    return files.map(file => file.name).join(', ')
   }
 
   /**

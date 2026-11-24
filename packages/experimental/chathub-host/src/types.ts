@@ -83,10 +83,33 @@ export interface SiteDriverConfig {
    *
    * A site whose paper clip opens the operating system's picker cannot be
    * automated through that button; setting this hidden input leaves the site
-   * exactly as a real pick does. A driver without it declares attachments
-   * unsupported.
+   * exactly as a real pick does. When several inputs match, the host picks one
+   * whose `accept` attribute admits every file — a page can ship an image-only
+   * input ahead of the document one, and the site silently drops a file its own
+   * input never accepted. A driver with neither this nor an
+   * {@linkcode SiteDriverConfig.uploadTrigger} declares attachments unsupported.
    */
   fileInput?: string
+  /**
+   * Optional control that opens the site's attachment menu.
+   *
+   * Some sites mount no file input until their upload menu opens (gemini
+   * mounts three), and others only start a real pick from a menu entry
+   * (chatgpt, doubao, qianwen). Clicking the control the way a user does keeps
+   * the upload on the site's own path, so the files bind to the next message
+   * exactly as a hand-picked file does.
+   */
+  uploadTrigger?: string
+  /**
+   * Optional entry inside that menu which starts the file pick.
+   *
+   * Naming it also keeps the host off stray inputs the page mounts for other
+   * features: chatgpt ships four `input[type=file]` nodes, three of them
+   * image-only, and a document set on the wrong one is dropped without an
+   * error while the turn goes on to ask about a file that was never there
+   * (2026-11-24).
+   */
+  uploadMenuItem?: string
   /**
    * Milliseconds the site gets to bind picked attachments to the next message.
    *
@@ -229,6 +252,12 @@ export interface BrowserLocatorLike {
    * @returns The element's inner markup, which keeps an answer's formatting.
    */
   innerHTML(options?: { timeout?: number }): Promise<string>
+  /**
+   * @param name - attribute name.
+   * @param options - optional operation timeout.
+   * @returns The attribute value, or `null` when the element lacks it.
+   */
+  getAttribute(name: string, options?: { timeout?: number }): Promise<string | null>
 }
 
 /** Locator face the page wrapper drives. */
@@ -258,6 +287,22 @@ export interface BrowserInputLike extends BrowserLocatorLike {
   locator(selector: string): BrowserInputLike
 }
 
+/**
+ * A file pick the page started itself.
+ *
+ * Answering it is the same as choosing files in the operating system's dialog:
+ * the site's own change handler receives the files, so its upload, preview,
+ * and message binding all run as they do for a hand-picked file.
+ */
+export interface FileChooserLike {
+  /**
+   * @param files - decoded attachments in pick order.
+   * @param options - optional operation timeout.
+   * @returns Resolves when the site has the files.
+   */
+  setFiles(files: readonly FilePayloadLike[], options?: { timeout?: number }): Promise<void>
+}
+
 /** One browser page or tab. */
 export interface BrowserPageLike {
   /** @returns Whether the page has been closed. */
@@ -277,6 +322,19 @@ export interface BrowserPageLike {
    * @returns Resolves when the document is ready.
    */
   goto(url: string, options?: { timeout?: number; waitUntil?: 'domcontentloaded' }): Promise<unknown>
+  /**
+   * Wait for an event the page reports, so a pick the site starts itself can
+   * be answered instead of guessed at.
+   *
+   * The event name stays a plain string and the result untyped because
+   * Playwright declares one overload per event with its own result; a
+   * literal-typed member would reject a real `Page`. Only `filechooser` is
+   * used, and the caller narrows the result.
+   * @param event - event name.
+   * @param options - longest wait.
+   * @returns Whatever the event reported.
+   */
+  waitForEvent?(event: string, options?: { timeout?: number }): Promise<unknown>
   /** @returns Resolves when the page is closed. */
   close(): Promise<void>
   /**

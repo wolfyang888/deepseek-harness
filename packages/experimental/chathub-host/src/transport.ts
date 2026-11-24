@@ -15,6 +15,11 @@ import type { ResolvedConfig, SiteDrivers, TransportRuntime } from './types.ts'
 export const WEB_TRANSPORT_FAILURE_RULES: readonly ProviderFailureRule[] = [
   { pattern: /chathub-signed-out/, code: 'auth-required' },
   { pattern: /chathub-driver-missing/, code: 'unsupported-capability' },
+  // Declared explicitly rather than left to the providers' generic
+  // "unsupported" pattern: this token means the site offered no upload path
+  // for the turn's files, which the panel must report as the request being
+  // out of reach rather than as a vague site failure.
+  { pattern: /chathub-attachment-unsupported/, code: 'unsupported-capability' },
   { pattern: /chathub-ui-drift/, code: 'provider-unavailable' },
   { pattern: /chathub-turn-timeout/, code: 'stream-interrupted' },
   { pattern: /chathub-busy/, code: 'rate-limited' },

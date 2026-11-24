@@ -7,6 +7,7 @@ import type {
   BrowserPageLike,
   ChromiumLauncher,
   ConnectedBrowserLike,
+  FileChooserLike,
   LaunchOptions,
 } from '../../src/types.ts'
 
@@ -30,10 +31,12 @@ class FakeLocator implements BrowserInputLike {
   /**
    * @param page - page owning the selector state.
    * @param selector - selector this locator targets.
+   * @param index - element index this locator stands for.
    */
   constructor(
     private readonly page: FakePage,
     private readonly selector: string,
+    private readonly index = 0,
   ) {}
 
   /** @returns The same locator; fakes have no distinct first element. */
@@ -48,11 +51,11 @@ class FakeLocator implements BrowserInputLike {
   }
 
   /**
-   * @param _index - element index ignored by the fake.
+   * @param index - element index ignored by the fake.
    * @returns A locator over the same selector.
    */
-  nth(_index: number): BrowserInputLike {
-    return this
+  nth(index: number): BrowserInputLike {
+    return new FakeLocator(this.page, this.selector, index)
   }
 
   /**
@@ -67,6 +70,11 @@ class FakeLocator implements BrowserInputLike {
   async isVisible(): Promise<boolean> {
     this.page.raise('isVisible')
     if (this.page.isVisibleDelayMs > 0) await sleep(this.page.isVisibleDelayMs)
+    const seen = (this.page.visibilityChecks[this.selector] ?? 0) + 1
+    this.page.visibilityChecks[this.selector] = seen
+    // A menu painted a beat after its trigger is the normal case on the real
+    // sites, so a selector can be configured to read hidden first.
+    if (seen <= (this.page.hiddenChecks[this.selector] ?? 0)) return false
     return this.page.visible.has(this.selector)
   }
 
@@ -85,6 +93,17 @@ class FakeLocator implements BrowserInputLike {
   /** @returns Whether the selector is in the disabled set. */
   async isDisabled(): Promise<boolean> {
     return this.page.disabledButtons.has(this.selector)
+  }
+
+  /**
+   * @param name - attribute name.
+   * @returns The attribute the test configured for this element, then for the
+   *   selector as a whole, or `null` when neither is set.
+   */
+  async getAttribute(name: string): Promise<string | null> {
+    return this.page.attributes[`${this.selector}#${this.index}#${name}`]
+      ?? this.page.attributes[`${this.selector}#${name}`]
+      ?? null
   }
 
   /** Records one click on this selector. */
@@ -115,6 +134,33 @@ class FakeLocator implements BrowserInputLike {
   }
 }
 
+/** File pick double: records the files the wrapper answers it with. */
+export class FakeChooser implements FileChooserLike {
+  /**
+   * @param page - page this pick belongs to, which collects the uploads.
+   */
+  constructor(private readonly page: FakePage) {}
+
+  /**
+   * @param files - uploads the wrapper hands to the pick.
+   * @param _options - timeout the wrapper passes; the fake answers at once.
+   * @returns Resolves after recording the pick.
+   */
+  async setFiles(
+    files: readonly { name: string; mimeType: string; buffer: Uint8Array }[],
+    _options?: { timeout?: number },
+  ): Promise<void> {
+    for (const file of files) {
+      this.page.uploads.push({
+        selector: 'filechooser',
+        name: file.name,
+        mimeType: file.mimeType,
+        text: new TextDecoder().decode(file.buffer),
+      })
+    }
+  }
+}
+
 /** Page double recording every interaction the wrapper performs. */
 export class FakePage implements BrowserPageLike {
   closed = false
@@ -125,6 +171,14 @@ export class FakePage implements BrowserPageLike {
   texts: Record<string, string> = {}
   boxes: Record<string, { x: number; y: number; width: number; height: number } | null> = {}
   visible = new Set<string>()
+  /** Attributes keyed by `selector#name`, so `accept` can differ per input. */
+  attributes: Record<string, string | null> = {}
+  /** Visibility checks each selector answers `false` first, keyed by selector. */
+  hiddenChecks: Record<string, number> = {}
+  /** Visibility checks performed per selector, so the above can count down. */
+  visibilityChecks: Record<string, number> = {}
+  /** File pick the page starts; unset when the site starts none. */
+  chooser: FakeChooser | undefined
   /** Selectors the fake reports as disabled; empty means everything enabled. */
   disabledButtons = new Set<string>()
   /** Selectors clicked through a locator (as opposed to raw mouse clicks). */
@@ -189,6 +243,16 @@ export class FakePage implements BrowserPageLike {
    */
   locator(selector: string): BrowserInputLike {
     return new FakeLocator(this, selector)
+  }
+
+  /**
+   * @param event - event name; only `filechooser` is used by the host.
+   * @returns The pick the test armed, as a site starting one would report it.
+   * @throws Error when the test armed no pick, standing in for a timed-out wait.
+   */
+  async waitForEvent(event: string): Promise<FileChooserLike> {
+    if (event !== 'filechooser' || this.chooser === undefined) throw new Error('no file chooser was started')
+    return this.chooser
   }
 
   /**

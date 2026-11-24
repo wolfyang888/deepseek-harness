@@ -995,7 +995,7 @@ export interface StagehandModelConfig {
 ## `@deepseek-ai/dsh-experimental-chathub-gateway`
 
 - `inject`: `llm` · `webChatTransport`
-- `source`: [`packages/experimental/chathub-gateway/src/index.ts:25`](../packages/experimental/chathub-gateway/src/index.ts)
+- `source`: [`packages/experimental/chathub-gateway/src/index.ts:39`](../packages/experimental/chathub-gateway/src/index.ts)
 
 ```ts config-catalog
 /** Configuration as the mounting profile writes it; defaults fill the rest. */
@@ -1008,11 +1008,16 @@ export interface Config {
   apiKey: string
   /** Mounted site ids to expose; empty means every health-known site. */
   sites: readonly string[]
+  /** Wire protocols to serve; a wire left out answers 404 on its routes. */
+  wires: readonly Wire[]
   /** Pending requests one site accepts before answering 429. */
   maxQueuePerSite: number
   /** Interval between SSE keepalive writes while a site turn runs. */
   keepaliveMs: number
 }
+
+/** Wire protocol a request is answered in. */
+export type Wire = 'openai' | 'anthropic'
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-experimental-chathub-gateway -->
 
@@ -1022,7 +1027,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-experimental-chathub-host`
 
 - `inject`: `typert` · `storageDomain`
-- `source`: [`packages/experimental/chathub-host/src/types.ts:159`](../packages/experimental/chathub-host/src/types.ts)
+- `source`: [`packages/experimental/chathub-host/src/types.ts:208`](../packages/experimental/chathub-host/src/types.ts)
 
 ```ts config-catalog
 /** Service configuration after schema defaults have been applied. */
@@ -1138,6 +1143,54 @@ export interface SiteDriverConfig {
    * mentions the phrase still counts as an answer.
    */
   pending?: string
+  /**
+   * Optional control whose click reveals the site's collapsed work steps.
+   *
+   * A deep-thinking site hides its chain of thought behind a toggle. Reading
+   * the reasoning blocks before opening it returns markup with no text, so the
+   * host clicks this once when the newest block reads empty.
+   */
+  reasoningExpand?: string
+  /**
+   * Optional `input[type=file]` selector accepting the turn's attachments.
+   *
+   * A site whose paper clip opens the operating system's picker cannot be
+   * automated through that button; setting this hidden input leaves the site
+   * exactly as a real pick does. When several inputs match, the host picks one
+   * whose `accept` attribute admits every file — a page can ship an image-only
+   * input ahead of the document one, and the site silently drops a file its own
+   * input never accepted. A driver with neither this nor an
+   * {@linkcode SiteDriverConfig.uploadTrigger} declares attachments unsupported.
+   */
+  fileInput?: string
+  /**
+   * Optional control that opens the site's attachment menu.
+   *
+   * Some sites mount no file input until their upload menu opens (gemini
+   * mounts three), and others only start a real pick from a menu entry
+   * (chatgpt, doubao, qianwen). Clicking the control the way a user does keeps
+   * the upload on the site's own path, so the files bind to the next message
+   * exactly as a hand-picked file does.
+   */
+  uploadTrigger?: string
+  /**
+   * Optional entry inside that menu which starts the file pick.
+   *
+   * Naming it also keeps the host off stray inputs the page mounts for other
+   * features: chatgpt ships four `input[type=file]` nodes, three of them
+   * image-only, and a document set on the wrong one is dropped without an
+   * error while the turn goes on to ask about a file that was never there
+   * (2026-11-24).
+   */
+  uploadMenuItem?: string
+  /**
+   * Milliseconds the site gets to bind picked attachments to the next message.
+   *
+   * The composer accepts the prompt the instant the files are picked while the
+   * upload is still running, and sending then drops the files; this window
+   * runs between the pick and the first keystroke.
+   */
+  uploadSettleMs?: number
   /** Stable polls required before an answer counts as finished; defaults to the service value. */
   stablePolls?: number
   /** Milliseconds between answer polls; defaults to the service value. */

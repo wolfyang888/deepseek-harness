@@ -2,6 +2,7 @@
 
 import { expect, it } from 'vitest'
 import { BrowserTransportError, classifyPageError, isOperationTimeout } from '../src/errors.ts'
+import { WEB_TRANSPORT_FAILURE_RULES } from '../src/transport.ts'
 
 it('keeps an existing transport failure unchanged', () => {
   const error = new BrowserTransportError('chathub-busy', 'already queued')
@@ -39,4 +40,13 @@ it('recognizes operation timeouts by name', () => {
   expect(isOperationTimeout({ name: 'TimeoutError' })).toBe(true)
   expect(isOperationTimeout(new Error('timed out'))).toBe(false)
   expect(isOperationTimeout(null)).toBe(false)
+})
+
+it('maps an unusable upload path to a capability code on its own rule', () => {
+  // Left to the providers' generic "unsupported" pattern this token would
+  // still land on the same code, but by accident: the rule documents that a
+  // site declining the turn's files is a request out of reach, not site drift.
+  const message = 'chathub-attachment-unsupported: chatgpt-web: the attachment menu started no file pick'
+  const rule = WEB_TRANSPORT_FAILURE_RULES.find(entry => entry.pattern.test(message))
+  expect(rule?.code).toBe('unsupported-capability')
 })

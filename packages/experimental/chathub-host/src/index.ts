@@ -168,6 +168,8 @@ export class WebChatTransportService extends TypertRemoteService {
       pollMs: z.natural().min(1),
       maxPromptChars: z.natural().min(1),
       fileInput: z.string().min(1),
+      uploadTrigger: z.string().min(1),
+      uploadMenuItem: z.string().min(1),
       uploadSettleMs: z.natural(),
     })).default({}),
   })

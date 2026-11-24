@@ -28,14 +28,34 @@ export const DEFAULT_SITE_DRIVERS: Readonly<SiteDrivers> = {
     url: 'https://chatgpt.com/',
     // The 2026-11 redesign (verified against a logged-in profile with a real
     // browser) replaced the `<textarea id="prompt-textarea">` composer with a
-    // ProseMirror editor: the home screen renders `<textarea
-    // id="pending-home-input">`, while an open conversation renders
-    // `<div contenteditable role="textbox" aria-label="Ask ChatGPT">`. Both
-    // must match because login detection runs on the home screen and the send
-    // runs inside a conversation. The old id matches nothing now, so without
-    // the union a signed-in page polls to the deadline and reports needs-auth.
-    input: '#pending-home-input, [role="textbox"][aria-label="Ask ChatGPT"]',
+    // ProseMirror editor. Verified again 2026-11-24 on a Chinese-locale
+    // account: neither `#pending-home-input` nor `#prompt-textarea` exists on
+    // the home screen, the editor is a bare `<div class="ProseMirror"
+    // contenteditable role="textbox">`, and its aria-label is localized
+    // ("询问 ChatGPT"), so an aria-label match is a locale trap — the composer
+    // read as absent and every turn ended as provider-unavailable after the
+    // 15s box wait. The class is locale-independent and survives the upload,
+    // which swaps nothing out; the old ids and the English label stay as
+    // fallbacks for other accounts and older markup.
+    input: '#prompt-textarea, div.ProseMirror, [role="textbox"][aria-label="Ask ChatGPT"]',
+    // Four inputs ship on the home screen: image, image+video, image, and one
+    // with no `accept`. The first three look like "the" attachment input, but
+    // the site ignores a document written to them without an error, so the
+    // host would send a question about a file the model never received
+    // (2026-11-24). The upload therefore goes through the menu a user opens,
+    // and the entry starts a real pick.
+    //
+    // That entry disappears when the account's upload quota is spent: the menu
+    // then opens on "订阅 Plus，获得更多上传额度 或等待 23小时 后再上传" and
+    // no local upload exists at all (seen 2026-11-24 on this free account,
+    // minutes after the same menu did offer it). Writing the file straight to
+    // the input that accepts anything paints nothing in that state, so a turn
+    // with attachments fails as `chathub-ui-drift` on the missing entry — the
+    // honest outcome, since sending the prompt alone would answer a question
+    // about a file the model never saw.
     fileInput: 'input[type="file"]',
+    uploadTrigger: '[aria-label="添加文件等内容"], [aria-label="Add files and more"]',
+    uploadMenuItem: 'text=/添加照片和文件|Add photos and files/',
     // The same redesign dropped `data-message-author-role`; each assistant
     // reply now roots at `<div data-dil-response data-dil-message-id="…">`.
     // The legacy selector is kept as a fallback for pages that still render
@@ -48,11 +68,22 @@ export const DEFAULT_SITE_DRIVERS: Readonly<SiteDrivers> = {
     loginWall: '[data-login-button]',
     signedOutPath: SIGNED_OUT_PATH,
     submitKey: 'Enter',
+    // A synthetic Enter never leaves this editor: text inserted by the host
+    // stays in the composer and the turn dies as UI drift (verified
+    // 2026-11-24). The send button next to it works, and its label is
+    // localized, so the stable `data-testid` comes first.
+    submitButton: '[data-testid="send-button"], [aria-label="发送"], [aria-label="Send"]',
   },
   'gemini-web': {
     url: 'https://gemini.google.com/app',
     input: '.ql-editor',
+    // The app screen ships no file input at rest: all three mount only once
+    // the "上传和工具" menu opens, and the first and third accept documents
+    // while the second is images/video only (verified 2026-11-24 with a real
+    // browser). Without opening that menu a turn with attachments had nothing
+    // to write to and failed as unsupported-capability in 0.0s.
     fileInput: 'input[type="file"]',
+    uploadTrigger: '[aria-label="上传和工具"], [aria-label*="Upload and tools"]',
     answer: 'model-response .markdown',
     // A guest page renders the composer and answers turns too, but a guest
     // conversation is never saved to the Google account: turns that ran as a
@@ -86,7 +117,13 @@ export const DEFAULT_SITE_DRIVERS: Readonly<SiteDrivers> = {
   'doubao-web': {
     url: 'https://www.doubao.com/chat',
     input: '.ProseMirror[contenteditable="true"]',
+    // The composer's file inputs mount late, so a turn that arrived early
+    // found none and failed as unsupported-capability; the attach button,
+    // however, is on the composer from the start and its test id is stable
+    // across locales. Its menu entry starts a real pick (verified 2026-11-24).
     fileInput: 'input[type="file"]',
+    uploadTrigger: '[data-testid="upload_file_button"]',
+    uploadMenuItem: 'text=/上传文件或图片/',
     // Doubao renders each assistant turn as a `receive_message` block whose
     // reply text lives in `message_text_content`. Only the assistant role is
     // named: the user's own message renders the same test id inside
@@ -121,7 +158,12 @@ export const DEFAULT_SITE_DRIVERS: Readonly<SiteDrivers> = {
   'qianwen-web': {
     url: 'https://www.qianwen.com/',
     input: 'div[contenteditable="true"], textarea.ant-input',
+    // No file input exists until the paper-clip menu opens, and the input it
+    // mounts there is created for the pick itself; the menu entry is the only
+    // path that starts one (verified 2026-11-24).
     fileInput: 'input[type="file"]',
+    uploadTrigger: '[aria-label="添加附件"]',
+    uploadMenuItem: 'text=/上传文档/',
     // Qianwen renders each turn inside a chat-answers-card-wrap block on the
     // qianwen.com workbench UI; the hashed answerItem classes are kept as the
     // legacy tongyi.aliyun.com fallback.
@@ -135,7 +177,17 @@ export const DEFAULT_SITE_DRIVERS: Readonly<SiteDrivers> = {
     // qk-markdown outside that section. Gating both on the complete status
     // keeps the acknowledgement and the step cards out; while it is absent no
     // answer container matches, and the session keeps polling the page body.
-    answer: '.chat-answers-card-wrap:has(button[data-status="complete"]) .qk-markdown:not([data-execution-section="process"] *), [class*="answerItem"], [class*="message-bubble"][class*="assistant"], .chat-message-item[class*="assistant"]',
+    //
+    // The 2026-11 workbench drops both hooks (verified 2026-11-24 with a real
+    // browser): no element carries `data-status` or `data-execution-section`,
+    // so the gated selector above matched nothing at all and a finished turn
+    // read as an empty answer. The reply now renders inside
+    // `.message-card-* > .answer-common-card > .markdown-pc-special-class >
+    // .qk-markdown`, and it appears complete rather than streaming (sampled
+    // once a second: 0 characters at t+2s, 201 at t+3s, unchanged for the next
+    // 22s), which is what makes reading the card directly safe. The gated
+    // legacy selector stays ahead of it for accounts still on the older build.
+    answer: '.chat-answers-card-wrap:has(button[data-status="complete"]) .qk-markdown:not([data-execution-section="process"] *), .answer-common-card .qk-markdown, [class*="answerItem"], [class*="message-bubble"][class*="assistant"], .chat-message-item[class*="assistant"]',
     // The reply body inside a legacy container; the workbench answer above is
     // already the markdown block and reads as its own body.
     answerBody: '.qk-markdown, .markdown-body, [class*="message-bubble"][class*="assistant"] [class*="markdown"]',
@@ -249,6 +301,14 @@ export function validateSiteDriver(providerId: string, driver: SiteDriverConfig)
   }
   if (driver.answerBody !== undefined && driver.answerBody.trim().length === 0) {
     throw new Error(`WebChatTransport: driver "${providerId}" has an empty answerBody`)
+  }
+  // An attachment selector is declared or absent; an empty one would silently
+  // turn an upload path into "this site takes no files".
+  for (const field of ['fileInput', 'uploadTrigger', 'uploadMenuItem'] as const) {
+    const selector = driver[field]
+    if (selector !== undefined && selector.trim().length === 0) {
+      throw new Error(`WebChatTransport: driver "${providerId}" has an empty ${field}`)
+    }
   }
   if (driver.reasoning !== undefined && driver.reasoning.trim().length === 0) {
     throw new Error(`WebChatTransport: driver "${providerId}" has an empty reasoning`)

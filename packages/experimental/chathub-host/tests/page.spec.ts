@@ -3,7 +3,7 @@
 import { expect, it } from 'vitest'
 import { PlaywrightPage } from '../src/page.ts'
 import type { BrowserPageLike } from '../src/types.ts'
-import { FakePage } from './support/fake-browser.ts'
+import { FakeChooser, FakePage } from './support/fake-browser.ts'
 
 const KEY = 'deepseek-web'
 const DRIVER = { url: 'https://fake.test/chat', input: '#prompt', answer: '.answer', submitKey: 'Enter' }
@@ -468,4 +468,100 @@ it('classifies an upload the browser rejected', async () => {
   fake.errors.setInputFiles = new Error('net::ERR_UPLOAD_FILE_CHANGED')
   await expect(wrapper.attach(UPLOAD_FILES, UPLOAD_DRIVER))
     .rejects.toMatchObject({ token: 'chathub-network' })
+})
+
+it('skips an input whose accept declines the files', async () => {
+  // 2026-11-24, chatgpt: the page mounts four inputs and the image-only ones
+  // come first. A document written to one of those is dropped by the site
+  // without an error, so the turn would ask about a file the model never saw.
+  const { wrapper, fake } = page()
+  fake.counts['input[type=file]'] = 2
+  fake.attributes['input[type=file]#0#accept'] = 'image/*'
+  await wrapper.attach(UPLOAD_FILES, UPLOAD_DRIVER)
+  // The second input declares no accept, so it takes every file.
+  expect(fake.uploads.map(upload => upload.selector)).toEqual(['input[type=file]', 'input[type=file]'])
+  expect(fake.uploads.map(upload => upload.name)).toEqual(['shot.png', 'notes.txt'])
+})
+
+it('refuses a site whose only inputs decline the files', async () => {
+  const { wrapper, fake } = page()
+  fake.counts['input[type=file]'] = 1
+  fake.attributes['input[type=file]#accept'] = 'image/*'
+  await expect(wrapper.attach(UPLOAD_FILES, UPLOAD_DRIVER))
+    .rejects.toMatchObject({ token: 'chathub-attachment-unsupported' })
+  expect(fake.uploads).toEqual([])
+})
+
+it('accepts an input that names both a family and an extension', async () => {
+  const { wrapper, fake } = page()
+  fake.counts['input[type=file]'] = 1
+  fake.attributes['input[type=file]#accept'] = 'image/*,.txt'
+  await wrapper.attach(UPLOAD_FILES, UPLOAD_DRIVER)
+  expect(fake.uploads.map(upload => upload.name)).toEqual(['shot.png', 'notes.txt'])
+})
+
+/** A site whose attachment menu mounts its file inputs, like gemini's. */
+const MENU_DRIVER = { ...DRIVER, fileInput: 'input[type=file]', uploadTrigger: '#attach', uploadSettleMs: 0 }
+/** A site whose menu entry starts a real pick, like chatgpt's. */
+const PICK_DRIVER = { ...MENU_DRIVER, uploadMenuItem: '[role="menuitem"]' }
+
+it('opens the attachment menu and writes the files into the input it mounts', async () => {
+  const { wrapper, fake } = page()
+  // The input exists only because the menu was opened; the fake reports it
+  // from the start, so the assertion is about the click that precedes it.
+  fake.counts['input[type=file]'] = 1
+  await wrapper.attach(UPLOAD_FILES, MENU_DRIVER)
+  expect(fake.locatorClicks).toEqual(['#attach'])
+  expect(fake.uploads.map(upload => upload.name)).toEqual(['shot.png', 'notes.txt'])
+})
+
+it('answers the pick a menu entry starts', async () => {
+  const { wrapper, fake } = page()
+  fake.visible.add('[role="menuitem"]')
+  fake.chooser = new FakeChooser(fake)
+  await wrapper.attach(UPLOAD_FILES, PICK_DRIVER)
+  expect(fake.locatorClicks).toEqual(['#attach', '[role="menuitem"]'])
+  expect(fake.uploads.map(upload => `${upload.selector}:${upload.name}`))
+    .toEqual(['filechooser:shot.png', 'filechooser:notes.txt'])
+})
+
+it('waits for the menu entry to paint instead of clicking a node that is not there', async () => {
+  // 2026-11-24, doubao: the entry renders after the trigger's handler runs, so
+  // clicking it straight away waited out the whole operation budget.
+  const fake = new FakePage()
+  const wrapper = new PlaywrightPage(fake, KEY, 1_000)
+  fake.visible.add('[role="menuitem"]')
+  fake.hiddenChecks['[role="menuitem"]'] = 2
+  fake.chooser = new FakeChooser(fake)
+  await wrapper.attach(UPLOAD_FILES, PICK_DRIVER)
+  expect(fake.locatorClicks).toEqual(['#attach', '[role="menuitem"]'])
+  expect(fake.uploads.map(upload => upload.name)).toEqual(['shot.png', 'notes.txt'])
+})
+
+it('reports a menu entry that never paints', async () => {
+  const { wrapper } = page()
+  await expect(wrapper.attach(UPLOAD_FILES, PICK_DRIVER))
+    .rejects.toThrow(/nothing matching "\[role="menuitem"\]" appeared/u)
+})
+
+it('falls back to a mounted input when the entry starts no pick', async () => {
+  const { wrapper, fake } = page()
+  fake.visible.add('[role="menuitem"]')
+  fake.counts['input[type=file]'] = 1
+  await wrapper.attach(UPLOAD_FILES, PICK_DRIVER)
+  expect(fake.uploads.map(upload => upload.selector)).toEqual(['input[type=file]', 'input[type=file]'])
+})
+
+it('refuses a menu that starts neither a pick nor a usable input', async () => {
+  const { wrapper, fake } = page()
+  fake.visible.add('[role="menuitem"]')
+  await expect(wrapper.attach(UPLOAD_FILES, PICK_DRIVER))
+    .rejects.toMatchObject({ token: 'chathub-attachment-unsupported' })
+  expect(fake.uploads).toEqual([])
+})
+
+it('names the files a site declined in the refusal', async () => {
+  const { wrapper } = page()
+  await expect(wrapper.attach(UPLOAD_FILES, MENU_DRIVER))
+    .rejects.toThrow(/shot\.png, notes\.txt/u)
 })
