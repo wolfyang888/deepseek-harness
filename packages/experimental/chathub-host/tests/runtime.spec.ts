@@ -26,11 +26,15 @@ function managed(dir: string, overrides: Partial<Extract<BrowserRuntimeConfig, {
   return { mode: 'managed', profileDir: dir, headless: true, ...overrides }
 }
 
-async function runtime(config: BrowserRuntimeConfig, launcher = new FakeLauncher()): Promise<{
+async function runtime(
+  config: BrowserRuntimeConfig,
+  launcher = new FakeLauncher(),
+  log?: (message: string) => void,
+): Promise<{
   runtime: PlaywrightBrowserRuntime
   launcher: FakeLauncher
 }> {
-  return { runtime: new PlaywrightBrowserRuntime(config, TIMINGS, launcher), launcher }
+  return { runtime: new PlaywrightBrowserRuntime(config, TIMINGS, launcher, log), launcher }
 }
 
 /** Context whose pages report the chat input as visible. */
@@ -358,6 +362,65 @@ it('closes the headful login window when sign-in fails', async () => {
   expect(launcher.launched.map(entry => entry.options.headless)).toEqual([false])
   await expect(browser.acquire('deepseek-web', DRIVER)).resolves.toBeDefined()
   expect(launcher.launched.map(entry => entry.options.headless)).toEqual([false, true])
+  await browser.dispose()
+})
+
+it('keeps the login window open when navigation fails', async () => {
+  // 2026-11-23 regression: gemini/chatgpt unreachable without a proxy made the
+  // login `goto` time out after 15s, and the catch dropped the whole context —
+  // the window flashed shut before the site's error page could be read, which
+  // looked like "the browser quit without waiting for sign-in".
+  const dir = await profileDir()
+  const launcher = new FakeLauncher()
+  const context = new FakeContext()
+  let page: FakePage | undefined
+  context.pageFactory = () => {
+    page = new FakePage()
+    page.errors.goto = new Error('net::ERR_CONNECTION_TIMED_OUT')
+    return page
+  }
+  launcher.contextFactory = () => context
+  const lines: string[] = []
+  const { runtime: browser } = await runtime(managed(dir), launcher, (message) => { lines.push(message) })
+  await expect(browser.login('gemini-web', DRIVER, 5, new AbortController().signal))
+    .rejects.toMatchObject({ token: 'chathub-network' })
+  expect(page?.closeCount).toBe(0)
+  expect(context.closeCount).toBe(0)
+  // The failed page stays recorded, so the next turn reuses it (no second
+  // tab opens) and the next login replaces the whole context as usual.
+  await expect(browser.acquire('gemini-web', DRIVER)).resolves.toBeDefined()
+  expect(context.newPageCount).toBe(1)
+  expect(lines.some(line => line.includes('the window stays open for inspection'))).toBe(true)
+  await browser.dispose()
+})
+
+it('closes the headful window when the login page cannot be created', async () => {
+  const dir = await profileDir()
+  const launcher = new FakeLauncher()
+  const context = new FakeContext()
+  context.newPageError = new Error('no tab')
+  launcher.contextFactory = () => context
+  const { runtime: browser } = await runtime(managed(dir), launcher)
+  await expect(browser.login('deepseek-web', DRIVER, 5, new AbortController().signal))
+    .rejects.toMatchObject({ token: 'chathub-browser-unavailable' })
+  expect(context.closeCount).toBe(1)
+  await browser.dispose()
+})
+
+it('closes the headful login window when the sign-in wait crashes', async () => {
+  const dir = await profileDir()
+  const launcher = new FakeLauncher()
+  const context = new FakeContext()
+  context.pageFactory = () => {
+    const page = new FakePage()
+    page.errors.count = new Error('strange renderer failure')
+    return page
+  }
+  launcher.contextFactory = () => context
+  const { runtime: browser } = await runtime(managed(dir), launcher)
+  await expect(browser.login('deepseek-web', DRIVER, 20, new AbortController().signal))
+    .rejects.toMatchObject({ token: 'chathub-ui-drift' })
+  expect(context.closeCount).toBe(1)
   await browser.dispose()
 })
 

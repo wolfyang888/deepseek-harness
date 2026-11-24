@@ -2,6 +2,7 @@
 
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { errorMessage } from '@deepseek-ai/dsh-experimental-chathub'
 import { BrowserTransportError } from './errors.ts'
 import { PlaywrightPage } from './page.ts'
 import type {
@@ -124,12 +125,21 @@ export class PlaywrightBrowserRuntime implements TransportRuntime {
    * @param config - browser ownership mode and launch inputs.
    * @param timings - page-operation and login-poll timeouts.
    * @param launcher - Chromium API face; callers pass `playwright-core`'s `chromium`.
+   * @param log - optional diagnostics sink; every login decision is reported
+   *   through it, because a login window that opens and vanishes leaves no
+   *   other trace of what closed it.
    */
   constructor(
     private readonly config: BrowserRuntimeConfig,
     private readonly timings: RuntimeTimings,
     private readonly launcher: ChromiumLauncher,
+    private readonly log?: (message: string) => void,
   ) {}
+
+  /** Emit one diagnostics line when the host wired a logger. */
+  private say(message: string): void {
+    this.log?.(message)
+  }
 
   /**
    * Return the reusable page for one key, navigating a new page to the site.
@@ -164,6 +174,12 @@ export class PlaywrightBrowserRuntime implements TransportRuntime {
    * `ensureContext`; a cancelled or failed sign-in closes it. Each context
    * swap waits for in-flight turns on every key first, so a login cannot
    * close a page another provider's turn is still using.
+   *
+   * A failed *navigation* is the one failure that keeps the window: the
+   * site's own error page (no proxy, a blocked site, a captive portal) is the
+   * only diagnosis the user can act on, and dropping the context here flashes
+   * the window shut before anyone reads it. The failed page stays recorded,
+   * so the next login replaces the whole context as usual.
    * @param providerId - provider whose site page the user signs in on.
    * @param driver - site facts for the entry URL and login wall.
    * @param timeoutMs - longest wait for the chat input.
@@ -181,12 +197,15 @@ export class PlaywrightBrowserRuntime implements TransportRuntime {
     if (this.config.mode !== 'managed' || !this.config.headless) {
       const page = await this.acquire(providerId, driver)
       await this.raiseLoginPage(page)
-      const signedIn = await this.waitForSignIn(page, driver, timeoutMs, signal)
+      this.say(`login ${providerId}: waiting up to ${timeoutMs}ms for the signed-in composer`)
+      const signedIn = await this.waitForSignIn(page, driver, timeoutMs, signal, providerId)
       if (!signedIn) await this.release(providerId)
+      this.say(`login ${providerId}: ${signedIn ? 'signed in' : 'not signed in; the page was released'}`)
       return signedIn
     }
     await this.settleChains()
     await this.dropContext()
+    this.say(`login ${providerId}: swapping the headless context for a headful sign-in window`)
     // A turn that starts while this window opens must share it: a second
     // launch meets the profile lock this one just wrote, owned by this very
     // process, and fails as provider-unavailable.
@@ -197,17 +216,38 @@ export class PlaywrightBrowserRuntime implements TransportRuntime {
     } finally {
       if (this.contextPromise === opening) this.contextPromise = undefined
     }
+    let page: ChatPageHandle
     try {
-      const page = await this.createPage(providerId, driver)
-      this.pages.set(providerId, page)
+      page = await this.newPage(providerId)
+    } catch (error) {
+      this.say(`login ${providerId}: opening the sign-in page failed: ${errorMessage(error)}`)
+      await this.settleChains()
+      await this.dropContext()
+      throw error
+    }
+    this.pages.set(providerId, page)
+    try {
+      await page.goto(driver.url)
+    } catch (error) {
+      this.say(
+        `login ${providerId}: navigation to "${driver.url}" failed;`
+        + ` the window stays open for inspection: ${errorMessage(error)}`,
+      )
+      throw error
+    }
+    try {
       await this.raiseLoginPage(page)
-      const signedIn = await this.waitForSignIn(page, driver, timeoutMs, signal)
+      const signedIn = await this.waitForSignIn(page, driver, timeoutMs, signal, providerId)
       if (!signedIn) {
+        this.say(`login ${providerId}: not signed in; closing the headful window`)
         await this.settleChains()
         await this.dropContext()
+      } else {
+        this.say(`login ${providerId}: signed in; keeping the headful window for later turns`)
       }
       return signedIn
     } catch (error) {
+      this.say(`login ${providerId}: the sign-in wait failed; closing the headful window: ${errorMessage(error)}`)
       await this.settleChains()
       await this.dropContext()
       throw error
@@ -245,6 +285,7 @@ export class PlaywrightBrowserRuntime implements TransportRuntime {
     driver: SiteDriverConfig,
     timeoutMs: number,
     signal: AbortSignal,
+    key: string,
   ): Promise<boolean> {
     try {
       // A login window opens on the signed-out page, where the wall is
@@ -257,6 +298,7 @@ export class PlaywrightBrowserRuntime implements TransportRuntime {
       if (error instanceof BrowserTransportError && error.token === 'chathub-browser-unavailable') {
         // The user closing the login page or the browser ends the attempt,
         // like a cancellation; the caller reports the provider's health.
+        this.say(`login ${key}: the page closed during the wait; treating it as a cancelled attempt`)
         return false
       }
       throw error
@@ -347,12 +389,8 @@ export class PlaywrightBrowserRuntime implements TransportRuntime {
     return chain
   }
 
-  /**
-   * @param key - provider or conversation key.
-   * @param driver - site facts for the entry URL.
-   * @returns A page navigated to the provider's chat entry.
-   */
-  private async createPage(key: string, driver: SiteDriverConfig): Promise<ChatPageHandle> {
+  /** @returns A fresh page in the shared context, not yet navigated. */
+  private async newPage(key: string): Promise<ChatPageHandle> {
     const context = await this.ensureContext()
     let raw: BrowserPageLike
     try {
@@ -360,7 +398,16 @@ export class PlaywrightBrowserRuntime implements TransportRuntime {
     } catch (error) {
       throw new BrowserTransportError('chathub-browser-unavailable', `${key}: opening a page failed`, { cause: error })
     }
-    const page = new PlaywrightPage(raw, key, this.timings.actionTimeoutMs)
+    return new PlaywrightPage(raw, key, this.timings.actionTimeoutMs)
+  }
+
+  /**
+   * @param key - provider or conversation key.
+   * @param driver - site facts for the entry URL.
+   * @returns A page navigated to the provider's chat entry.
+   */
+  private async createPage(key: string, driver: SiteDriverConfig): Promise<ChatPageHandle> {
+    const page = await this.newPage(key)
     try {
       await page.goto(driver.url)
     } catch (error) {

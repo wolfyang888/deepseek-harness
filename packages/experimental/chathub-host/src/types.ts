@@ -438,6 +438,13 @@ export interface TurnPage {
 /** Page handle the transport opens and releases. */
 export interface ChatPageHandle extends TurnPage {
   /**
+   * Navigate to a site's chat entry.
+   * @param url - destination URL.
+   * @returns Resolves when the document is ready; rejects with a classified
+   *   transport failure when the navigation times out or the site is unreachable.
+   */
+  goto(url: string): Promise<void>
+  /**
    * Wait for a signed-in composer, stopping early on a signed-out wall or
    * cancellation.
    *

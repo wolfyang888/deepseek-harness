@@ -197,6 +197,10 @@ export class WebChatTransportService extends TypertRemoteService {
       resolveBrowserConfig(config.browser),
       { actionTimeoutMs: config.actionTimeoutMs, pollMs: config.pollMs },
       lazyChromiumLauncher(),
+      // Login decisions go to stdout, which the gateway launch script captures
+      // in its log file: a window that opens and vanishes otherwise leaves no
+      // trace of what closed it.
+      (message) => { console.log(`[chathub-host] ${message}`) },
     )
     this.transport = new PlaywrightWebChatTransport(this.runtime, resolved, drivers)
     for (const providerId of providerIds()) {

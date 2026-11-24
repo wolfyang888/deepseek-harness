@@ -82,6 +82,11 @@ class ScriptedPage implements TurnPage {
   /** @returns Resolves; the page double has no window to raise. */
   async bringToFront(): Promise<void> {}
 
+  /** @returns Resolves after recording the destination as the current URL. */
+  async goto(url: string): Promise<void> {
+    this.urlValue = url
+  }
+
   /** @returns Whether the page is closed. */
   isClosed(): boolean {
     return this.closed

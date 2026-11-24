@@ -77,7 +77,7 @@ pnpm dsh web --patch packages/experimental/chathub-host/cordis.patch.yml
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-experimental-chathub-host)是全部可接受字段的完整来源。`drivers` 的键必须命名随包提供方；空选择器、小于 1 的轮询上限或无法编译的 `signedOutPath` 都会在加载期失败。
 
-即使 `browser.headless` 为 true，`login` 也会打开可见页面，最多等待 `loginTimeoutMs` 直到输入框出现，把 cookie 留在 profile 中，并重新打开提供方。`reauthenticate` 关闭提供方会话，再按当前登录状态重新打开。两者都返回 `ProviderHealth`；取消登录或页面在输入框出现前关闭时，提供方保持 `needs-auth`。
+即使 `browser.headless` 为 true，`login` 也会打开可见页面，最多等待 `loginTimeoutMs` 直到输入框出现，把 cookie 留在 profile 中，并重新打开提供方。`reauthenticate` 关闭提供方会话，再按当前登录状态重新打开。两者都返回 `ProviderHealth`；取消登录或页面在输入框出现前关闭时，提供方保持 `needs-auth`。导航到站点失败时保留可见窗口——站点自己的错误页（缺代理、站点不可达）正是用户能据此行动的诊断——并且每次登录决策都会写日志，窗口没出现或一闪而逝时宿主日志里都有迹可循。
 
 -----
 
