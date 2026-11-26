@@ -170,6 +170,7 @@ export class WebChatTransportService extends TypertRemoteService {
       fileInput: z.string().min(1),
       uploadTrigger: z.string().min(1),
       uploadMenuItem: z.string().min(1),
+      uploadBusy: z.string().min(1),
       uploadSettleMs: z.natural(),
     })).default({}),
   })

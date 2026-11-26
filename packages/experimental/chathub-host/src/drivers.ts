@@ -84,6 +84,11 @@ export const DEFAULT_SITE_DRIVERS: Readonly<SiteDrivers> = {
     // to write to and failed as unsupported-capability in 0.0s.
     fileInput: 'input[type="file"]',
     uploadTrigger: '[aria-label="上传和工具"], [aria-label*="Upload and tools"]',
+    // Verified 2026-11-26: the chip carries a `mat-spinner` from the moment the
+    // pick is answered until the file is stored, 6–15s for a 112KB .docx. The
+    // send button is a Material icon button that stays visible and enabled the
+    // whole time, so nothing but this spinner says "not yet".
+    uploadBusy: 'gem-attachment mat-spinner',
     answer: 'model-response .markdown',
     // A guest page renders the composer and answers turns too, but a guest
     // conversation is never saved to the Google account: turns that ran as a
@@ -304,7 +309,7 @@ export function validateSiteDriver(providerId: string, driver: SiteDriverConfig)
   }
   // An attachment selector is declared or absent; an empty one would silently
   // turn an upload path into "this site takes no files".
-  for (const field of ['fileInput', 'uploadTrigger', 'uploadMenuItem'] as const) {
+  for (const field of ['fileInput', 'uploadTrigger', 'uploadMenuItem', 'uploadBusy'] as const) {
     const selector = driver[field]
     if (selector !== undefined && selector.trim().length === 0) {
       throw new Error(`WebChatTransport: driver "${providerId}" has an empty ${field}`)

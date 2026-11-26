@@ -118,6 +118,20 @@ export interface SiteDriverConfig {
    * runs between the pick and the first keystroke.
    */
   uploadSettleMs?: number
+  /**
+   * Optional indicator the site shows while it is still ingesting an attached
+   * file.
+   *
+   * The attachment chip appears the instant the pick is answered, so its
+   * presence says nothing about readiness. Gemini keeps a `mat-spinner` inside
+   * that chip until the bytes are stored and parsed, and sends nothing in the
+   * meantime while its send button stays visible and enabled — the control
+   * claims "ready" and both the click and the Enter are ignored (2026-11-26:
+   * a 112KB .docx kept it spinning for 15s, longer than the submit retries).
+   * Naming the indicator lets the host wait for the site instead of guessing at
+   * a fixed settle window.
+   */
+  uploadBusy?: string
   /** Stable polls required before an answer counts as finished; defaults to the service value. */
   stablePolls?: number
   /** Milliseconds between answer polls; defaults to the service value. */

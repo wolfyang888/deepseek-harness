@@ -29,9 +29,21 @@ const SEND_SETTLE_MS = 3_000
  * editor keeps the prompt. One re-press was not enough on doubao.com, and
  * giving up costs the whole turn — a new page, the full prompt again, and the
  * tool results already gathered. Each round waits longer than the last, so a
- * slow hydration still lands inside the same page.
+ * slow hydration still lands inside the same page. The count covers the other
+ * slow path too: a site that is still ingesting an attachment ignores the send
+ * until it is done, and gemini took anywhere from 6s to 25s to get there
+ * (2026-11-26).
  */
-const SUBMIT_ATTEMPTS = 3
+const SUBMIT_ATTEMPTS = 5
+
+/**
+ * Cap on one round's wait for the composer to clear.
+ *
+ * The growing window is there to outlast hydration, not to double without
+ * bound: five rounds at 3s, 6s, 12s, 24s and 48s would hold a broken turn for
+ * a minute and a half before reporting it.
+ */
+const SEND_WINDOW_MAX_MS = 10_000
 
 /**
  * How long a site gets to register uploaded files when its driver names no
@@ -42,6 +54,24 @@ const SUBMIT_ATTEMPTS = 3
  * binds the file to the next message rather than the one after it.
  */
 const DEFAULT_UPLOAD_SETTLE_MS = 2_500
+
+/**
+ * How many page-operation budgets a site may spend finishing its upload before
+ * the send control has to work.
+ *
+ * A site shows the attachment chip the instant the pick is answered, but
+ * chatgpt keeps its send button disabled until the file reaches its storage
+ * host and is processed: on this machine the PUT to
+ * `sdmntpritalynorth.oaiusercontent.com` alone took 17s for a 112KB .docx, and
+ * the chip read "正在上传文件" the whole time (2026-11-26). The host typed the
+ * prompt into a control that would not send, a synthetic Enter does nothing in
+ * that editor, and three submit rounds later the turn failed as
+ * provider-unavailable while the site was healthy — the question was simply
+ * never sent. Four default action caps is a minute: long enough for a slow
+ * link, short enough that a stalled upload still ends the turn inside the
+ * conversation's own budget.
+ */
+const SEND_READY_FACTOR = 4
 
 /**
  * How long an attachment menu gets to paint its entries.
@@ -426,6 +456,11 @@ export class PlaywrightPage implements ChatPageHandle {
       let readable = false
       for (let attempt = 0; attempt < 3; attempt += 1) {
         await this.page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
+        // A turn that failed after typing leaves its prompt in the composer:
+        // the site restores that draft, so the insertion lands at the caret
+        // inside the old text and the site sends one mangled message made of
+        // both (2026-11-26, after the chatgpt upload stall below).
+        if (attempt === 0) await this.clearDraft(composer)
         await this.page.keyboard.insertText(prompt)
         await sleep(Math.max(typeDelayMs, 120))
         const text = await this.readComposer(composer)
@@ -451,16 +486,19 @@ export class PlaywrightPage implements ChatPageHandle {
       // hurry (or a test); waiting longer than one operation budget there
       // would stall the suite without teaching it anything.
       const settleMs = Math.min(SEND_SETTLE_MS, this.actionTimeoutMs)
+      // Shared by every round: the site is given one budget to finish whatever
+      // holds its send control back (an attachment upload), not one per round.
+      const readyBy = Date.now() + this.actionTimeoutMs * SEND_READY_FACTOR
       for (let round = 0; round < SUBMIT_ATTEMPTS; round += 1) {
         // A retry has to refocus the composer: a toast, a banner, or a modal
         // that came and went moves the focus, and a key press lands wherever
         // the focus is — not in the editor that still shows the prompt.
         if (round > 0) await this.page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
-        await this.submitPrompt(driver)
+        await this.submitPrompt(driver, readyBy)
         // An unreadable composer (a textarea keeps its text in `value`) offers
         // no receipt, so its behaviour stays as before: one press, no verdict.
         if (typed === undefined) return
-        if (await this.composerCleared(composer, typed, settleMs * 2 ** round)) return
+        if (await this.composerCleared(composer, typed, Math.min(settleMs * 2 ** round, SEND_WINDOW_MAX_MS))) return
         if (await this.answerSignature(driver) !== before) return
       }
       // A send the site silently drops is most often its signed-out gate
@@ -471,6 +509,19 @@ export class PlaywrightPage implements ChatPageHandle {
       }
       if (driver.loginWall !== undefined && await this.visible(driver.loginWall)) {
         throw new BrowserTransportError('chathub-signed-out', `${this.key}: the send was blocked by the site's signed-out wall`)
+      }
+      // The control that never enabled is a different failure from a click the
+      // site ignored: the message was never submitted, so nothing was sent.
+      if (driver.submitButton !== undefined) {
+        const button = this.page.locator(driver.submitButton).first()
+        const stuck = await button.isVisible().catch(() => false)
+          && await button.isDisabled().catch(() => false)
+        if (stuck) {
+          throw new BrowserTransportError(
+            'chathub-ui-drift',
+            `${this.key}: the site kept its send control disabled, so the message was never submitted (an attachment may still be uploading)`,
+          )
+        }
       }
       throw new BrowserTransportError(
         'chathub-ui-drift',
@@ -563,6 +614,32 @@ export class PlaywrightPage implements ChatPageHandle {
     // them. Give the site its window before the text is typed.
     const settleMs = driver.uploadSettleMs ?? DEFAULT_UPLOAD_SETTLE_MS
     if (settleMs > 0) await sleep(Math.min(settleMs, this.actionTimeoutMs))
+    // The settle window is a floor, not a verdict: a site that says it is still
+    // ingesting the file keeps the turn waiting until it stops.
+    if (driver.uploadBusy !== undefined) await this.awaitIngest(driver.uploadBusy)
+  }
+
+  /**
+   * Wait out the indicator a site shows while it is still ingesting a file.
+   *
+   * Gemini is the case that forced this: its chip carries a spinner until the
+   * bytes are stored, and until then the composer takes the prompt, keeps the
+   * send control looking enabled, and drops both the click and the Enter — so
+   * every retry round burned without a single send attempt reaching the site.
+   * The wait is bounded by the same budget a slow upload gets on the send side;
+   * an indicator that never clears leaves the turn to report the send that
+   * never went.
+   * @param selector - the driver's ingest indicator.
+   */
+  private async awaitIngest(selector: string): Promise<void> {
+    const indicator = this.page.locator(selector).first()
+    const deadline = Date.now() + this.actionTimeoutMs * SEND_READY_FACTOR
+    for (;;) {
+      if (!(await indicator.isVisible().catch(() => false))) return
+      const remaining = deadline - Date.now()
+      if (remaining <= 0) return
+      await sleep(Math.min(250, remaining))
+    }
   }
 
   /**
@@ -785,25 +862,63 @@ export class PlaywrightPage implements ChatPageHandle {
   }
 
   /**
-   * Fire one submit attempt: the driver's send button when it declares one
-   * and the page still shows it enabled, otherwise its submit key.
+   * Fire one submit attempt: the driver's send button when it declares one and
+   * the page shows it, otherwise its submit key.
    *
-   * Qianwen's composer accepts inserted text but ignores a synthetic Enter —
-   * the only working path is its `发送消息` button — while DeepSeek submits on
-   * the key. The read-back confirmation in {@linkcode submit} judges whichever
-   * path ran, so a button click that the site ignores still ends as drift.
+   * A control the site has disabled is not a control the site will act on:
+   * clicking it waits for it to enable and then times out, and the key path is
+   * ignored by editors that only listen for a real click (chatgpt's
+   * ProseMirror drops a synthetic Enter). So a disabled control means "the site
+   * is not ready", not "use the other path" — the round waits for the site to
+   * finish, then clicks. Only a control that never enables inside the budget
+   * falls back to the key, and the read-back in {@linkcode submit} judges it.
    * @param driver - site facts carrying the button selector and submit key.
+   * @param readyBy - epoch millisecond deadline for the control to enable.
    */
-  private async submitPrompt(driver: SiteDriverConfig): Promise<void> {
+  private async submitPrompt(driver: SiteDriverConfig, readyBy: number): Promise<void> {
     if (driver.submitButton !== undefined) {
       const button = this.page.locator(driver.submitButton).first()
-      if (await button.isVisible().catch(() => false)
-        && !(await button.isDisabled().catch(() => true))) {
+      if (await button.isVisible().catch(() => false) && await this.awaitEnabled(button, readyBy)) {
         await button.click()
         return
       }
     }
     await this.page.keyboard.press(driver.submitKey)
+  }
+
+  /**
+   * Poll a send control until the site enables it.
+   * @param button - the send control.
+   * @param readyBy - epoch millisecond deadline shared by every attempt.
+   * @returns Whether the control is enabled; `false` once the deadline passes.
+   */
+  private async awaitEnabled(button: BrowserInputLike, readyBy: number): Promise<boolean> {
+    for (;;) {
+      // A page that cannot answer reads as "not ready": the caller then keeps
+      // the key path, which is what a page without a live control needs.
+      if (!(await button.isDisabled().catch(() => true))) return true
+      const remaining = readyBy - Date.now()
+      if (remaining <= 0) return false
+      await sleep(Math.min(250, remaining))
+    }
+  }
+
+  /**
+   * Wipe a draft the site restored from an earlier, failed turn.
+   *
+   * Chatgpt keeps the composer's text with the conversation, so a turn that
+   * died after typing — an upload that never enabled the send — is still there
+   * on the next attempt. Inserting then lands at the caret in the middle of
+   * that text and the site sends one message made of both (2026-11-26:
+   * `…生成AI_1.请只回复两个字：收到docx 供给下载`). The caller has just focused
+   * the composer, so select-all stays inside the editor.
+   * @param composer - the focused chat input.
+   */
+  private async clearDraft(composer: BrowserInputLike): Promise<void> {
+    const draft = await this.readComposer(composer)
+    if (draft === undefined || draft.trim().length === 0) return
+    await this.page.keyboard.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A')
+    await this.page.keyboard.press('Backspace')
   }
 
   /**

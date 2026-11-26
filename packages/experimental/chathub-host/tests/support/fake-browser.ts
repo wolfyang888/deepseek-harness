@@ -70,7 +70,14 @@ class FakeLocator implements BrowserInputLike {
   async isVisible(): Promise<boolean> {
     this.page.raise('isVisible')
     if (this.page.isVisibleDelayMs > 0) await sleep(this.page.isVisibleDelayMs)
+    // An indicator that clears on its own: visible for the first N checks.
     const seen = (this.page.visibilityChecks[this.selector] ?? 0) + 1
+    this.page.visibilityChecks[this.selector] = seen
+    const lingering = this.page.visibleFor[this.selector] ?? 0
+    if (lingering > 0) {
+      this.page.visibleFor[this.selector] = lingering - 1
+      return true
+    }
     this.page.visibilityChecks[this.selector] = seen
     // A menu painted a beat after its trigger is the normal case on the real
     // sites, so a selector can be configured to read hidden first.
@@ -84,14 +91,25 @@ class FakeLocator implements BrowserInputLike {
     return this.page.boxes[this.selector] ?? null
   }
 
-  /** @returns The configured markup. */
+  /** @returns The configured markup; a restored draft until the host types. */
   async innerHTML(): Promise<string> {
     this.page.raise('innerHTML')
+    // The composer renders nothing until the host inserts a prompt, so a test
+    // that presets `texts` for it is describing the state *after* typing. A
+    // draft the site restored from an earlier turn is `prefilled` instead.
+    if (this.selector === this.page.composerSelector && this.page.typed.length === 0) {
+      return this.page.prefilled[this.selector] ?? ''
+    }
     return this.page.texts[this.selector] ?? ''
   }
 
-  /** @returns Whether the selector is in the disabled set. */
+  /** @returns Whether the selector reads disabled, honoring a countdown. */
   async isDisabled(): Promise<boolean> {
+    const remaining = this.page.disabledChecks[this.selector] ?? 0
+    if (remaining > 0) {
+      this.page.disabledChecks[this.selector] = remaining - 1
+      return true
+    }
     return this.page.disabledButtons.has(this.selector)
   }
 
@@ -169,6 +187,10 @@ export class FakePage implements BrowserPageLike {
   contextValue: FakeContext | undefined
   counts: Record<string, number> = {}
   texts: Record<string, string> = {}
+  /** Text the composer already holds before the host types: a restored draft. */
+  prefilled: Record<string, string> = {}
+  /** Selector whose text appears only after the host inserts a prompt. */
+  composerSelector: string | undefined
   boxes: Record<string, { x: number; y: number; width: number; height: number } | null> = {}
   visible = new Set<string>()
   /** Attributes keyed by `selector#name`, so `accept` can differ per input. */
@@ -177,10 +199,14 @@ export class FakePage implements BrowserPageLike {
   hiddenChecks: Record<string, number> = {}
   /** Visibility checks performed per selector, so the above can count down. */
   visibilityChecks: Record<string, number> = {}
+  /** Checks a selector answers visible before it clears itself, by selector. */
+  visibleFor: Record<string, number> = {}
   /** File pick the page starts; unset when the site starts none. */
   chooser: FakeChooser | undefined
   /** Selectors the fake reports as disabled; empty means everything enabled. */
   disabledButtons = new Set<string>()
+  /** Disabled answers a selector gives before it reads enabled, by selector. */
+  disabledChecks: Record<string, number> = {}
   /** Selectors clicked through a locator (as opposed to raw mouse clicks). */
   locatorClicks: string[] = []
   /** Milliseconds each visibility check takes before answering. */
@@ -217,6 +243,8 @@ export class FakePage implements BrowserPageLike {
     press: async (key: string): Promise<void> => {
       this.raise('press')
       this.keys.push(key)
+      // Select-all + delete ends a restored draft, exactly as an editor does.
+      if (key === 'Backspace') this.prefilled = {}
       if (this.clearAfterPresses > 0 && this.keys.length >= this.clearAfterPresses) this.texts = {}
     },
   }

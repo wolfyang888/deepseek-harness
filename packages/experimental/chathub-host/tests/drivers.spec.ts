@@ -40,7 +40,7 @@ it.each(['url', 'input', 'answer', 'submitKey'] as const)('rejects an empty %s',
     .toThrow(`driver "deepseek-web" has an empty ${field}`)
 })
 
-it.each(['fileInput', 'uploadTrigger', 'uploadMenuItem'] as const)('rejects an empty %s', (field) => {
+it.each(['fileInput', 'uploadTrigger', 'uploadMenuItem', 'uploadBusy'] as const)('rejects an empty %s', (field) => {
   // An empty attachment selector reads as "this site takes no files", which is
   // silent; a blank one is a configuration mistake.
   expect(() => resolveSiteDrivers({ 'deepseek-web': { [field]: '  ' } }))

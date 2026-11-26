@@ -20,6 +20,7 @@ const UPLOAD_FILES = [
 ]
 
 function page(fake = new FakePage()): { wrapper: PlaywrightPage; fake: FakePage } {
+  fake.composerSelector = DRIVER.input
   return { wrapper: new PlaywrightPage(fake, KEY, 10), fake }
 }
 
@@ -317,7 +318,7 @@ it('reports a composer that keeps the prompt as UI drift', async () => {
   fake.texts[DRIVER.input] = '<p>hello world</p>'
   await expect(wrapper.submit('hello world', DRIVER, 1)).rejects.toMatchObject({ token: 'chathub-ui-drift' })
   // Every attempt at the send, never an unbounded loop.
-  expect(fake.keys).toEqual(['Enter', 'Enter', 'Enter'])
+  expect(fake.keys).toEqual(['Enter', 'Enter', 'Enter', 'Enter', 'Enter'])
 })
 
 it('accepts a send whose composer lingers while the conversation advanced', async () => {
@@ -345,7 +346,7 @@ it('reports a dropped send on a cookie-gated site as signed-out, not drift', asy
   fake.texts[DRIVER.input] = '<p>hello world</p>'
   await expect(wrapper.submit('hello world', COOKIE_DRIVER, 1))
     .rejects.toMatchObject({ token: 'chathub-signed-out' })
-  expect(fake.keys).toEqual(['Enter', 'Enter', 'Enter'])
+  expect(fake.keys).toEqual(['Enter', 'Enter', 'Enter', 'Enter', 'Enter'])
 })
 
 it('retypes when the composer never took the prompt', async () => {
@@ -388,7 +389,23 @@ it('falls back to the submit key when the send button is absent', async () => {
   expect(fake.keys).toEqual(['Enter'])
 })
 
-it('falls back to the submit key when the send button is disabled', async () => {
+it('waits for a send control the site disabled, then clicks it', async () => {
+  // Chatgpt disables its send button while an attachment uploads (2026-11-26:
+  // 17s for a 112KB .docx) and ignores a synthetic Enter, so treating the
+  // disabled state as "use the key" lost the whole turn as provider-unavailable
+  // with the prompt still in the composer.
+  const { wrapper, fake } = page()
+  fake.boxes[DRIVER.input] = { x: 0, y: 0, width: 10, height: 10 }
+  fake.visible.add(BUTTON)
+  fake.disabledChecks[BUTTON] = 1
+  fake.texts[DRIVER.input] = '<p>hello world</p>'
+  fake.clearAfterClicks = 1
+  await wrapper.submit('hello world', BUTTON_DRIVER, 1)
+  expect(fake.locatorClicks).toEqual([BUTTON])
+  expect(fake.keys).toEqual([])
+})
+
+it('keeps the key path when the send control never enables', async () => {
   const { wrapper, fake } = page()
   fake.boxes[DRIVER.input] = { x: 0, y: 0, width: 10, height: 10 }
   fake.visible.add(BUTTON)
@@ -398,6 +415,36 @@ it('falls back to the submit key when the send button is disabled', async () => 
   await wrapper.submit('hello world', BUTTON_DRIVER, 1)
   expect(fake.locatorClicks).toEqual([])
   expect(fake.keys).toEqual(['Enter'])
+})
+
+it('names the disabled send control when the message never went', async () => {
+  // A control the site keeps disabled is a different failure from a click the
+  // site ignored: nothing was submitted, so the turn says so instead of
+  // "the input kept the prompt".
+  const { wrapper, fake } = page()
+  fake.boxes[DRIVER.input] = { x: 0, y: 0, width: 10, height: 10 }
+  fake.visible.add(BUTTON)
+  fake.disabledButtons.add(BUTTON)
+  fake.texts[DRIVER.input] = '<p>hello world</p>'
+  const error = await wrapper.submit('hello world', BUTTON_DRIVER, 1)
+    .then(() => undefined, (reason: unknown) => reason as { token?: string; message: string })
+  expect(error?.token).toBe('chathub-ui-drift')
+  expect(error?.message).toContain('kept its send control disabled')
+})
+
+it('wipes a draft the previous turn left in the composer', async () => {
+  // Chatgpt keeps the composer's text with the conversation, so a turn that
+  // died after typing is still there. Inserting then lands at the caret inside
+  // that text and the site sends one message made of both (2026-11-26:
+  // "…生成AI_1.请只回复两个字：收到docx 供给下载").
+  const { wrapper, fake } = page()
+  fake.boxes[DRIVER.input] = { x: 0, y: 0, width: 10, height: 10 }
+  fake.prefilled[DRIVER.input] = '<p>old draft from a failed turn</p>'
+  fake.texts[DRIVER.input] = '<p>hello world</p>'
+  fake.clearAfterPresses = 3
+  await wrapper.submit('hello world', DRIVER, 1)
+  expect(fake.keys).toEqual([`${process.platform === 'darwin' ? 'Meta' : 'Control'}+A`, 'Backspace', 'Enter'])
+  expect(fake.typed).toEqual(['hello world'])
 })
 
 it('closes an open page once and ignores a closed one', async () => {
@@ -429,6 +476,31 @@ it('does nothing for a turn that carries no files', async () => {
   const { wrapper, fake } = page()
   await wrapper.attach([], UPLOAD_DRIVER)
   expect(fake.uploads).toEqual([])
+})
+
+it('waits out the ingest indicator the site shows after a pick', async () => {
+  // Gemini keeps a spinner inside the attachment chip until the bytes are
+  // stored, and ignores every send until then (2026-11-26): the chip alone is
+  // not proof the file is usable.
+  const fake = new FakePage()
+  fake.composerSelector = DRIVER.input
+  fake.counts['input[type=file]'] = 1
+  fake.visibleFor['#ingest'] = 2
+  const wrapper = new PlaywrightPage(fake, KEY, 300)
+  await wrapper.attach(UPLOAD_FILES, { ...UPLOAD_DRIVER, uploadBusy: '#ingest' })
+  expect(fake.visibilityChecks['#ingest']).toBe(3)
+  expect(fake.uploads.length).toBe(2)
+})
+
+it('gives up waiting on an ingest indicator that never clears', async () => {
+  // A stalled upload must still end the turn with a report, not hang the
+  // conversation on a spinner that will never stop.
+  const { wrapper, fake } = page()
+  fake.counts['input[type=file]'] = 1
+  fake.visible.add('#ingest')
+  await expect(wrapper.attach(UPLOAD_FILES, { ...UPLOAD_DRIVER, uploadBusy: '#ingest' }))
+    .resolves.toBeUndefined()
+  expect(fake.uploads.length).toBe(2)
 })
 
 it('refuses a site whose driver declares no attachment input', async () => {
