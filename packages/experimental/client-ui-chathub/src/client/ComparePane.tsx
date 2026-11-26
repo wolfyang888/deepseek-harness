@@ -212,13 +212,32 @@ export function ComparePane(props: ComparePaneProps): ReactNode {
           }))
         }
       } catch (failure: unknown) {
-        if (run.current === controller) {
+        // An explicit stop is not an error: the columns already read as
+        // stopped, so a carrier cancellation rejection stays quiet.
+        if (run.current === controller && !controller.signal.aborted) {
           setError(failure instanceof Error ? failure.message : String(failure))
         }
       } finally {
         if (run.current === controller) setBusy(false)
       }
     })()
+  }
+
+  /**
+   * Stop the running comparison where it stands.
+   *
+   * The abort travels to the host, which stops driving the sites and closes
+   * the scratch conversations; columns that never settled read as stopped
+   * here instead of waiting forever, so the composer unlocks at once.
+   */
+  const stop = (): void => {
+    const controller = run.current
+    if (controller === undefined) return
+    controller.abort()
+    setColumns(current => Object.fromEntries(Object.entries(current).map(([providerId, column]) => [
+      providerId,
+      column.status === 'waiting' ? { ...column, status: 'failed' as const, lastError: t('compare.stopped') } : column,
+    ])))
   }
 
   return (
@@ -327,6 +346,11 @@ export function ComparePane(props: ComparePaneProps): ReactNode {
             {t('compare.attach')}
           </Button>
           {!canCompare && <span className={css.note}>{t('compare.needTwo')}</span>}
+          {busy && (
+            <Button variant="ghost" size="md" onClick={stop}>
+              {t('compare.stop')}
+            </Button>
+          )}
           <Button variant="primary" size="md" className={css.send}
             disabled={busy || prompt.trim() === ''} onClick={submit}>
             {t('compare.send')}

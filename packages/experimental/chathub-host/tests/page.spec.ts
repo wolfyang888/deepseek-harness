@@ -43,6 +43,17 @@ it('maps a navigation timeout to a turn timeout, not UI drift', async () => {
   await expect(wrapper.goto(DRIVER.url)).rejects.toMatchObject({ token: 'chathub-turn-timeout' })
 })
 
+it('gives the site entry several operation budgets to finish loading', async () => {
+  // chatgpt.com and gemini.google.com overflow one 15s cap when two columns
+  // load at once, and both columns failed 15s in as stream-interrupted
+  // (2026-11-26): the navigation budget is the page-load budget, not the
+  // conversation's operation budget.
+  const { wrapper, fake } = page()
+  await wrapper.goto(DRIVER.url)
+  expect(fake.gotoOptions[0]?.timeout).toBe(40)
+  expect(fake.gotoOptions[0]?.waitUntil).toBe('domcontentloaded')
+})
+
 it('waits for a visible chat input', async () => {
   const { wrapper, fake } = page()
   fake.visible.add(DRIVER.input)

@@ -536,6 +536,41 @@ it('shows the column that finished first while the other site is still writing',
   expect(await screen.findByText('B side')).toBeTruthy()
 })
 
+it('stops a running comparison and marks the pending columns as stopped', async () => {
+  const { face } = fixture((actions) => { applyLists(actions, TWO_READY) })
+  let seenSignal: AbortSignal | undefined
+  face.compare.mockImplementation((_, __, ___, signal) => {
+    seenSignal = signal
+    return (async function* (): AsyncIterable<ChatHubCompareEvent> {
+      yield { kind: 'progress', provider: 'deepseek-web', content: 'A gro' }
+      // The host keeps the columns open until the stop arrives.
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, 5_000)
+        signal?.addEventListener('abort', () => { clearTimeout(timer); reject(new Error('cancelled')) }, { once: true })
+      })
+      yield {
+        kind: 'settled',
+        side: { provider: 'deepseek-web', providerName: 'DeepSeek Web', status: 'done', content: 'late', elapsedMs: 10 },
+      }
+    })()
+  })
+  fireEvent.click(screen.getByRole('button', { name: zh['compare.open'] }))
+  fireEvent.change(screen.getByPlaceholderText(zh['compare.placeholder']), { target: { value: 'q' } })
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: zh['compare.send'] }))
+  })
+  expect(await screen.findByText('A gro')).toBeTruthy()
+  // While the comparison runs, the composer offers a way out instead of
+  // leaving the user to refresh the page.
+  fireEvent.click(screen.getByRole('button', { name: zh['compare.stop'] }))
+  await act(async () => {})
+  expect(seenSignal?.aborted).toBe(true)
+  // Columns that never settled read as stopped, not as an eternal "thinking".
+  const stopped = screen.getAllByText(zh['compare.stopped'])
+  expect(stopped.length).toBe(2)
+  expect(screen.queryByRole('button', { name: zh['compare.stop'] })).toBeNull()
+})
+
 it('shows a site reasoning trace above its answer', async () => {
   const { face } = fixture((actions) => { applyLists(actions, TWO_READY) })
   face.compare.mockReturnValue(compareStream(

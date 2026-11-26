@@ -74,6 +74,20 @@ const DEFAULT_UPLOAD_SETTLE_MS = 2_500
 const SEND_READY_FACTOR = 4
 
 /**
+ * How many page-operation budgets a site gets to finish navigating to its chat
+ * entry.
+ *
+ * One action cap (15s by default) is a browser page-load budget, not a
+ * conversation budget, and the heavy portals overflow it: both columns of one
+ * comparison failed 15s in as `stream-interrupted` when chatgpt.com and
+ * gemini.google.com were still loading their documents (2026-11-26, two pages
+ * loading at once in a fresh context make it worse). Four caps is a minute:
+ * `domcontentloaded` on a slow link arrives far past 15s but well inside it,
+ * and a site that is genuinely down still fails inside the turn's own budget.
+ */
+const NAV_READY_FACTOR = 4
+
+/**
  * How long an attachment menu gets to paint its entries.
  *
  * The menu is rendered after the trigger's own handler runs, so it is a beat
@@ -202,15 +216,16 @@ export class PlaywrightPage implements ChatPageHandle {
    * @returns Resolves when the document is ready.
    */
   async goto(url: string): Promise<void> {
+    const budgetMs = this.actionTimeoutMs * NAV_READY_FACTOR
     try {
-      await this.page.goto(url, { timeout: this.actionTimeoutMs, waitUntil: 'domcontentloaded' })
+      await this.page.goto(url, { timeout: budgetMs, waitUntil: 'domcontentloaded' })
     } catch (error) {
       if (isOperationTimeout(error)) {
         // A slow portal page says nothing about the DOM we expect; blaming the
         // UI would mask a reachable-but-slow site as drift.
         throw new BrowserTransportError(
           'chathub-turn-timeout',
-          `${this.key}: navigating to "${url}" did not settle within ${this.actionTimeoutMs}ms`,
+          `${this.key}: navigating to "${url}" did not settle within ${budgetMs}ms`,
           { cause: error },
         )
       }

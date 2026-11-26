@@ -69,6 +69,8 @@ class TurnProvider implements IModelProvider {
   ready = true
   /** Times `init()` ran, so a cold-site open is observable. */
   initCount = 0
+  /** Times `close()` ran, so a stopped comparison's cleanup is observable. */
+  closed = 0
   async init(): Promise<void> { this.initCount += 1 }
   async isReady(): Promise<boolean> { return this.ready }
   async sendMessage(request: ChatRequest): Promise<ChatResponse> {
@@ -97,7 +99,7 @@ class TurnProvider implements IModelProvider {
     yield { index: 0, delta: answer ?? `${this.id} answer` }
     yield { index: 0, finishReason: 'stop', ...this.metadata === undefined ? {} : { metadata: this.metadata } }
   }
-  async close(): Promise<void> {}
+  async close(): Promise<void> { this.closed += 1 }
 }
 
 /** Registry double: `list()` advertises one id it cannot resolve, and resolvable ids can be withdrawn. */
@@ -722,6 +724,54 @@ describe('ChatHubController compareStream', () => {
       expect(events).toEqual([])
       // No site turn started for a stream nobody is reading.
       expect(providers[0]?.requests).toEqual([])
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('stops a silent column at once and closes its scratch session', async () => {
+    // A site that has written nothing yet must not hold the page until it
+    // writes: the stop wins against the pending iterator, and the scratch
+    // conversation closes so the page and its turn chain are free again.
+    const cancellation = new AbortController()
+    const hold = new Promise<void>((resolve) => {
+      cancellation.signal.addEventListener('abort', () => { resolve() }, { once: true })
+    })
+    const provider = new TurnProvider({ id: 'deepseek-web', answers: ['late answer'], hold })
+    const { ctx, controller } = await harness({ providers: [provider] })
+    try {
+      const events: ChatHubCompareEvent[] = []
+      const consuming = (async (): Promise<void> => {
+        for await (const event of controller.compareStream({ content: 'x', providers: ['deepseek-web'] }, cancellation.signal)) {
+          events.push(event)
+        }
+      })()
+      await new Promise((resolve) => { setTimeout(resolve, 0) })
+      expect(provider.requests).toHaveLength(1)
+      cancellation.abort()
+      await consuming
+      expect(events).toEqual([])
+      expect(provider.closed).toBe(1)
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('logs a failing column rejection in full, not just its stable code', async () => {
+    const provider = new TurnProvider({
+      id: 'deepseek-web',
+      answers: [new Error('chathub-ui-drift: the site kept its send control disabled, so the message was never submitted')],
+      code: 'provider-unavailable',
+    })
+    const { ctx, controller } = await harness({ providers: [provider] })
+    // The panel shows the code alone; the detail has to reach the log or the
+    // failure is undiagnosable from the gateway's side.
+    const warned: string[] = []
+    ctx.logger.warn = ((value: unknown) => { warned.push(String(value)) }) as typeof ctx.logger.warn
+    try {
+      const events = await drain(controller.compareStream({ content: 'x', providers: ['deepseek-web'] }))
+      expect(events.at(-1)).toMatchObject({ kind: 'settled', side: { provider: 'deepseek-web', status: 'failed', lastError: 'provider-unavailable' } })
+      expect(warned.some(line => line.includes('deepseek-web') && line.includes('the site kept its send control disabled'))).toBe(true)
     } finally {
       await ctx.fiber.dispose()
     }

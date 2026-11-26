@@ -15,6 +15,7 @@ import {
   SessionCompactionService,
   SessionManager,
   SessionTimelineService,
+  errorMessage,
   type ChatMessage,
   type ChatSessionRecord,
   type IModelProvider,
@@ -333,8 +334,17 @@ export class ChatHubController extends TypertRemoteService {
       }
       let content = ''
       let reasoning = ''
-      for await (const chunk of provider.streamMessage(request)) {
-        if (signal.aborted) return
+      // The stop has to win even while the site writes nothing: awaiting the
+      // iterator alone would notice the cancellation only at the next delta,
+      // and a silent site would hold the page for the whole turn.
+      const cancelled = new Promise<undefined>((resolve) => {
+        signal.addEventListener('abort', () => { resolve(undefined) }, { once: true })
+      })
+      const iterator = provider.streamMessage(request)[Symbol.asyncIterator]()
+      for (;;) {
+        const step = await Promise.race([iterator.next(), cancelled])
+        if (step === undefined || step.done === true) break
+        const chunk = step.value
         // A site's delta stream is either suffix growth or the container's
         // whole markup after a rewrite; both reduce to the text so far.
         if (chunk.delta !== undefined && chunk.delta.length > 0) {
@@ -348,6 +358,14 @@ export class ChatHubController extends TypertRemoteService {
         }
         const trace = chunk.metadata?.['reasoning']
         if (typeof trace === 'string' && trace.length > 0) reasoning = trace
+      }
+      await iterator.return?.().catch(() => { /* the site stream already ended */ })
+      if (signal.aborted) {
+        // A stopped comparison is scratch: nothing reads the site conversation
+        // afterwards, and a left-running turn would keep the page and its key's
+        // turn chain busy until the site answered on its own.
+        await provider.close().catch(() => { /* the page is already gone */ })
+        return
       }
       push({
         kind: 'settled',
@@ -363,6 +381,12 @@ export class ChatHubController extends TypertRemoteService {
     } catch (error) {
       // A cancelled turn is not a failure of the column.
       if (signal.aborted) return
+      // The panel shows the stable code alone, so the full rejection — the
+      // selector that drifted, the site prose, the timeout budget — has to
+      // land here, or a column like "provider-unavailable" is undiagnosable
+      // from the gateway log (2026-11-26, chatgpt failed 11s in with no
+      // trace of why).
+      this.ctx.logger?.warn(`chathub: compare column ${providerId} failed: ${errorMessage(error)}`)
       // The adapter normalized the rejection; the column shows the code.
       push({
         kind: 'settled',

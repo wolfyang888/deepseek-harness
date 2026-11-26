@@ -211,7 +211,10 @@ export class FakePage implements BrowserPageLike {
   locatorClicks: string[] = []
   /** Milliseconds each visibility check takes before answering. */
   isVisibleDelayMs = 0
+  /** The URL of every navigation, in order. */
   visited: string[] = []
+  /** The options of every navigation, paired with `visited` by index. */
+  gotoOptions: Array<{ timeout?: number; waitUntil?: 'domcontentloaded' } | undefined> = []
   typed: string[] = []
   keys: string[] = []
   /** Files each locator input accepted, so an upload is observable. */
@@ -287,9 +290,10 @@ export class FakePage implements BrowserPageLike {
    * @param url - destination URL recorded as the current location.
    * @returns Resolves when the fake navigation finishes.
    */
-  async goto(url: string): Promise<unknown> {
+  async goto(url: string, options?: { timeout?: number; waitUntil?: 'domcontentloaded' }): Promise<unknown> {
     this.raise('goto')
     this.visited.push(url)
+    this.gotoOptions.push(options)
     this.urlValue = url
     return undefined
   }
